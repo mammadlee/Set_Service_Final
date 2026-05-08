@@ -1,0 +1,241 @@
+// HireApp — Prisma Schema
+// PostgreSQL 15+
+// M2Tech · May 2026
+//
+// Əmrlər:
+//   npx prisma migrate dev --name init   → cədvəllər yaranır
+//   npx prisma studio                    → browser-da data görürsən
+//   npx prisma generate                  → Prisma Client yenilənir
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────
+
+enum Role {
+  super_admin
+  company
+  worker
+}
+
+enum CompanyStatus {
+  pending
+  approved
+  rejected
+}
+
+enum OrderStatus {
+  draft
+  active
+  completed
+  cancelled
+}
+
+enum AssignmentStatus {
+  pending
+  accepted
+  rejected
+}
+
+// ─────────────────────────────────────────
+// USERS
+// Bütün 3 rol bu cədvəldə — role ilə ayrılır
+// ─────────────────────────────────────────
+
+model User {
+  id         String   @id @default(uuid())
+  phone      String   @unique          // +994501234567 formatı
+  role       Role
+  name       String
+  fcm_token  String?                   // Push bildiriş üçün — Flutter hər loginda göndərir
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Relations
+  company    Company?
+  worker     Worker?
+  otp        Otp?
+  refresh_tokens RefreshToken[]
+  ratings_given  Rating[]       @relation("rater")
+
+  @@index([phone])
+  @@map("users")
+}
+
+// ─────────────────────────────────────────
+// OTP
+// Hər telefon nömrəsinə 1 aktiv OTP
+// ─────────────────────────────────────────
+
+model Otp {
+  id         String   @id @default(uuid())
+  user_id    String   @unique
+  code       String                    // 6 rəqəmli, test mühitində həmişə "123456"
+  expires_at DateTime                  // 5 dəqiqə
+  attempts   Int      @default(0)      // Maksimum 3 — sonra yenidən göndər
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("otps")
+}
+
+// ─────────────────────────────────────────
+// REFRESH TOKENS
+// Logout-da blacklist — token silinir
+// ─────────────────────────────────────────
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────
+// COMPANIES
+// ─────────────────────────────────────────
+
+model Company {
+  id         String        @id @default(uuid())
+  user_id    String        @unique
+  name       String
+  status     CompanyStatus @default(pending)
+  docs_url   String?                   // S3 linki — sağlamlıq/məhkumluq sənədləri
+  reject_reason String?                // Admin rədd etdikdə səbəb
+  created_at DateTime      @default(now())
+  updated_at DateTime      @updatedAt
+
+  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  orders     Order[]
+
+  @@index([status])
+  @@map("companies")
+}
+
+// ─────────────────────────────────────────
+// WORKERS
+// skills JSONB — sxema dəyişmədən yeni bacarıq əlavə olunur
+// ─────────────────────────────────────────
+
+model Worker {
+  id           String   @id @default(uuid())
+  user_id      String   @unique
+  skills       Json     @default("[]")  // [{name:"aşpaz", level:3}, {name:"ofisiant", level:2}]
+  rating_avg   Float    @default(0)
+  rating_count Int      @default(0)
+  availability Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  assignments  Assignment[]
+  ratings      Rating[]     @relation("rated_worker")
+
+  @@index([availability])
+  @@map("workers")
+}
+
+// ─────────────────────────────────────────
+// ORDERS
+// ─────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(uuid())
+  company_id      String
+  shift_start     DateTime
+  shift_end       DateTime
+  required_count  Int
+  required_skills String[]    @default([])  // ["aşpaz", "ofisiant"]
+  notes           String?
+  status          OrderStatus @default(draft)
+  created_at      DateTime    @default(now())
+  updated_at      DateTime    @updatedAt
+
+  company         Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  assignments     Assignment[]
+  ratings         Rating[]
+
+  @@index([company_id, status])  // Dashboard filtri üçün
+  @@index([status])
+  @@map("orders")
+}
+
+// ─────────────────────────────────────────
+// ASSIGNMENTS
+// M:N — hansı işçi hansı sifarişdə
+// ─────────────────────────────────────────
+
+model Assignment {
+  id          String           @id @default(uuid())
+  order_id    String
+  worker_id   String
+  status      AssignmentStatus @default(pending)
+  assigned_at DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
+
+  order           Order            @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  worker          Worker           @relation(fields: [worker_id], references: [id], onDelete: Cascade)
+  attendance_logs AttendanceLog[]
+
+  @@unique([order_id, worker_id])  // Eyni işçi eyni sifarişə 2 dəfə təyin edilə bilməz
+  @@index([order_id])
+  @@index([worker_id])
+  @@map("assignments")
+}
+
+// ─────────────────────────────────────────
+// ATTENDANCE LOGS
+// QR giriş-çıxış qeydləri
+// ─────────────────────────────────────────
+
+model AttendanceLog {
+  id             String    @id @default(uuid())
+  assignment_id  String
+  checkin_time   DateTime?
+  checkout_time  DateTime?
+  created_at     DateTime  @default(now())
+
+  assignment     Assignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+
+  @@index([assignment_id])
+  @@map("attendance_logs")
+}
+
+// ─────────────────────────────────────────
+// RATINGS
+// Sifariş bitdikdən sonra müəssisə işçini qiymətləndirir
+// Eyni order+worker cütü üçün yalnız 1 reytinq
+// ─────────────────────────────────────────
+
+model Rating {
+  id         String   @id @default(uuid())
+  order_id   String
+  worker_id  String
+  rater_id   String                    // Kim qiymətləndirib (company user_id)
+  score      Int                       // 1-5
+  comment    String?
+  created_at DateTime @default(now())
+
+  order      Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  worker     Worker   @relation("rated_worker", fields: [worker_id], references: [id], onDelete: Cascade)
+  rater      User     @relation("rater", fields: [rater_id], references: [id], onDelete: Cascade)
+
+  @@unique([order_id, worker_id])      // Bir sifariş üçün bir reytinq
+  @@index([worker_id])
+  @@map("ratings")
+}
