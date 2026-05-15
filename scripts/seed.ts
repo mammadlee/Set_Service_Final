@@ -1,14 +1,3 @@
-/**
- * Dev seed skripti — test məlumatları yaradır
- * İstifadə: npx ts-node scripts/seed.ts
- *
- * Yaradılır:
- *  - 1 super_admin  (+994700000001)
- *  - 1 company      (+994700000002, approved)
- *  - 3 worker       (+994700000003..5)
- *  - 1 active order
- */
-
 import 'dotenv/config';
 
 /* eslint-disable @typescript-eslint/no-var-requires */
@@ -16,83 +5,130 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Seed başlayır...\n');
+  console.log('Seed starting...\n');
 
-  // Super admin
   const admin = await prisma.user.upsert({
     where: { phone: '+994700000001' },
-    update: {},
+    update: { role: 'super_admin', name: 'Super Admin', is_active: true },
     create: {
       phone: '+994700000001',
       role: 'super_admin',
       name: 'Super Admin',
     },
   });
-  console.log('✓ Super admin:', admin.phone);
+  await prisma.admin.upsert({
+    where: { user_id: admin.id },
+    update: { permissions: ['*'] },
+    create: { user_id: admin.id, permissions: ['*'] },
+  });
+  console.log('Super admin:', admin.phone);
 
-  // Company user
   const companyUser = await prisma.user.upsert({
     where: { phone: '+994700000002' },
-    update: {},
+    update: { role: 'company', name: 'Grand Hotel Owner', is_active: true },
     create: {
       phone: '+994700000002',
       role: 'company',
-      name: 'Grand Hotel Baku',
+      name: 'Grand Hotel Owner',
     },
   });
 
-  await prisma.company.upsert({
+  const company = await prisma.company.upsert({
     where: { user_id: companyUser.id },
-    update: {},
+    update: { name: 'Grand Hotel Baku', status: 'approved', approved_at: new Date() },
     create: {
       user_id: companyUser.id,
       name: 'Grand Hotel Baku',
       status: 'approved',
+      approved_at: new Date(),
     },
   });
-  console.log('✓ Company:', companyUser.phone, '(approved)');
+  console.log('Approved company:', companyUser.phone);
 
-  // Workers
-  const workerData = [
-    { phone: '+994700000003', name: 'Əli Həsənov', skills: [{ name: 'aşpaz', level: 4 }, { name: 'ofisiant', level: 3 }] },
-    { phone: '+994700000004', name: 'Leyla Əliyeva', skills: [{ name: 'ofisiant', level: 5 }] },
-    { phone: '+994700000005', name: 'Rauf Quliyev', skills: [{ name: 'aşpaz', level: 3 }, { name: 'bartender', level: 2 }] },
-  ];
+  await seedWorker({
+    phone: '+994700000003',
+    name: 'Ali Hasanov',
+    position: 'Chef',
+    status: 'approved',
+    skills: [{ name: 'chef', level: 4 }, { name: 'waiter', level: 3 }],
+    languages: ['az', 'tr'],
+  });
 
-  for (const wd of workerData) {
-    const wu = await prisma.user.upsert({
-      where: { phone: wd.phone },
-      update: {},
-      create: { phone: wd.phone, role: 'worker', name: wd.name },
-    });
-    await prisma.worker.upsert({
-      where: { user_id: wu.id },
-      update: {},
-      create: { user_id: wu.id, skills: wd.skills, availability: true },
-    });
-    console.log('✓ Worker:', wd.phone, wd.name);
-  }
+  await seedWorker({
+    phone: '+994700000004',
+    name: 'Leyla Aliyeva',
+    position: 'Waiter',
+    status: 'pending_approval',
+    skills: [{ name: 'waiter', level: 5 }],
+    languages: ['az', 'en'],
+  });
 
-  // Active order
-  const company = await prisma.company.findUnique({ where: { user_id: companyUser.id } });
+  await seedWorker({
+    phone: '+994700000005',
+    name: 'Rauf Quliyev',
+    position: 'Courier',
+    status: 'rejected',
+    skills: [{ name: 'delivery', level: 3 }],
+    languages: ['az', 'ru'],
+    reject_reason: 'Documents are incomplete.',
+  });
+
   const order = await prisma.order.create({
     data: {
       company_id: company.id,
-      shift_start: new Date(Date.now() + 24 * 60 * 60 * 1000), // sabah
+      shift_start: new Date(Date.now() + 24 * 60 * 60 * 1000),
       shift_end: new Date(Date.now() + 36 * 60 * 60 * 1000),
       required_count: 2,
-      required_skills: ['ofisiant', 'aşpaz'],
-      notes: 'Banket üçün — formal geyim tələb olunur',
+      required_skills: ['waiter', 'chef'],
+      notes: 'Banquet shift; formal dress required',
       status: 'active',
     },
   });
-  console.log('✓ Order yaradıldı:', order.id);
+  console.log('Active order:', order.id);
 
-  console.log('\n✅ Seed tamamlandı!');
-  console.log('\nTest OTP: 123456 (bütün nömrələr üçün)');
+  console.log('\nSeed completed.');
+  console.log('Test OTP:', process.env.OTP_TEST_CODE ?? '123456');
   console.log('Admin:    +994700000001');
   console.log('Company:  +994700000002');
-  console.log('Workers:  +994700000003..5');
+  console.log('Workers:  +994700000003 approved, +994700000004 pending, +994700000005 rejected');
+}
+
+async function seedWorker(input: {
+  phone: string;
+  name: string;
+  position: string;
+  status: string;
+  skills: Array<Record<string, unknown>>;
+  languages: string[];
+  reject_reason?: string;
+}) {
+  const user = await prisma.user.upsert({
+    where: { phone: input.phone },
+    update: { role: 'worker', name: input.name, is_active: true },
+    create: { phone: input.phone, role: 'worker', name: input.name },
+  });
+
+  await prisma.worker.upsert({
+    where: { user_id: user.id },
+    update: {
+      position: input.position,
+      status: input.status,
+      skills: input.skills,
+      languages: input.languages,
+      reject_reason: input.reject_reason ?? null,
+      approved_at: input.status === 'approved' ? new Date() : null,
+    },
+    create: {
+      user_id: user.id,
+      position: input.position,
+      status: input.status,
+      skills: input.skills,
+      languages: input.languages,
+      reject_reason: input.reject_reason,
+      approved_at: input.status === 'approved' ? new Date() : null,
+    },
+  });
+  console.log('Worker:', input.phone, input.status);
 }
 
 main()

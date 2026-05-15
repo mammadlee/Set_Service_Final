@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
-import { requireRole } from '../../middleware/rbac';
+import { requireApprovedAccount, requireRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import * as Service from './ratings.service';
 
@@ -16,7 +16,7 @@ const CreateRatingSchema = z.object({
 });
 
 // POST /ratings
-router.post('/', requireRole('company', 'super_admin'), validate(CreateRatingSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', requireRole('company', 'super_admin'), requireApprovedAccount, validate(CreateRatingSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.status(201).json(await Service.createRating(req.user!.sub, req.user!.role, req.body));
   } catch (e) { next(e); }

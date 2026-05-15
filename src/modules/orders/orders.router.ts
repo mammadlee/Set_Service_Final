@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
-import { requireRole } from '../../middleware/rbac';
+import { requireApprovedAccount, requireRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import * as Service from './orders.service';
 
@@ -21,7 +21,7 @@ const CancelSchema = z.object({
 });
 
 // GET /orders
-router.get('/', requireRole('company', 'super_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', requireRole('company', 'super_admin'), requireApprovedAccount, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -33,21 +33,21 @@ router.get('/', requireRole('company', 'super_admin'), async (req: Request, res:
 });
 
 // POST /orders
-router.post('/', requireRole('company', 'super_admin'), validate(CreateOrderSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/', requireRole('company', 'super_admin'), requireApprovedAccount, validate(CreateOrderSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.status(201).json(await Service.createOrder(req.user!.sub, req.user!.role, req.body));
   } catch (e) { next(e); }
 });
 
 // GET /orders/:id
-router.get('/:id', requireRole('company', 'super_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:id', requireRole('company', 'super_admin'), requireApprovedAccount, async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await Service.getOrder(req.params.id, req.user!.sub, req.user!.role));
   } catch (e) { next(e); }
 });
 
 // PATCH /orders/:id
-router.patch('/:id', requireRole('company', 'super_admin'), validate(CancelSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/:id', requireRole('company', 'super_admin'), requireApprovedAccount, validate(CancelSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await Service.cancelOrder(req.params.id, req.user!.sub, req.user!.role));
   } catch (e) { next(e); }

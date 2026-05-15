@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
-import { requireRole } from '../../middleware/rbac';
+import { requireApprovedAccount, requireRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import * as Service from './assignments.service';
 
@@ -27,14 +27,14 @@ assignRouter.post('/:id/assign', requireRole('super_admin'), validate(AssignSche
 });
 
 // GET /assignments/me
-router.get('/me', requireRole('worker'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/me', requireRole('worker'), requireApprovedAccount, async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await Service.getMyAssignments(req.user!.sub, req.query.status as string));
   } catch (e) { next(e); }
 });
 
 // PATCH /assignments/:id/status
-router.patch('/:id/status', requireRole('worker'), validate(StatusSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/:id/status', requireRole('worker'), requireApprovedAccount, validate(StatusSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await Service.updateAssignmentStatus(req.params.id, req.user!.sub, req.body.status));
   } catch (e) { next(e); }

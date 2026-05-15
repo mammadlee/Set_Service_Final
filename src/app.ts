@@ -18,6 +18,7 @@ import ordersRouter from './modules/orders/orders.router';
 import assignmentsRouter, { assignRouter } from './modules/assignments/assignments.router';
 import attendanceRouter from './modules/attendance/attendance.router';
 import ratingsRouter from './modules/ratings/ratings.router';
+import notificationsRouter from './modules/notifications/notifications.router';
 
 const app = express();
 
@@ -37,6 +38,12 @@ const authLimiter = rateLimit({
 
 app.use(globalLimiter);
 app.use('/v1/auth/register', authLimiter);
+app.use('/v1/auth/worker/register', authLimiter);
+app.use('/v1/auth/worker/request-otp', authLimiter);
+app.use('/v1/auth/worker/login', authLimiter);
+app.use('/v1/auth/company/register', authLimiter);
+app.use('/v1/auth/company/login', authLimiter);
+app.use('/v1/auth/admin/login', authLimiter);
 app.use('/v1/auth/verify-otp', authLimiter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
@@ -61,6 +68,7 @@ app.use('/v1/orders', ordersRouter);
 app.use('/v1/assignments', assignmentsRouter);
 app.use('/v1/attendance', attendanceRouter);
 app.use('/v1/ratings', ratingsRouter);
+app.use('/v1/notifications', notificationsRouter);
 
 // ── Sentry error handler (Sentry-nin öz handler-i) ───────────────────────────
 Sentry.setupExpressErrorHandler(app);

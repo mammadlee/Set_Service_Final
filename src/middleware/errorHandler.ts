@@ -21,7 +21,12 @@ export function errorHandler(
 
   // Bizim AppError
   if (err instanceof AppError) {
-    res.status(err.statusCode).json({ error: err.message, code: err.code });
+    res.status(err.statusCode).json({
+      error: err.message,
+      code: err.code,
+      details: err.details,
+      timestamp: new Date().toISOString(),
+    });
     return;
   }
 

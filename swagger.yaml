@@ -2,20 +2,18 @@ openapi: 3.0.3
 
 info:
   title: HireApp API
-  description: |
-    HireApp MVP — SET Service MMC
-    3 rol: super_admin, company, worker
-    Auth: Bearer JWT (access token, 15 dəq)
   version: 1.0.0
-  contact:
-    name: M2Tech
-    email: dev@m2tech.az
+  description: |
+    HireApp MVP REST API for Worker, Company, and Super Admin roles.
+
+    Core worker flow:
+    Worker registers -> verifies OTP -> becomes pending_approval -> super admin approves or rejects -> approved worker can request login OTP and receive tokens.
 
 servers:
-  - url: https://api.hireapp.az/v1
-    description: Production
   - url: http://localhost:3000/v1
     description: Local development
+  - url: https://api.hireapp.az/v1
+    description: Production
 
 components:
   securitySchemes:
@@ -24,785 +22,425 @@ components:
       scheme: bearer
       bearerFormat: JWT
 
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
   schemas:
-
-    # ── AUTH ──
-    RegisterRequest:
-      type: object
-      required: [phone, role, name]
-      properties:
-        phone:
-          type: string
-          example: "+994501234567"
-          description: Beynəlxalq format
-        role:
-          type: string
-          enum: [super_admin, company, worker]
-        name:
-          type: string
-          example: "Əli Həsənov"
-
-    RegisterResponse:
+    Error:
       type: object
       properties:
-        user_id:
+        error: { type: string, example: Worker is not approved for login. }
+        code: { type: string, example: WORKER_NOT_APPROVED }
+        details: { type: object, nullable: true, example: { status: pending_approval } }
+        timestamp: { type: string, format: date-time }
+
+    PaginationMeta:
+      type: object
+      properties:
+        page: { type: integer, example: 1 }
+        limit: { type: integer, example: 20 }
+        total: { type: integer, example: 42 }
+        total_pages: { type: integer, example: 3 }
+
+    WorkerStatus:
+      type: string
+      enum: [draft, pending_otp, pending_approval, approved, rejected, suspended, inactive]
+      example: pending_approval
+
+    CompanyStatus:
+      type: string
+      enum: [pending_approval, approved, rejected, suspended, inactive]
+      example: approved
+
+    Skill:
+      oneOf:
+        - type: string
+          example: waiter
+        - type: object
+          properties:
+            name: { type: string, example: waiter }
+            level: { type: integer, minimum: 1, maximum: 5, example: 4 }
+
+    Document:
+      type: object
+      required: [type, url]
+      properties:
+        type: { type: string, example: passport }
+        url: { type: string, format: uri, example: https://cdn.example.com/documents/passport.pdf }
+        name: { type: string, example: Passport scan }
+
+    WorkerRegisterRequest:
+      type: object
+      required: [full_name, phone, position]
+      properties:
+        full_name: { type: string, example: Ali Hasanov }
+        phone: { type: string, example: "+994501234567" }
+        position: { type: string, example: Waiter }
+        skills:
+          type: array
+          items: { $ref: '#/components/schemas/Skill' }
+        languages:
+          type: array
+          items: { type: string }
+          example: [az, en]
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+
+    CompanyRegisterRequest:
+      type: object
+      required: [name, contact_name, phone]
+      properties:
+        name: { type: string, example: Grand Hotel Baku }
+        contact_name: { type: string, example: Nigar Aliyeva }
+        phone: { type: string, example: "+994501234568" }
+        docs_url: { type: string, format: uri }
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+
+    RequestOtpRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: { type: string, example: "+994501234567" }
+        purpose:
           type: string
-          format: uuid
-        otp_sent:
-          type: boolean
-          example: true
+          enum: [worker_registration, worker_login]
+          example: worker_login
+
+    LoginRequest:
+      type: object
+      required: [phone]
+      properties:
+        phone: { type: string, example: "+994501234567" }
 
     VerifyOtpRequest:
       type: object
       required: [phone, otp_code]
       properties:
-        phone:
-          type: string
-          example: "+994501234567"
+        phone: { type: string, example: "+994501234567" }
         otp_code:
           type: string
           example: "123456"
-          description: Test mühitində həmişə 123456
-
-    TokenResponse:
-      type: object
-      properties:
-        access_token:
+          description: Development only when OTP_TEST_MODE=true.
+        purpose:
           type: string
-          description: JWT, 15 dəqiqə ömrü
-        refresh_token:
-          type: string
-          description: 30 gün ömrü
-        user:
-          $ref: '#/components/schemas/UserProfile'
+          enum: [worker_registration, worker_login, company_registration, company_login, admin_login]
+          example: worker_registration
 
     RefreshRequest:
       type: object
       required: [refresh_token]
       properties:
-        refresh_token:
-          type: string
+        refresh_token: { type: string }
 
     LogoutRequest:
       type: object
       required: [refresh_token]
       properties:
-        refresh_token:
-          type: string
+        refresh_token: { type: string }
 
-    UpdateFcmTokenRequest:
-      type: object
-      required: [fcm_token]
-      properties:
-        fcm_token:
-          type: string
-          description: Flutter tərəfindən hər loginda göndərilir
-
-    # ── USER ──
-    UserProfile:
+    TokenResponse:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        phone:
-          type: string
-        role:
-          type: string
-          enum: [super_admin, company, worker]
-        name:
-          type: string
-        created_at:
-          type: string
-          format: date-time
+        access_token: { type: string }
+        refresh_token: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            phone: { type: string }
+            role: { type: string, enum: [super_admin, company, worker] }
+            name: { type: string }
+            worker:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                status: { $ref: '#/components/schemas/WorkerStatus' }
+            company:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                status: { $ref: '#/components/schemas/CompanyStatus' }
 
-    # ── COMPANY ──
-    CompanyProfile:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        user_id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        status:
-          type: string
-          enum: [pending, approved, rejected]
-        docs_url:
-          type: string
-          description: S3 linkidir, DB-də saxlanılmır fayl özü
-        created_at:
-          type: string
-          format: date-time
-
-    UpdateCompanyRequest:
-      type: object
-      properties:
-        name:
-          type: string
-        docs_url:
-          type: string
-
-    ApproveCompanyRequest:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [approved, rejected]
-        reason:
-          type: string
-          description: Rədd səbəbi (rejected olduqda)
-
-    # ── WORKER ──
     WorkerProfile:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        user_id:
-          type: string
-          format: uuid
-        name:
-          type: string
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string }
+        position: { type: string }
         skills:
           type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-                example: "aşpaz"
-              level:
-                type: integer
-                minimum: 1
-                maximum: 5
-          description: JSONB sütununda saxlanılır
-        rating_avg:
-          type: number
-          format: float
-          example: 4.3
-        availability:
-          type: boolean
+          items: { $ref: '#/components/schemas/Skill' }
+        languages:
+          type: array
+          items: { type: string }
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+        status: { $ref: '#/components/schemas/WorkerStatus' }
+        reject_reason: { type: string, nullable: true }
+        availability: { type: boolean }
+        rating_avg: { type: number, example: 4.5 }
+        rating_count: { type: integer, example: 12 }
+        created_at: { type: string, format: date-time }
 
-    UpdateWorkerRequest:
+    CompanyProfile:
       type: object
       properties:
-        skills:
-          type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-              level:
-                type: integer
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        contact_name: { type: string }
+        phone: { type: string }
+        status: { $ref: '#/components/schemas/CompanyStatus' }
+        docs_url: { type: string, nullable: true }
+        reject_reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
 
-    # ── ORDERS ──
-    CreateOrderRequest:
+    RejectRequest:
       type: object
-      required: [shift_start, shift_end, required_count]
+      required: [reason]
       properties:
-        shift_start:
+        reason: { type: string, minLength: 3, example: Documents are incomplete. }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type:
           type: string
-          format: date-time
-          example: "2026-05-10T08:00:00Z"
-        shift_end:
+          enum: [worker_approved, worker_rejected, company_approved, company_rejected, job_assigned, system]
+        channel:
           type: string
-          format: date-time
-          example: "2026-05-10T20:00:00Z"
-        required_count:
-          type: integer
-          minimum: 1
-          example: 5
-        required_skills:
-          type: array
-          items:
-            type: string
-          example: ["aşpaz", "ofisiant"]
-        notes:
-          type: string
+          enum: [in_app, sms, email, push]
+        title: { type: string }
+        body: { type: string }
+        metadata: { type: object }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
 
     Order:
       type: object
       properties:
-        id:
-          type: string
-          format: uuid
-        company_id:
-          type: string
-          format: uuid
-        shift_start:
-          type: string
-          format: date-time
-        shift_end:
-          type: string
-          format: date-time
-        required_count:
-          type: integer
+        id: { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        shift_start: { type: string, format: date-time }
+        shift_end: { type: string, format: date-time }
+        required_count: { type: integer }
         required_skills:
           type: array
-          items:
-            type: string
-        status:
-          type: string
-          enum: [draft, active, completed, cancelled]
-        assigned_count:
-          type: integer
-        created_at:
-          type: string
-          format: date-time
+          items: { type: string }
+        status: { type: string, enum: [draft, active, completed, cancelled] }
 
-    # ── ASSIGNMENTS ──
-    AssignWorkersRequest:
-      type: object
-      required: [worker_ids]
-      properties:
-        worker_ids:
-          type: array
-          items:
-            type: string
-            format: uuid
-          minItems: 1
-
-    Assignment:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        order_id:
-          type: string
-          format: uuid
-        worker_id:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum: [pending, accepted, rejected]
-        assigned_at:
-          type: string
-          format: date-time
-
-    UpdateAssignmentStatusRequest:
-      type: object
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [accepted, rejected]
-
-    # ── ATTENDANCE ──
-    CheckinRequest:
-      type: object
-      required: [qr_token]
-      properties:
-        qr_token:
-          type: string
-          description: HMAC-SHA256 token, 30 saniyəlik ömür
-
-    CheckinResponse:
-      type: object
-      properties:
-        log_id:
-          type: string
-          format: uuid
-        checkin_time:
-          type: string
-          format: date-time
-
-    CheckoutResponse:
-      type: object
-      properties:
-        log_id:
-          type: string
-          format: uuid
-        checkout_time:
-          type: string
-          format: date-time
-        duration_minutes:
-          type: integer
-
-    QrTokenResponse:
-      type: object
-      properties:
-        qr_token:
-          type: string
-          description: 30 saniyəyə bir yenilənməlidir
-        expires_at:
-          type: string
-          format: date-time
-
-    # ── RATINGS ──
-    CreateRatingRequest:
-      type: object
-      required: [worker_id, order_id, score]
-      properties:
-        worker_id:
-          type: string
-          format: uuid
-        order_id:
-          type: string
-          format: uuid
-        score:
-          type: integer
-          minimum: 1
-          maximum: 5
-        comment:
-          type: string
-
-    Rating:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        worker_id:
-          type: string
-          format: uuid
-        order_id:
-          type: string
-          format: uuid
-        score:
-          type: integer
-        comment:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-
-    # ── ERRORS ──
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
-          example: "Giriş qadağandır"
-        code:
-          type: string
-          example: "FORBIDDEN"
-
-# ─────────────────────────────────────────
-# PATHS
-# ─────────────────────────────────────────
 paths:
-
-  # ════════════════════════════════════════
-  # AUTH
-  # ════════════════════════════════════════
-
   /auth/register:
     post:
       tags: [Auth]
-      summary: Qeydiyyat (OTP göndər)
-      description: |
-        Telefon nömrəsi ilə qeydiyyat. OTP SMS ilə göndərilir.
-        **Test mühitində OTP həmişə `123456`**
+      summary: Compatibility registration endpoint for worker or company
+      description: Prefer /auth/worker/register and /auth/company/register for new clients.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
+              oneOf:
+                - allOf:
+                    - $ref: '#/components/schemas/WorkerRegisterRequest'
+                    - type: object
+                      required: [role]
+                      properties:
+                        role: { type: string, enum: [worker] }
+                - allOf:
+                    - $ref: '#/components/schemas/CompanyRegisterRequest'
+                    - type: object
+                      required: [role]
+                      properties:
+                        role: { type: string, enum: [company] }
       responses:
-        '201':
-          description: OTP göndərildi
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RegisterResponse'
-        '400':
-          description: Validation xətası (telefon formatı yanlışdır)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '201': { description: Account created and OTP sent }
+
+  /auth/worker/register:
+    post:
+      tags: [Auth]
+      summary: Register worker and send registration OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerRegisterRequest' }
+      responses:
+        '201': { description: Worker created with pending_otp status }
         '409':
-          description: Bu telefon artıq qeydiyyatdadır
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: Phone already registered
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /auth/worker/request-otp:
+    post:
+      tags: [Auth]
+      summary: Request worker OTP for login or registration resend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestOtpRequest' }
+      responses:
+        '200': { description: OTP sent or generic safe response }
+        '403':
+          description: Worker is not approved or registration is not pending OTP
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429':
+          description: OTP cooldown, rate limit, or temporary block
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /auth/worker/login:
+    post:
+      tags: [Auth]
+      summary: Start approved worker OTP login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: OTP sent }
+        '403':
+          description: Worker is pending_approval, rejected, suspended, inactive, or unknown
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /auth/company/register:
+    post:
+      tags: [Auth]
+      summary: Register company and send OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanyRegisterRequest' }
+      responses:
+        '201': { description: Company created with pending_approval status }
+
+  /auth/company/login:
+    post:
+      tags: [Auth]
+      summary: Start approved company OTP login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: OTP sent }
+        '403': { description: Company is not approved }
+
+  /auth/admin/login:
+    post:
+      tags: [Auth]
+      summary: Start super admin OTP login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: OTP sent or generic safe response }
 
   /auth/verify-otp:
     post:
       tags: [Auth]
-      summary: OTP doğrula → token al
+      summary: Verify OTP; registration OTP updates status, login OTP returns tokens
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/VerifyOtpRequest'
+            schema: { $ref: '#/components/schemas/VerifyOtpRequest' }
       responses:
         '200':
-          description: Giriş uğurlu, token-lər verilir
+          description: OTP verified
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/TokenResponse'
+                  - type: object
+                    properties:
+                      user_id: { type: string, format: uuid }
+                      worker_id: { type: string, format: uuid }
+                      status: { $ref: '#/components/schemas/WorkerStatus' }
         '401':
-          description: OTP yanlış və ya vaxtı keçib
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: Invalid or expired OTP
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '429':
-          description: Çox sayda cəhd — 5 dəqiqə gözlə
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          description: OTP blocked after failed attempts
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /auth/refresh:
     post:
       tags: [Auth]
-      summary: Access token yenilə
+      summary: Rotate refresh token and issue a new token pair
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshRequest'
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
       responses:
-        '200':
-          description: Yeni access token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenResponse'
-        '401':
-          description: Refresh token etibarsızdır və ya müddəti bitib
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: New token pair }
+        '401': { description: Invalid refresh token }
 
   /auth/logout:
     post:
       tags: [Auth]
-      summary: Çıxış (refresh token-i blacklist et)
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Revoke refresh token
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/LogoutRequest'
+            schema: { $ref: '#/components/schemas/LogoutRequest' }
       responses:
-        '204':
-          description: Uğurla çıxıldı
-        '401':
-          description: Token etibarsızdır
+        '204': { description: Logged out }
 
   /auth/fcm-token:
     patch:
       tags: [Auth]
-      summary: FCM push token yenilə
-      description: Flutter hər loginda bu endpoint-ə FCM token göndərir
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Update current user's FCM token
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateFcmTokenRequest'
+              type: object
+              required: [fcm_token]
+              properties:
+                fcm_token: { type: string }
       responses:
-        '204':
-          description: Token yeniləndi
-        '401':
-          description: Giriş tələb olunur
-
-  # ════════════════════════════════════════
-  # COMPANIES
-  # ════════════════════════════════════════
-
-  /companies/me:
-    get:
-      tags: [Companies]
-      summary: Öz şirkət profilini gör
-      description: Yalnız company rolu
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Şirkət profili
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompanyProfile'
-        '401':
-          description: Giriş tələb olunur
-        '403':
-          description: Yalnız company rolu üçün
-
-    patch:
-      tags: [Companies]
-      summary: Şirkət profilini yenilə
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateCompanyRequest'
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompanyProfile'
-        '401':
-          description: Giriş tələb olunur
-
-  /admin/companies:
-    get:
-      tags: [Admin — Companies]
-      summary: Bütün şirkətlərin siyahısı
-      description: Yalnız super_admin
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [pending, approved, rejected]
-          description: Statusla filtr
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CompanyProfile'
-        '403':
-          description: Yalnız super_admin
-
-  /admin/companies/{id}/approve:
-    patch:
-      tags: [Admin — Companies]
-      summary: Şirkəti təsdiqlə / rədd et
-      description: Yalnız super_admin. Status dəyişdikdə şirkətə push bildiriş gedir.
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApproveCompanyRequest'
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompanyProfile'
-        '403':
-          description: Yalnız super_admin
-        '404':
-          description: Şirkət tapılmadı
-
-  # ════════════════════════════════════════
-  # WORKERS
-  # ════════════════════════════════════════
+        '204': { description: FCM token updated }
 
   /workers/me:
     get:
       tags: [Workers]
-      summary: Öz işçi profilini gör
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Get approved worker profile
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkerProfile'
-        '403':
-          description: Yalnız worker rolu
-
+        '200': { description: Worker profile, content: { application/json: { schema: { $ref: '#/components/schemas/WorkerProfile' } } } }
+        '403': { description: Worker is not approved }
     patch:
       tags: [Workers]
-      summary: İşçi profilini yenilə (skills, availability)
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateWorkerRequest'
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkerProfile'
-
-  /admin/workers:
-    get:
-      tags: [Admin — Workers]
-      summary: Bütün işçilərin siyahısı
-      description: Yalnız super_admin. Sifariş üçün işçi seçərkən istifadə olunur.
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: skills
-          in: query
-          schema:
-            type: string
-          example: "aşpaz,ofisiant"
-          description: Vergüllə ayrılmış bacarıqlarla filtr
-        - name: available
-          in: query
-          schema:
-            type: boolean
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/WorkerProfile'
-        '403':
-          description: Yalnız super_admin
-
-  # ════════════════════════════════════════
-  # ORDERS
-  # ════════════════════════════════════════
-
-  /orders:
-    get:
-      tags: [Orders]
-      summary: Sifarişlər siyahısı
-      description: |
-        - **company**: yalnız öz sifarişlərini görür
-        - **super_admin**: hamısını görür
-        - **worker**: bu endpoint-ə girə bilməz
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [draft, active, completed, cancelled]
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Order'
-                  total:
-                    type: integer
-                  page:
-                    type: integer
-        '403':
-          description: Worker bu endpoint-ə girə bilməz
-
-    post:
-      tags: [Orders]
-      summary: Yeni sifariş yarat
-      description: |
-        company və super_admin yarada bilər.
-        Yaradıldıqda super_admin-ə push bildiriş gedir.
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
-      responses:
-        '201':
-          description: Yaradıldı
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Order'
-        '400':
-          description: Validation xətası
-        '403':
-          description: Şirkət hələ təsdiqlənməyib (status != approved)
-
-  /orders/{id}:
-    get:
-      tags: [Orders]
-      summary: Sifariş detalları
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Order'
-        '403':
-          description: Bu sifarişə giriş icazəsi yoxdur
-        '404':
-          description: Sifariş tapılmadı
-
-    patch:
-      tags: [Orders]
-      summary: Sifarişi ləğv et
-      description: Yalnız status=cancelled dəyişikliyi mümkündür
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+      security: [{ BearerAuth: [] }]
+      summary: Update approved worker profile
       requestBody:
         required: true
         content:
@@ -810,295 +448,352 @@ paths:
             schema:
               type: object
               properties:
-                status:
-                  type: string
-                  enum: [cancelled]
+                skills: { type: array, items: { $ref: '#/components/schemas/Skill' } }
+                languages: { type: array, items: { type: string } }
+                documents: { type: array, items: { $ref: '#/components/schemas/Document' } }
+                availability: { type: boolean }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Order'
-        '403':
-          description: Yalnız öz sifarişini ləğv edə bilər
-        '404':
-          description: Tapılmadı
+        '200': { description: Updated worker profile }
 
-  # ════════════════════════════════════════
-  # ASSIGNMENTS
-  # ════════════════════════════════════════
+  /companies/me:
+    get:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Get approved company profile
+      responses:
+        '200': { description: Company profile, content: { application/json: { schema: { $ref: '#/components/schemas/CompanyProfile' } } } }
+        '403': { description: Company is not approved }
+    patch:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Update approved company profile
+      responses:
+        '200': { description: Updated company profile }
+
+  /admin/workers:
+    get:
+      tags: [Admin - Workers]
+      security: [{ BearerAuth: [] }]
+      summary: List workers with pagination, search, status filter, and created_at sort
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/WorkerStatus' }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200': { description: Paginated workers }
+        '403': { description: Super admin only }
+
+  /admin/workers/{id}:
+    get:
+      tags: [Admin - Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Get full worker details, documents, OTP status, and approval status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Worker detail }
+        '404': { description: Worker not found }
+
+  /admin/workers/{id}/approve:
+    patch:
+      tags: [Admin - Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Approve worker, create audit log, and notify worker
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Worker approved }
+
+  /admin/workers/{id}/reject:
+    patch:
+      tags: [Admin - Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Reject worker with reason, create audit log, and notify worker
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRequest' }
+      responses:
+        '200': { description: Worker rejected }
+
+  /admin/companies:
+    get:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: List companies
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/CompanyStatus' }
+        - name: search
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: Paginated companies }
+
+  /admin/companies/{id}:
+    get:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Get company details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Company detail }
+        '404': { description: Company not found }
+
+  /admin/companies/{id}/approve:
+    patch:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Approve company
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Company approved }
+
+  /admin/companies/{id}/reject:
+    patch:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Reject company
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRequest' }
+      responses:
+        '200': { description: Company rejected }
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      security: [{ BearerAuth: [] }]
+      summary: List my in-app notifications
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: unread_only
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200': { description: Paginated notifications }
+
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      security: [{ BearerAuth: [] }]
+      summary: Mark one notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Notification marked read }
+
+  /notifications/read-all:
+    patch:
+      tags: [Notifications]
+      security: [{ BearerAuth: [] }]
+      summary: Mark all notifications as read
+      responses:
+        '200': { description: Notifications marked read }
+
+  /orders:
+    get:
+      tags: [Orders]
+      security: [{ BearerAuth: [] }]
+      summary: List orders for company or all orders for super admin
+      responses:
+        '200': { description: Orders list }
+    post:
+      tags: [Orders]
+      security: [{ BearerAuth: [] }]
+      summary: Create order as approved company
+      responses:
+        '201': { description: Order created }
+
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      security: [{ BearerAuth: [] }]
+      summary: Get order details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Order detail }
+    patch:
+      tags: [Orders]
+      security: [{ BearerAuth: [] }]
+      summary: Cancel an order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [cancelled] }
+      responses:
+        '200': { description: Order cancelled }
 
   /orders/{id}/assign:
     post:
       tags: [Assignments]
-      summary: Sifarişə işçi təyin et
-      description: |
-        Yalnız super_admin.
-        Hər təyin edilən işçiyə push bildiriş gedir.
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Assign approved workers to an active order
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AssignWorkersRequest'
+          schema: { type: string, format: uuid }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  assigned_count:
-                    type: integer
-                  assignments:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Assignment'
-        '400':
-          description: worker_ids boşdur və ya sifariş aktiv deyil
-        '403':
-          description: Yalnız super_admin
-        '404':
-          description: Sifariş tapılmadı
+        '200': { description: Workers assigned }
 
   /assignments/me:
     get:
       tags: [Assignments]
-      summary: İşçinin öz sifarişləri
-      description: Yalnız worker rolu. Status ilə filtr edilə bilər.
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [pending, accepted, rejected]
+      security: [{ BearerAuth: [] }]
+      summary: List approved worker assignments
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Assignment'
-        '403':
-          description: Yalnız worker rolu
+        '200': { description: Assignments }
 
   /assignments/{id}/status:
     patch:
       tags: [Assignments]
-      summary: Sifarişi qəbul et / rədd et
-      description: |
-        Yalnız worker.
-        Dəyişiklikdə müəssisəyə və admina push bildiriş gedir.
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Accept or reject an assignment as approved worker
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: string
-            format: uuid
+          schema: { type: string, format: uuid }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateAssignmentStatusRequest'
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [accepted, rejected] }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Assignment'
-        '403':
-          description: Yalnız öz assignment-ini dəyişə bilər
-        '404':
-          description: Tapılmadı
-
-  # ════════════════════════════════════════
-  # ATTENDANCE (QR)
-  # ════════════════════════════════════════
+        '200': { description: Assignment status updated }
 
   /attendance/qr-token:
     get:
-      tags: [Attendance — QR]
-      summary: QR token al (planşet üçün)
-      description: |
-        Müəssisənin planşetindəki ekranda göstərilir.
-        Token HMAC-SHA256 ilə yaradılır, **30 saniyədə bir dəyişir**.
-        Flutter hər 25 saniyədə bu endpoint-ə sorğu atıb QR-i yeniləyir.
-      security:
-        - BearerAuth: []
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: Generate QR token for approved company
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/QrTokenResponse'
-        '403':
-          description: Yalnız company rolu
+        '200': { description: QR token }
 
   /attendance/checkin:
     post:
-      tags: [Attendance — QR]
-      summary: QR ilə giriş qeyd et
-      description: |
-        İşçi telefonu ilə QR oxudur, bu endpoint çağırılır.
-        Müəssisəyə push bildiriş gedir.
-      security:
-        - BearerAuth: []
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: Check in with QR token as approved worker
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CheckinRequest'
+              type: object
+              required: [qr_token]
+              properties:
+                qr_token: { type: string }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CheckinResponse'
-        '401':
-          description: QR token etibarsızdır
-        '410':
-          description: QR token vaxtı keçib (30 saniyədən çox)
-        '409':
-          description: Bu işçi artıq giriş edib
+        '200': { description: Check-in recorded }
 
   /attendance/checkout:
     post:
-      tags: [Attendance — QR]
-      summary: QR ilə çıxış qeyd et
-      description: İşçi iş bitdikdə yenidən QR oxudur.
-      security:
-        - BearerAuth: []
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: Check out with QR token as approved worker
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CheckinRequest'
+              type: object
+              required: [qr_token]
+              properties:
+                qr_token: { type: string }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CheckoutResponse'
-        '400':
-          description: Giriş qeyd edilməyib, çıxış mümkün deyil
-        '410':
-          description: QR token vaxtı keçib
-
-  # ════════════════════════════════════════
-  # RATINGS
-  # ════════════════════════════════════════
+        '200': { description: Check-out recorded }
 
   /ratings:
     post:
       tags: [Ratings]
-      summary: İşçini qiymətləndir
-      description: |
-        Yalnız company (öz sifarişi üçün) və super_admin.
-        Sifariş status=completed olmalıdır.
-        Eyni order+worker cütü üçün yalnız bir reytinq mümkündür.
-        Qiymətləndirmə sonrası worker.rating_avg avtomatik yenilənir.
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateRatingRequest'
+      security: [{ BearerAuth: [] }]
+      summary: Create worker rating
       responses:
-        '201':
-          description: Yaradıldı
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Rating'
-        '400':
-          description: Sifariş tamamlanmayıb və ya artıq qiymətləndirilib
-        '403':
-          description: Yalnız öz sifarişini qiymətləndirə bilər
-        '404':
-          description: İşçi və ya sifariş tapılmadı
+        '201': { description: Rating created }
 
   /ratings/worker/{worker_id}:
     get:
       tags: [Ratings]
-      summary: İşçinin reytinq tarixçəsi
-      security:
-        - BearerAuth: []
+      security: [{ BearerAuth: [] }]
+      summary: Get worker rating history
       parameters:
         - name: worker_id
           in: path
           required: true
-          schema:
-            type: string
-            format: uuid
+          schema: { type: string, format: uuid }
       responses:
-        '200':
-          description: Uğurlu
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  avg:
-                    type: number
-                    example: 4.3
-                  total:
-                    type: integer
-                  ratings:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Rating'
-        '404':
-          description: İşçi tapılmadı
+        '200': { description: Worker ratings }
 
-# ─────────────────────────────────────────
-# TAGS (Swagger UI qruplaması)
-# ─────────────────────────────────────────
 tags:
   - name: Auth
-    description: Qeydiyyat, giriş, token idarəetməsi
-  - name: Companies
-    description: Müəssisə profili (öz hesabı)
-  - name: Admin — Companies
-    description: Super admin — müəssisə idarəetməsi
   - name: Workers
-    description: İşçi profili (öz hesabı)
-  - name: Admin — Workers
-    description: Super admin — işçi siyahısı
+  - name: Companies
+  - name: Admin - Workers
+  - name: Admin - Companies
+  - name: Notifications
   - name: Orders
-    description: Sifariş yaratma və idarəetmə
   - name: Assignments
-    description: İşçi təyinatı və status idarəetməsi
-  - name: Attendance — QR
-    description: QR token, giriş-çıxış qeydləri
+  - name: Attendance
   - name: Ratings
-    description: İşçi qiymətləndirməsi
-
-
-    # https://editor.swagger.io/ bu linkdə swagger editor ilə açıb yuxarıdakı kodu yapışdıraraq API sənədləşməsini vizuallaşdıra bilərsiniz. Hər endpoint üçün nümunə sorğular və cavablar əlavə etmək, həmçinin Swagger UI-də test etmək mümkündür.

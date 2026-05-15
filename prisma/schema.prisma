@@ -1,12 +1,3 @@
-// HireApp — Prisma Schema
-// PostgreSQL 15+
-// M2Tech · May 2026
-//
-// Əmrlər:
-//   npx prisma migrate dev --name init   → cədvəllər yaranır
-//   npx prisma studio                    → browser-da data görürsən
-//   npx prisma generate                  → Prisma Client yenilənir
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -16,20 +7,36 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─────────────────────────────────────────
-// ENUMS
-// ─────────────────────────────────────────
-
 enum Role {
   super_admin
   company
   worker
 }
 
-enum CompanyStatus {
-  pending
+enum WorkerStatus {
+  draft
+  pending_otp
+  pending_approval
   approved
   rejected
+  suspended
+  inactive
+}
+
+enum CompanyStatus {
+  pending_approval
+  approved
+  rejected
+  suspended
+  inactive
+}
+
+enum OtpPurpose {
+  worker_registration
+  worker_login
+  company_registration
+  company_login
+  admin_login
 }
 
 enum OrderStatus {
@@ -43,116 +50,178 @@ enum AssignmentStatus {
   pending
   accepted
   rejected
+  cancelled
+  completed
 }
 
-// ─────────────────────────────────────────
-// USERS
-// Bütün 3 rol bu cədvəldə — role ilə ayrılır
-// ─────────────────────────────────────────
+enum NotificationType {
+  worker_approved
+  worker_rejected
+  company_approved
+  company_rejected
+  job_assigned
+  system
+}
+
+enum NotificationChannel {
+  in_app
+  sms
+  email
+  push
+}
+
+enum AuditAction {
+  worker_approved
+  worker_rejected
+  company_approved
+  company_rejected
+  status_changed
+  login_failed
+  otp_blocked
+}
 
 model User {
-  id         String   @id @default(uuid())
-  phone      String   @unique          // +994501234567 formatı
+  id         String    @id @default(uuid())
+  phone      String    @unique
   role       Role
   name       String
-  fcm_token  String?                   // Push bildiriş üçün — Flutter hər loginda göndərir
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  fcm_token  String?
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+  deleted_at DateTime?
 
-  // Relations
-  company    Company?
-  worker     Worker?
-  otp        Otp?
-  refresh_tokens RefreshToken[]
-  ratings_given  Rating[]       @relation("rater")
+  admin             Admin?
+  company           Company?
+  worker            Worker?
+  otp_codes         OtpCode[]
+  refresh_tokens    RefreshToken[]
+  ratings_given     Rating[]       @relation("rater")
+  notifications     Notification[] @relation("notification_recipient")
+  audit_logs        AuditLog[]     @relation("audit_actor")
+  approved_workers  Worker[]       @relation("worker_approved_by")
+  rejected_workers  Worker[]       @relation("worker_rejected_by")
+  approved_companies Company[]      @relation("company_approved_by")
+  rejected_companies Company[]      @relation("company_rejected_by")
 
   @@index([phone])
+  @@index([role])
+  @@index([deleted_at])
   @@map("users")
 }
 
-// ─────────────────────────────────────────
-// OTP
-// Hər telefon nömrəsinə 1 aktiv OTP
-// ─────────────────────────────────────────
+model Admin {
+  id          String   @id @default(uuid())
+  user_id     String   @unique
+  permissions Json     @default("[]")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
 
-model Otp {
-  id         String   @id @default(uuid())
-  user_id    String   @unique
-  code       String                    // 6 rəqəmli, test mühitində həmişə "123456"
-  expires_at DateTime                  // 5 dəqiqə
-  attempts   Int      @default(0)      // Maksimum 3 — sonra yenidən göndər
-  created_at DateTime @default(now())
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@map("otps")
+  @@map("admins")
 }
-
-// ─────────────────────────────────────────
-// REFRESH TOKENS
-// Logout-da blacklist — token silinir
-// ─────────────────────────────────────────
-
-model RefreshToken {
-  id         String   @id @default(uuid())
-  user_id    String
-  token      String   @unique
-  expires_at DateTime
-  created_at DateTime @default(now())
-
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([token])
-  @@map("refresh_tokens")
-}
-
-// ─────────────────────────────────────────
-// COMPANIES
-// ─────────────────────────────────────────
-
-model Company {
-  id         String        @id @default(uuid())
-  user_id    String        @unique
-  name       String
-  status     CompanyStatus @default(pending)
-  docs_url   String?                   // S3 linki — sağlamlıq/məhkumluq sənədləri
-  reject_reason String?                // Admin rədd etdikdə səbəb
-  created_at DateTime      @default(now())
-  updated_at DateTime      @updatedAt
-
-  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  orders     Order[]
-
-  @@index([status])
-  @@map("companies")
-}
-
-// ─────────────────────────────────────────
-// WORKERS
-// skills JSONB — sxema dəyişmədən yeni bacarıq əlavə olunur
-// ─────────────────────────────────────────
 
 model Worker {
-  id           String   @id @default(uuid())
-  user_id      String   @unique
-  skills       Json     @default("[]")  // [{name:"aşpaz", level:3}, {name:"ofisiant", level:2}]
-  rating_avg   Float    @default(0)
-  rating_count Int      @default(0)
-  availability Boolean  @default(true)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  id              String       @id @default(uuid())
+  user_id         String       @unique
+  position        String?
+  skills          Json         @default("[]")
+  languages       Json         @default("[]")
+  documents       Json         @default("[]")
+  status          WorkerStatus @default(pending_otp)
+  reject_reason   String?
+  approved_at     DateTime?
+  approved_by_id  String?
+  rejected_at     DateTime?
+  rejected_by_id  String?
+  suspended_at    DateTime?
+  rating_avg      Float        @default(0)
+  rating_count    Int          @default(0)
+  availability    Boolean      @default(true)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  deleted_at      DateTime?
 
   user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  approved_by  User?        @relation("worker_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
+  rejected_by  User?        @relation("worker_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
   assignments  Assignment[]
   ratings      Rating[]     @relation("rated_worker")
 
-  @@index([availability])
+  @@index([status, created_at])
+  @@index([availability, status])
+  @@index([deleted_at])
   @@map("workers")
 }
 
-// ─────────────────────────────────────────
-// ORDERS
-// ─────────────────────────────────────────
+model Company {
+  id              String        @id @default(uuid())
+  user_id         String        @unique
+  name            String
+  status          CompanyStatus @default(pending_approval)
+  docs_url        String?
+  documents       Json          @default("[]")
+  reject_reason   String?
+  approved_at     DateTime?
+  approved_by_id  String?
+  rejected_at     DateTime?
+  rejected_by_id  String?
+  suspended_at    DateTime?
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+  deleted_at      DateTime?
+
+  user        User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  approved_by User?   @relation("company_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
+  rejected_by User?   @relation("company_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
+  orders      Order[]
+
+  @@index([status, created_at])
+  @@index([deleted_at])
+  @@map("companies")
+}
+
+model OtpCode {
+  id            String     @id @default(uuid())
+  user_id       String?
+  phone         String
+  code_hash     String
+  purpose       OtpPurpose
+  expires_at    DateTime
+  verified_at   DateTime?
+  attempts      Int        @default(0)
+  max_attempts  Int        @default(5)
+  resend_count  Int        @default(0)
+  blocked_until DateTime?
+  last_sent_at  DateTime   @default(now())
+  ip_address    String?
+  created_at    DateTime   @default(now())
+
+  user User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([phone, purpose, created_at])
+  @@index([expires_at])
+  @@index([blocked_until])
+  @@map("otp_codes")
+}
+
+model RefreshToken {
+  id            String    @id @default(uuid())
+  user_id       String
+  token_hash    String    @unique
+  expires_at    DateTime
+  revoked_at    DateTime?
+  created_at    DateTime  @default(now())
+  created_by_ip String?
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
+  @@index([revoked_at])
+  @@map("refresh_tokens")
+}
 
 model Order {
   id              String      @id @default(uuid())
@@ -160,25 +229,22 @@ model Order {
   shift_start     DateTime
   shift_end       DateTime
   required_count  Int
-  required_skills String[]    @default([])  // ["aşpaz", "ofisiant"]
+  required_skills String[]    @default([])
   notes           String?
   status          OrderStatus @default(draft)
   created_at      DateTime    @default(now())
   updated_at      DateTime    @updatedAt
+  deleted_at      DateTime?
 
-  company         Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  assignments     Assignment[]
-  ratings         Rating[]
+  company     Company      @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+  ratings     Rating[]
 
-  @@index([company_id, status])  // Dashboard filtri üçün
-  @@index([status])
+  @@index([company_id, status])
+  @@index([status, created_at])
+  @@index([deleted_at])
   @@map("orders")
 }
-
-// ─────────────────────────────────────────
-// ASSIGNMENTS
-// M:N — hansı işçi hansı sifarişdə
-// ─────────────────────────────────────────
 
 model Assignment {
   id          String           @id @default(uuid())
@@ -187,21 +253,18 @@ model Assignment {
   status      AssignmentStatus @default(pending)
   assigned_at DateTime         @default(now())
   updated_at  DateTime         @updatedAt
+  deleted_at  DateTime?
 
-  order           Order            @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  worker          Worker           @relation(fields: [worker_id], references: [id], onDelete: Cascade)
+  order           Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  worker          Worker          @relation(fields: [worker_id], references: [id], onDelete: Cascade)
   attendance_logs AttendanceLog[]
 
-  @@unique([order_id, worker_id])  // Eyni işçi eyni sifarişə 2 dəfə təyin edilə bilməz
+  @@unique([order_id, worker_id])
   @@index([order_id])
-  @@index([worker_id])
+  @@index([worker_id, status])
+  @@index([deleted_at])
   @@map("assignments")
 }
-
-// ─────────────────────────────────────────
-// ATTENDANCE LOGS
-// QR giriş-çıxış qeydləri
-// ─────────────────────────────────────────
 
 model AttendanceLog {
   id             String    @id @default(uuid())
@@ -209,33 +272,71 @@ model AttendanceLog {
   checkin_time   DateTime?
   checkout_time  DateTime?
   created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+  deleted_at     DateTime?
 
-  assignment     Assignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
 
   @@index([assignment_id])
+  @@index([deleted_at])
   @@map("attendance_logs")
 }
 
-// ─────────────────────────────────────────
-// RATINGS
-// Sifariş bitdikdən sonra müəssisə işçini qiymətləndirir
-// Eyni order+worker cütü üçün yalnız 1 reytinq
-// ─────────────────────────────────────────
-
 model Rating {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   order_id   String
   worker_id  String
-  rater_id   String                    // Kim qiymətləndirib (company user_id)
-  score      Int                       // 1-5
+  rater_id   String
+  score      Int
   comment    String?
-  created_at DateTime @default(now())
+  created_at DateTime  @default(now())
+  deleted_at DateTime?
 
-  order      Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  worker     Worker   @relation("rated_worker", fields: [worker_id], references: [id], onDelete: Cascade)
-  rater      User     @relation("rater", fields: [rater_id], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  worker Worker @relation("rated_worker", fields: [worker_id], references: [id], onDelete: Cascade)
+  rater  User   @relation("rater", fields: [rater_id], references: [id], onDelete: Cascade)
 
-  @@unique([order_id, worker_id])      // Bir sifariş üçün bir reytinq
+  @@unique([order_id, worker_id])
   @@index([worker_id])
+  @@index([rater_id])
+  @@index([deleted_at])
   @@map("ratings")
+}
+
+model Notification {
+  id           String              @id @default(uuid())
+  recipient_id String
+  type         NotificationType
+  channel      NotificationChannel @default(in_app)
+  title        String
+  body         String
+  metadata     Json                @default("{}")
+  read_at      DateTime?
+  created_at   DateTime            @default(now())
+  deleted_at   DateTime?
+
+  recipient User @relation("notification_recipient", fields: [recipient_id], references: [id], onDelete: Cascade)
+
+  @@index([recipient_id, read_at, created_at])
+  @@index([type, created_at])
+  @@index([deleted_at])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  actor_id    String?
+  actor_role  Role
+  action      AuditAction
+  entity_type String
+  entity_id   String
+  metadata    Json        @default("{}")
+  created_at  DateTime    @default(now())
+
+  actor User? @relation("audit_actor", fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([actor_id, created_at])
+  @@index([entity_type, entity_id])
+  @@index([action, created_at])
+  @@map("audit_logs")
 }

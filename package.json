@@ -12,7 +12,8 @@
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "ts-node scripts/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke:mvp": "ts-node scripts/mvp-flow-smoke.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

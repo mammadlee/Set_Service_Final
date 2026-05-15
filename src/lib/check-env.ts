@@ -14,6 +14,8 @@ const ENV_VARS: EnvVar[] = [
   { key: 'DATABASE_URL', required: true, hint: 'postgresql://user:pass@localhost:5432/hireapp' },
   { key: 'JWT_SECRET', required: true, minLength: 32, hint: 'min 32 simvol random string' },
   { key: 'QR_HMAC_SECRET', required: true, minLength: 32, hint: 'min 32 simvol, JWT_SECRET-dən fərqli' },
+  { key: 'OTP_PEPPER', required: false, minLength: 32, hint: 'OTP hash pepper; default JWT_SECRET fallback' },
+  { key: 'OTP_TEST_MODE', required: false, hint: 'development only: true | false' },
   { key: 'PORT', required: false, hint: 'default: 3000' },
   { key: 'NODE_ENV', required: false, hint: 'development | production' },
   { key: 'SENTRY_DSN', required: false, hint: 'boş olarsa Sentry disabled' },
