@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import * as Sentry from '@sentry/node';
-import { AppError } from '../lib/errors';
+import multer from 'multer';
 import { ZodError } from 'zod';
+import { AppError } from '../lib/errors';
+import { logger } from '../lib/logger';
 
 export function errorHandler(
   err: unknown,
@@ -9,17 +11,16 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  // Zod validation xətası
   if (err instanceof ZodError) {
     res.status(400).json({
-      error: 'Validation xətası',
+      error: 'Validation error',
       code: 'VALIDATION_ERROR',
       details: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
+      timestamp: new Date().toISOString(),
     });
     return;
   }
 
-  // Bizim AppError
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       error: err.message,
@@ -30,9 +31,23 @@ export function errorHandler(
     return;
   }
 
-  // Gözlənilməz xəta — Sentry-ə göndər
-  Sentry.captureException(err);
-  console.error('[Unhandled Error]', err);
+  if (err instanceof multer.MulterError) {
+    res.status(400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'Upload file is too large.' : 'Upload failed.',
+      code: err.code === 'LIMIT_FILE_SIZE' ? 'UPLOAD_FILE_TOO_LARGE' : 'UPLOAD_FAILED',
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
 
-  res.status(500).json({ error: 'Server xətası', code: 'INTERNAL_ERROR' });
+  Sentry.captureException(err);
+  logger.error('Unhandled error', {
+    error: err instanceof Error ? err.message : String(err),
+  });
+
+  res.status(500).json({
+    error: 'Internal server error',
+    code: 'INTERNAL_ERROR',
+    timestamp: new Date().toISOString(),
+  });
 }

@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
-import { requireApprovedAccount, requireRole } from '../../middleware/rbac';
+import { requireApprovedAccount, requirePermission, requireRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import * as Service from './companies.service';
 
@@ -9,6 +9,7 @@ const router = Router();
 
 const UpdateSchema = z.object({
   name: z.string().min(2).max(200).optional(),
+  email: z.string().trim().email().max(254).nullable().optional(),
   docs_url: z.string().url().optional(),
   documents: z.array(z.object({ type: z.string(), url: z.string().url() }).passthrough()).optional(),
 });
@@ -25,7 +26,7 @@ router.patch('/companies/me', requireAuth, requireRole('company'), requireApprov
   try { res.json(await Service.updateMyCompany(req.user!.sub, req.body)); } catch (e) { next(e); }
 });
 
-router.get('/admin/companies', requireAuth, requireRole('super_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/admin/companies', requireAuth, requirePermission('view_companies'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await Service.listCompanies({
       page: req.query.page ? Number(req.query.page) : undefined,
@@ -37,15 +38,15 @@ router.get('/admin/companies', requireAuth, requireRole('super_admin'), async (r
   } catch (e) { next(e); }
 });
 
-router.get('/admin/companies/:id', requireAuth, requireRole('super_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.get('/admin/companies/:id', requireAuth, requirePermission('view_companies'), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.getCompanyById(req.params.id)); } catch (e) { next(e); }
 });
 
-router.patch('/admin/companies/:id/approve', requireAuth, requireRole('super_admin'), async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/admin/companies/:id/approve', requireAuth, requirePermission('manage_companies'), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.approveCompany(req.params.id, req.user!)); } catch (e) { next(e); }
 });
 
-router.patch('/admin/companies/:id/reject', requireAuth, requireRole('super_admin'), validate(RejectSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/admin/companies/:id/reject', requireAuth, requirePermission('manage_companies'), validate(RejectSchema), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.rejectCompany(req.params.id, req.body.reason, req.user!)); } catch (e) { next(e); }
 });
 

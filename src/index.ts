@@ -1,32 +1,47 @@
 import 'dotenv/config';
 import { checkEnv } from './lib/check-env';
-checkEnv(); // tələb olunan env var-lar yoxdursa burada dayanır
+checkEnv();
 
 import app from './app';
 import { prisma } from './lib/prisma';
+import { logger } from './lib/logger';
+import { connectRedis, disconnectRedis } from './lib/redis';
+import { assertPushConfiguration } from './lib/fcm';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
 
 async function main() {
-  // DB bağlantısını yoxla
+  assertPushConfiguration();
   await prisma.$connect();
-  console.log('[DB] PostgreSQL bağlantısı uğurludur');
+  logger.info('PostgreSQL connection is ready');
+
+  await connectRedis();
 
   app.listen(PORT, () => {
-    console.log(`[Server] http://localhost:${PORT}`);
-    console.log(`[Swagger] http://localhost:${PORT}/docs`);
-    console.log(`[Health] http://localhost:${PORT}/health`);
+    logger.info('HTTP server started', {
+      port: PORT,
+      docs: '/docs',
+      health: '/health',
+    });
   });
 }
 
 main().catch((err) => {
-  console.error('[Startup Error]', err);
+  logger.error('Startup error', { error: err instanceof Error ? err.message : String(err) });
   process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('[Server] SIGTERM — bağlanır...');
+process.on('SIGTERM', () => {
+  void shutdown('SIGTERM');
+});
+
+process.on('SIGINT', () => {
+  void shutdown('SIGINT');
+});
+
+async function shutdown(signal: string): Promise<void> {
+  logger.info(`${signal} received; shutting down`);
+  await disconnectRedis();
   await prisma.$disconnect();
   process.exit(0);
-});
+}

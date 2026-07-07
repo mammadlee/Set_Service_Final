@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma';
 import { Errors } from '../../lib/errors';
-import { sendPush } from '../../lib/fcm';
+import { sendPushToUser } from '../../lib/fcm';
+import { normalizeEmail } from '../../lib/password';
 import { CompanyStatus, Role } from '../../types/prisma';
+import { startEmailVerification } from '../auth/auth.service';
 
 const COMPANY_STATUSES = new Set<string>([
   'pending_approval',
@@ -14,7 +16,7 @@ const COMPANY_STATUSES = new Set<string>([
 export async function getMyCompany(userId: string) {
   const company = await prisma.company.findUnique({
     where: { user_id: userId },
-    include: { user: { select: { name: true, phone: true } } },
+    include: { user: { select: { name: true, phone: true, email: true, email_verified_at: true, pending_email: true } } },
   });
   if (!company || company.deleted_at) throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   if (company.status !== 'approved') {
@@ -25,7 +27,7 @@ export async function getMyCompany(userId: string) {
   return toCompanyProfile(company);
 }
 
-export async function updateMyCompany(userId: string, data: { name?: string; docs_url?: string; documents?: unknown }) {
+export async function updateMyCompany(userId: string, data: { name?: string; docs_url?: string; documents?: unknown; email?: string | null }) {
   const company = await prisma.company.findUnique({ where: { user_id: userId } });
   if (!company || company.deleted_at) throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   if (company.status !== 'approved') {
@@ -34,11 +36,37 @@ export async function updateMyCompany(userId: string, data: { name?: string; doc
     });
   }
 
-  const updated = await prisma.company.update({
+  const { email, ...companyData } = data;
+  let updated = await prisma.company.update({
     where: { user_id: userId },
-    data,
-    include: { user: { select: { name: true, phone: true } } },
+    data: companyData,
+    include: { user: { select: { name: true, phone: true, email: true, email_verified_at: true, pending_email: true } } },
   });
+
+  if (email !== undefined) {
+    const cleanedEmail = email === null || email.trim() === '' ? null : normalizeEmail(email);
+    if (cleanedEmail === null) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          email: null,
+          email_verified_at: null,
+          pending_email: null,
+          email_verification_code_hash: null,
+          email_verification_expires_at: null,
+          email_verification_sent_at: null,
+        },
+      });
+    } else if (cleanedEmail === updated.user.pending_email) {
+      // Pending email is already awaiting verification.
+    } else if (cleanedEmail !== updated.user.email || !updated.user.email_verified_at) {
+      await startEmailVerification(userId, cleanedEmail);
+    }
+    updated = await prisma.company.findUniqueOrThrow({
+      where: { user_id: userId },
+      include: { user: { select: { name: true, phone: true, email: true, email_verified_at: true, pending_email: true } } },
+    });
+  }
   return toCompanyProfile(updated);
 }
 
@@ -70,7 +98,7 @@ export async function listCompanies(filters: {
     prisma.company.count({ where }),
     prisma.company.findMany({
       where,
-      include: { user: { select: { name: true, phone: true } } },
+      include: { user: { select: { name: true, phone: true, email: true } } },
       orderBy: { created_at: filters.sort ?? 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -86,7 +114,7 @@ export async function listCompanies(filters: {
 export async function getCompanyById(id: string) {
   const company = await prisma.company.findFirst({
     where: { id, deleted_at: null },
-    include: { user: { select: { name: true, phone: true } } },
+    include: { user: { select: { name: true, phone: true, email: true } } },
   });
   if (!company) throw Errors.notFound('Company not found.', 'COMPANY_NOT_FOUND');
   return toCompanyProfile(company);
@@ -98,6 +126,9 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
     include: { user: true },
   });
   if (!company) throw Errors.notFound('Company not found.', 'COMPANY_NOT_FOUND');
+  if (company.status === 'approved') {
+    return toCompanyProfile(company);
+  }
 
   const updated = await prisma.$transaction(async (tx: typeof prisma) => {
     const updatedCompany = await tx.company.update({
@@ -108,7 +139,7 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
         approved_at: new Date(),
         approved_by_id: actor.sub,
       },
-      include: { user: { select: { name: true, phone: true } } },
+        include: { user: { select: { name: true, phone: true, email: true } } },
     });
 
     await tx.auditLog.create({
@@ -126,8 +157,8 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
       data: {
         recipient_id: company.user_id,
         type: 'company_approved',
-        title: 'Company approved',
-        body: 'Your company account has been approved.',
+        title: 'Müəssisə təsdiqləndi',
+        body: 'Müəssisə hesabınız təsdiqləndi.',
         metadata: { company_id: id },
       },
     });
@@ -135,12 +166,11 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
     return updatedCompany;
   });
 
-  if (company.user.fcm_token) {
-    await sendPush(company.user.fcm_token, {
-      title: 'Company approved',
-      body: 'You can now create job requests.',
-    });
-  }
+  await sendPushToUser(company.user_id, {
+    title: 'Müəssisə təsdiqləndi',
+    body: 'Artıq sifariş yarada bilərsiniz.',
+    data: { type: 'company_approved', company_id: id, role: 'company' },
+  });
 
   return toCompanyProfile(updated);
 }
@@ -161,7 +191,7 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
         rejected_at: new Date(),
         rejected_by_id: actor.sub,
       },
-      include: { user: { select: { name: true, phone: true } } },
+        include: { user: { select: { name: true, phone: true, email: true } } },
     });
 
     await tx.auditLog.create({
@@ -179,8 +209,8 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
       data: {
         recipient_id: company.user_id,
         type: 'company_rejected',
-        title: 'Company rejected',
-        body: 'Your company account was rejected.',
+        title: 'Müəssisə rədd edildi',
+        body: 'Müəssisə hesabınız rədd edildi.',
         metadata: { company_id: id, reason },
       },
     });
@@ -188,12 +218,11 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
     return updatedCompany;
   });
 
-  if (company.user.fcm_token) {
-    await sendPush(company.user.fcm_token, {
-      title: 'Company rejected',
-      body: `Reason: ${reason}`,
-    });
-  }
+  await sendPushToUser(company.user_id, {
+    title: 'Müəssisə rədd edildi',
+    body: 'Müəssisə hesabınız rədd edildi.',
+    data: { type: 'company_rejected', company_id: id, role: 'company' },
+  });
 
   return toCompanyProfile(updated);
 }
@@ -201,7 +230,13 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
 function toCompanyProfile(company: {
   id: string;
   user_id: string;
-  user: { name: string; phone: string };
+  user: {
+    name: string;
+    phone: string;
+    email?: string | null;
+    email_verified_at?: Date | null;
+    pending_email?: string | null;
+  };
   name: string;
   status: string;
   docs_url?: string | null;
@@ -216,6 +251,10 @@ function toCompanyProfile(company: {
     name: company.name,
     contact_name: company.user.name,
     phone: company.user.phone,
+    email: company.user.email,
+    email_verified_at: company.user.email_verified_at ?? null,
+    pending_email: company.user.pending_email ?? null,
+    email_verified: Boolean(company.user.email && company.user.email_verified_at),
     status: company.status,
     docs_url: company.docs_url,
     documents: company.documents,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HireApp — local setup skripti
+# SET Service — local setup skripti
 # İstifadə: bash scripts/setup.sh
 
 set -e
@@ -8,7 +8,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== HireApp API — Setup ===${NC}\n"
+echo -e "${GREEN}=== SET Service API — Setup ===${NC}\n"
 
 # Node version check
 NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)

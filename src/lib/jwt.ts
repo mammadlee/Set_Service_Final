@@ -22,3 +22,11 @@ export function signRefreshToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): stri
 export function verifyToken(token: string): JwtPayload {
   return jwt.verify(token, ACCESS_SECRET) as JwtPayload;
 }
+
+export function getTokenExpiration(token: string): Date {
+  const decoded = jwt.decode(token) as JwtPayload | null;
+  if (!decoded?.exp) {
+    return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  }
+  return new Date(decoded.exp * 1000);
+}
