@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cream_background">#F7F1EA</color>
+    <color name="primary_burgundy">#8A1818</color>
+    <color name="dark_burgundy">#1E1B18</color>
+    <color name="accent_gold">#E3C189</color>
+    <color name="urban_graphite">#585858</color>
+    <color name="white">#FFFFFF</color>
+</resources>

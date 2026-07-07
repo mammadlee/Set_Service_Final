@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="az">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#8A1818" />
+    <title>SET Service QR ekranı</title>
+  </head>
+  <body>
+    <main id="app" class="kiosk-shell">
+      <section class="hero-panel" aria-label="SET Service QR ekranı">
+        <div class="ambient ambient-one"></div>
+        <div class="ambient ambient-two"></div>
+
+        <header class="top-bar">
+          <img class="brand-logo" src="/set_app_logo.png" alt="SET Service" />
+          <button class="fullscreen-button" id="fullscreenButton" type="button">Tam ekran</button>
+        </header>
+
+        <div class="layout-grid">
+          <section class="context-panel">
+            <p class="eyebrow">QR davamiyyət ekranı</p>
+            <h1 id="companyName">SET Service</h1>
+            <p id="orderTitle" class="order-title">Premium xidmət idarəetmə platforması</p>
+
+            <div class="detail-list" aria-label="Növbə məlumatları">
+              <div>
+                <span>Məkan</span>
+                <strong id="locationText">-</strong>
+              </div>
+              <div>
+                <span>Növbə</span>
+                <strong id="shiftText">-</strong>
+              </div>
+              <div>
+                <span>Kateqoriya</span>
+                <strong id="categoryText">-</strong>
+              </div>
+            </div>
+
+            <p class="guidance">İşçilər bu QR kodu oxudaraq giriş/çıxış edə bilər.</p>
+            <div class="call-center" aria-label="Qaynar xətt">
+              <span>Qaynar xətt</span>
+              <strong>+994 XX XXX XX XX</strong>
+            </div>
+          </section>
+
+          <section class="qr-panel" aria-label="Davamiyyət QR kodu">
+            <div class="qr-card" id="qrCard">
+              <div class="qr-status" id="statusBadge">Hazırlanır</div>
+              <div class="qr-frame">
+                <img id="qrImage" class="qr-image" alt="SET Service davamiyyət QR kodu" />
+                <div id="qrPlaceholder" class="qr-placeholder">QR hazırlanır</div>
+              </div>
+              <div class="countdown-ring">
+                <span id="countdownValue">30</span>
+                <small>saniyə</small>
+              </div>
+            </div>
+            <p id="countdownText" class="countdown-text">QR 30 saniyədən sonra yenilənəcək</p>
+            <p id="networkText" class="network-text">Bağlantı yoxlanılır</p>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

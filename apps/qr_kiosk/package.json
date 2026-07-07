@@ -1,0 +1,19 @@
+{
+  "name": "@set-service/qr-kiosk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && vite build"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.19"
+  }
+}

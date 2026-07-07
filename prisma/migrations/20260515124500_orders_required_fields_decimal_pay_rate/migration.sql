@@ -1,0 +1,6 @@
+ALTER TABLE "orders"
+  ALTER COLUMN "title" DROP DEFAULT,
+  ALTER COLUMN "description" DROP DEFAULT,
+  ALTER COLUMN "category" DROP DEFAULT,
+  ALTER COLUMN "location" DROP DEFAULT,
+  ALTER COLUMN "pay_rate" TYPE DECIMAL(10, 2) USING "pay_rate"::numeric(10, 2);

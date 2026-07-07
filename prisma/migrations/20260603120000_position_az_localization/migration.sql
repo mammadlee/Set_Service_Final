@@ -1,0 +1,41 @@
+-- AZ-first visible names for existing taxonomy positions.
+-- Slugs and IDs are intentionally unchanged to preserve orders, assignments and worker-position links.
+
+UPDATE "positions" SET "name_az" = 'Restoran meneceri', "name_en" = 'Restaurant Manager' WHERE "slug" = 'restaurant-manager';
+UPDATE "positions" SET "name_az" = 'Host/Hostes', "name_en" = 'Host/Hostess' WHERE "slug" = 'host-hostess';
+UPDATE "positions" SET "name_az" = 'Ofisiant', "name_en" = 'Waiter/Waitress' WHERE "slug" = 'waiter-waitress';
+UPDATE "positions" SET "name_az" = 'Servis köməkçisi', "name_en" = 'Runner' WHERE "slug" = 'runner';
+UPDATE "positions" SET "name_az" = 'Banket meneceri', "name_en" = 'Banquet Manager' WHERE "slug" = 'banquet-manager';
+UPDATE "positions" SET "name_az" = 'Banket ofisiantı', "name_en" = 'Banquet Waiter' WHERE "slug" = 'banquet-waiter';
+UPDATE "positions" SET "name_az" = 'Otaq servisi əməkdaşı', "name_en" = 'Room Service Attendant' WHERE "slug" = 'room-service-attendant';
+UPDATE "positions" SET "name_az" = 'Bar ofisiantı', "name_en" = 'Bar Waiter' WHERE "slug" = 'bar-waiter';
+UPDATE "positions" SET "name_az" = 'Barmen', "name_en" = 'Bartender' WHERE "slug" = 'bartender';
+UPDATE "positions" SET "name_az" = 'Barmen köməkçisi', "name_en" = 'Bar Back' WHERE "slug" = 'bar-back';
+UPDATE "positions" SET "name_az" = 'Təmizlik supervayzeri', "name_en" = 'Housekeeping Supervisor' WHERE "slug" = 'housekeeping-supervisor';
+UPDATE "positions" SET "name_az" = 'Otaq təmizləyicisi', "name_en" = 'Room Attendant' WHERE "slug" = 'room-attendant';
+UPDATE "positions" SET "name_az" = 'İctimai sahə təmizləyicisi', "name_en" = 'Public Area Attendant' WHERE "slug" = 'public-area-attendant';
+UPDATE "positions" SET "name_az" = 'Camaşırxana əməkdaşı', "name_en" = 'Laundry Attendant' WHERE "slug" = 'laundry-attendant';
+UPDATE "positions" SET "name_az" = 'SPA resepsionisti', "name_en" = 'SPA Receptionist' WHERE "slug" = 'spa-receptionist';
+UPDATE "positions" SET "name_az" = 'SPA əməkdaşı', "name_en" = 'SPA Attendant' WHERE "slug" = 'spa-attendant';
+UPDATE "positions" SET "name_az" = 'Resepsionist', "name_en" = 'Receptionist/Front Desk Agent' WHERE "slug" = 'receptionist-front-desk-agent';
+UPDATE "positions" SET "name_az" = 'Baqajçı', "name_en" = 'Bellboy' WHERE "slug" = 'bellboy';
+UPDATE "positions" SET "name_az" = 'Texniki işçi', "name_en" = 'Maintenance Technician' WHERE "slug" = 'maintenance-technician';
+UPDATE "positions" SET "name_az" = 'Su-şef', "name_en" = 'Sous Chef' WHERE "slug" = 'sous-chef';
+UPDATE "positions" SET "name_az" = 'Demi şef de parti', "name_en" = 'Demi Chef de Partie' WHERE "slug" = 'demi-chef-de-partie';
+UPDATE "positions" SET "name_az" = 'İsti mətbəx aşpazı', "name_en" = 'Hot Kitchen Chef' WHERE "slug" = 'hot-kitchen-chef';
+UPDATE "positions" SET "name_az" = 'Soyuq mətbəx aşpazı', "name_en" = 'Cold Kitchen Chef' WHERE "slug" = 'cold-kitchen-chef';
+UPDATE "positions" SET "name_az" = 'Şef de parti', "name_en" = 'Chef de Partie' WHERE "slug" = 'chef-de-partie';
+UPDATE "positions" SET "name_az" = 'Aşpaz köməkçisi', "name_en" = 'Commis Chef' WHERE "slug" = 'commis-chef';
+UPDATE "positions" SET "name_az" = 'Şirniyyat aşpazı', "name_en" = 'Pastry Chef' WHERE "slug" = 'pastry-chef';
+UPDATE "positions" SET "name_az" = 'Çörəkçi', "name_en" = 'Baker' WHERE "slug" = 'baker';
+UPDATE "positions" SET "name_az" = 'Şirniyyat aşpaz köməkçisi', "name_en" = 'Pastry Commis Chef' WHERE "slug" = 'pastry-commis-chef';
+UPDATE "positions" SET "name_az" = 'Qril aşpazı', "name_en" = 'BBQ Chef' WHERE "slug" = 'bbq-chef';
+UPDATE "positions" SET "name_az" = 'Qəssab', "name_en" = 'Butcher' WHERE "slug" = 'butcher';
+UPDATE "positions" SET "name_az" = 'Qabyuyan', "name_en" = 'Steward/Dishwasher' WHERE "slug" = 'steward-dishwasher';
+UPDATE "positions" SET "name_az" = 'Pizza aşpazı', "name_en" = 'Pizza Chef' WHERE "slug" = 'pizza-chef';
+UPDATE "positions" SET "name_az" = 'Suşi aşpazı', "name_en" = 'Sushi Chef' WHERE "slug" = 'sushi-chef';
+UPDATE "positions" SET "name_az" = 'Vok aşpazı', "name_en" = 'Wok Chef' WHERE "slug" = 'wok-chef';
+UPDATE "positions" SET "name_az" = 'Asiya mətbəxi aşpazı', "name_en" = 'Asian Cuisine Chef' WHERE "slug" = 'asian-cuisine-chef';
+UPDATE "positions" SET "name_az" = 'İtalyan mətbəxi aşpazı', "name_en" = 'Italian Cuisine Chef' WHERE "slug" = 'italian-cuisine-chef';
+UPDATE "positions" SET "name_az" = 'AV mütəxəssisi', "name_en" = 'AV Specialist' WHERE "slug" = 'av-specialist';
+UPDATE "positions" SET "name_az" = 'Anbardar', "name_en" = 'Storekeeper' WHERE "slug" = 'storekeeper';

@@ -1,0 +1,228 @@
+name: SET Service CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  backend:
+    name: Backend API
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-jwt-secret-123456789012345678901234567890
+      QR_HMAC_SECRET: ci-qr-secret-123456789012345678901234567890
+      OTP_PEPPER: ci-otp-pepper-123456789012345678901234567890
+      OTP_TEST_MODE: "true"
+      OTP_TEST_CODE: "123456"
+      OTP_LOG_CODES: "false"
+      SMS_PROVIDER: console
+      STORAGE_PROVIDER: local
+      PUSH_NOTIFICATIONS_ENABLED: "false"
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: setservice
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d setservice"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production env validation
+        env:
+          NODE_ENV: production
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci-jwt-secret-123456789012345678901234567890
+          QR_HMAC_SECRET: ci-qr-secret-123456789012345678901234567890
+          OTP_PEPPER: ci-otp-pepper-123456789012345678901234567890
+          CORS_ORIGINS: https://admin.example.com,https://company.example.com
+          SMS_PROVIDER: generic_http
+          SMS_API_URL: https://sms.example.test/send
+          SMS_API_KEY: ci-sms-api-key-12345678901234567890
+          SMS_FROM: SET Service
+          OTP_TEST_MODE: "false"
+          OTP_LOG_CODES: "false"
+          STORAGE_PROVIDER: s3
+          S3_BUCKET: setservice-ci-documents
+          S3_REGION: eu-central-1
+          S3_ACCESS_KEY_ID: ci-s3-access-key
+          S3_SECRET_ACCESS_KEY: ci-s3-secret-access-key
+          STORAGE_PUBLIC_BASE_URL: https://cdn.example.com
+        run: npx ts-node -e "import { checkEnv } from './src/lib/check-env'; checkEnv();"
+
+      - name: Build
+        run: npm run build
+
+      - name: Swagger parse check
+        run: npm run swagger:check
+
+      - name: Prepare smoke credentials
+        run: |
+          ADMIN_PASSWORD="$(node -e "console.log(require('node:crypto').randomBytes(18).toString('base64url') + 'Aa1!')")"
+          RESTRICTED_PASSWORD="$(node -e "console.log(require('node:crypto').randomBytes(18).toString('base64url') + 'Aa1!')")"
+          COMPANY_PASSWORD="$(node -e "console.log(require('node:crypto').randomBytes(18).toString('base64url') + 'Aa1!')")"
+          WORKER_PASSWORD="$(node -e "console.log(require('node:crypto').randomBytes(18).toString('base64url') + 'Aa1!')")"
+          {
+            echo "SEED_ADMIN_EMAIL=admin@setservice.az"
+            echo "SEED_ADMIN_PASSWORD=$ADMIN_PASSWORD"
+            echo "SEED_OPS_ADMIN_EMAIL=ops@setservice.az"
+            echo "SEED_REPORTS_ADMIN_EMAIL=reports@setservice.az"
+            echo "SEED_RESTRICTED_ADMIN_PASSWORD=$RESTRICTED_PASSWORD"
+            echo "SEED_COMPANY_EMAIL=company@setservice.az"
+            echo "SEED_COMPANY_PASSWORD=$COMPANY_PASSWORD"
+            echo "SEED_WORKER_PASSWORD=$WORKER_PASSWORD"
+            echo "SMOKE_ADMIN_EMAIL=admin@setservice.az"
+            echo "SMOKE_ADMIN_PASSWORD=$ADMIN_PASSWORD"
+            echo "SMOKE_REPORTS_ADMIN_EMAIL=reports@setservice.az"
+            echo "SMOKE_RESTRICTED_ADMIN_PASSWORD=$RESTRICTED_PASSWORD"
+            echo "SMOKE_COMPANY_EMAIL=company@setservice.az"
+            echo "SMOKE_COMPANY_PASSWORD=$COMPANY_PASSWORD"
+            echo "SMOKE_WORKER_PASSWORD=$WORKER_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Apply migrations
+        run: npm run db:migrate:deploy
+
+      - name: Seed smoke database
+        run: npm run db:seed
+
+      - name: MVP smoke
+        run: |
+          set -euo pipefail
+          node dist/index.js > api.log 2>&1 &
+          API_PID=$!
+          trap 'kill "$API_PID" 2>/dev/null || true' EXIT
+          for i in {1..30}; do
+            if curl -fsS http://localhost:3000/health >/dev/null; then
+              npm run smoke:mvp
+              exit 0
+            fi
+            sleep 1
+          done
+          cat api.log
+          exit 1
+
+  admin-panel:
+    name: Admin Panel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/admin_panel/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/admin_panel
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/admin_panel
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: apps/admin_panel
+        run: npm run build
+
+  company-dashboard:
+    name: Company Dashboard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/company_dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/company_dashboard
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/company_dashboard
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: apps/company_dashboard
+        run: npm run build
+
+  worker-app:
+    name: Worker Flutter App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: apps/worker_app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: apps/worker_app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: apps/worker_app
+        run: flutter test
+
+      - name: Build debug APK
+        working-directory: apps/worker_app
+        run: flutter build apk --debug

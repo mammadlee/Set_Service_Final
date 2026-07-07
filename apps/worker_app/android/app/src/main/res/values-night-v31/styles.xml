@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/cream_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/set_app_logo</item>
+        <item name="postSplashScreenTheme">@style/NormalTheme</item>
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/cream_background</item>
+    </style>
+</resources>

@@ -1,0 +1,6 @@
+ALTER TYPE "OtpPurpose" ADD VALUE IF NOT EXISTS 'worker_phone_change';
+
+ALTER TABLE "workers"
+  ADD COLUMN IF NOT EXISTS "work_history" JSONB NOT NULL DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS "gender" TEXT,
+  ADD COLUMN IF NOT EXISTS "whatsapp_available" BOOLEAN NOT NULL DEFAULT false;
