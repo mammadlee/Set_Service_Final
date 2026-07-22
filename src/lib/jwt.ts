@@ -1,9 +1,10 @@
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
+import { readJwtTtl } from './jwt-ttl';
 
-const ACCESS_EXPIRES = process.env.JWT_ACCESS_EXPIRES_IN ?? '15m';
-const REFRESH_EXPIRES = process.env.JWT_REFRESH_EXPIRES_IN ?? '30d';
-const REGISTRATION_EXPIRES = process.env.JWT_REGISTRATION_EXPIRES_IN ?? '30m';
+const ACCESS_EXPIRES = readJwtTtl('JWT_ACCESS_EXPIRES_IN');
+const REFRESH_EXPIRES = readJwtTtl('JWT_REFRESH_EXPIRES_IN');
+const REGISTRATION_EXPIRES = readJwtTtl('JWT_REGISTRATION_EXPIRES_IN');
 const JWT_ISSUER = process.env.JWT_ISSUER ?? 'set-service-api';
 const JWT_AUDIENCE = process.env.JWT_AUDIENCE ?? 'set-service-clients';
 const JWT_ALGORITHM: jwt.Algorithm = 'HS256';

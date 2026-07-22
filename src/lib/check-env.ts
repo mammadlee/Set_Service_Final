@@ -1,3 +1,5 @@
+import { JWT_TTL_SPECS, JwtTtlKey, jwtTtlIssue } from './jwt-ttl';
+
 interface EnvVar {
   key: string;
   required: boolean | 'production';
@@ -22,6 +24,7 @@ const ENV_VARS: EnvVar[] = [
   { key: 'OTP_PEPPER', required: 'production', minLength: 32, hint: '32+ chars, random, different from JWT/QR secrets' },
   { key: 'JWT_ACCESS_EXPIRES_IN', required: false, hint: 'default: 15m' },
   { key: 'JWT_REFRESH_EXPIRES_IN', required: false, hint: 'default: 30d' },
+  { key: 'JWT_REGISTRATION_EXPIRES_IN', required: false, hint: 'default: 30m' },
   { key: 'QR_TOKEN_TTL_SECONDS', required: false, positiveInt: true, hint: 'default: 300' },
   { key: 'KIOSK_SESSION_TTL_HOURS', required: false, positiveInt: true, hint: 'default: 12' },
   { key: 'OTP_TEST_MODE', required: false, hint: 'test only: true | false' },
@@ -108,6 +111,10 @@ export function checkEnv(): void {
   }
 
   validateProductionSafety(errors, warnings, isProduction);
+  for (const key of Object.keys(JWT_TTL_SPECS) as JwtTtlKey[]) {
+    const issue = jwtTtlIssue(key, process.env[key]);
+    if (issue) errors.push(`- ${issue}`);
+  }
 
   if (warnings.length) {
     console.warn('[Env] Warnings:');

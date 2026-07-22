@@ -150,6 +150,7 @@ jobs:
           npm run test:backend-access
           npm run test:backend-infrastructure
           npm run test:text-id-locks
+          npm run test:jwt-ttl
           npm run test:audit-transactions
           npm run test:approval-document-security
           npm run test:privacy-deletion

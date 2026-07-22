@@ -53,6 +53,7 @@ JWT_ISSUER="set-service-api"
 JWT_AUDIENCE="set-service-clients"
 JWT_ACCESS_EXPIRES_IN="15m"
 JWT_REFRESH_EXPIRES_IN="30d"
+JWT_REGISTRATION_EXPIRES_IN="30m"
 
 QR_HMAC_SECRET="<secret-reference>"
 QR_TOKEN_TTL_SECONDS="300"
@@ -148,6 +149,7 @@ npm run build
 | `JWT_AUDIENCE` | Production | `set-service-clients` | Stable audience checked during verification. |
 | `JWT_ACCESS_EXPIRES_IN` | No | `15m` | Keep short for production. |
 | `JWT_REFRESH_EXPIRES_IN` | No | `30d` | Match product session policy. |
+| `JWT_REGISTRATION_EXPIRES_IN` | No | `30m` | One minute to one hour; enrollment only. |
 | `QR_HMAC_SECRET` | Yes | 32+ char placeholder | Must be long, random, non-placeholder, and different from JWT/OTP secrets. |
 | `KIOSK_TOKEN_ENCRYPTION_SECRET` | Production | 32+ char placeholder | Dedicated kiosk-token encryption key; do not reuse JWT/QR/OTP keys. |
 | `QR_TOKEN_TTL_SECONDS` | No | `300` | Positive integer. Invalid values fall back safely. |

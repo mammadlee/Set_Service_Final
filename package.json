@@ -19,6 +19,7 @@
     "test": "npm run test:pg365-sms && npm run test:provider-delivery && npm run test:jwt-rotation",
     "test:pg365-sms": "ts-node scripts/pg365-sms-regression.ts",
     "test:jwt-rotation": "ts-node scripts/jwt-rotation-regression.ts",
+    "test:jwt-ttl": "ts-node scripts/jwt-ttl-regression.ts",
     "smoke:mvp": "ts-node scripts/mvp-flow-smoke.ts",
     "test:auth-security": "ts-node scripts/auth-security-regression.ts",
     "test:worker-security": "ts-node scripts/worker-security-regression.ts",
