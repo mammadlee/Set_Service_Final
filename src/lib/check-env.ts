@@ -40,6 +40,11 @@ const ENV_VARS: EnvVar[] = [
   { key: 'OUTBOX_HEALTH_PORT', required: false, positiveInt: true, hint: 'worker health/metrics port, default: 3001' },
   { key: 'OUTBOX_MAX_CONSECUTIVE_FAILURES', required: false, positiveInt: true, hint: 'worker exits after this many failed batches, default: 5' },
   { key: 'OUTBOX_HEARTBEAT_TTL_SECONDS', required: false, positiveInt: true, hint: 'Redis worker heartbeat TTL, 10-300 seconds, default: 30' },
+  { key: 'OUTBOX_PROCESSED_RETENTION_DAYS', required: false, positiveInt: true, hint: '1-3650, default: 30' },
+  { key: 'OUTBOX_DEAD_RETENTION_DAYS', required: false, positiveInt: true, hint: '1-3650, default: 90' },
+  { key: 'OTP_RETENTION_DAYS', required: false, positiveInt: true, hint: '1-3650, default: 30' },
+  { key: 'REFRESH_TOKEN_RETENTION_DAYS', required: false, positiveInt: true, hint: '1-3650, default: 90' },
+  { key: 'AUDIT_LOG_RETENTION_DAYS', required: false, positiveInt: true, hint: '1-3650, default: 365' },
   { key: 'SMS_PROVIDER', required: false, hint: 'console | generic_http | pg365' },
   { key: 'SMS_API_URL', required: false, hint: 'required for generic_http' },
   { key: 'SMS_API_KEY', required: false, hint: 'required for generic_http' },
@@ -275,6 +280,11 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   validateIntegerRange(errors, 'PROVIDER_CIRCUIT_RESET_MS', 1_000, 3_600_000);
   validateIntegerRange(errors, 'OUTBOX_HEARTBEAT_TTL_SECONDS', 10, 300);
   validateIntegerRange(errors, 'OUTBOX_MAX_CONSECUTIVE_FAILURES', 1, 100);
+  validateIntegerRange(errors, 'OUTBOX_PROCESSED_RETENTION_DAYS', 1, 3_650);
+  validateIntegerRange(errors, 'OUTBOX_DEAD_RETENTION_DAYS', 1, 3_650);
+  validateIntegerRange(errors, 'OTP_RETENTION_DAYS', 1, 3_650);
+  validateIntegerRange(errors, 'REFRESH_TOKEN_RETENTION_DAYS', 1, 3_650);
+  validateIntegerRange(errors, 'AUDIT_LOG_RETENTION_DAYS', 1, 3_650);
   if (
     process.env.OUTBOX_WORKER_ENABLED
     && !['true', 'false'].includes(process.env.OUTBOX_WORKER_ENABLED)

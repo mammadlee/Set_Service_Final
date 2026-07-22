@@ -113,6 +113,11 @@ collects them.
 
 ## Store-submission fields that must be supplied
 
+Repository cleanup defaults are 30 days after OTP expiry, 30 days for processed
+outbox events, 90 days for dead outbox events and terminal refresh tokens, and
+365 days for audit logs. Product/legal owners may configure stricter or longer
+periods within the validated 1-3650 day range before production deployment.
+
 - Public privacy-policy URL: **TBD**
 - Support email/phone/URL: **TBD**
 - Account-deletion web URL: **TBD**

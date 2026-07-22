@@ -64,6 +64,11 @@ OUTBOX_WORKER_ENABLED="false"
 OUTBOX_HEALTH_PORT="3001"
 OUTBOX_MAX_CONSECUTIVE_FAILURES="5"
 OUTBOX_HEARTBEAT_TTL_SECONDS="30"
+OUTBOX_PROCESSED_RETENTION_DAYS="30"
+OUTBOX_DEAD_RETENTION_DAYS="90"
+OTP_RETENTION_DAYS="30"
+REFRESH_TOKEN_RETENTION_DAYS="90"
+AUDIT_LOG_RETENTION_DAYS="365"
 
 FIREBASE_PROJECT_ID=""
 FIREBASE_CLIENT_EMAIL=""
@@ -167,6 +172,11 @@ npm run build
 | `OUTBOX_HEALTH_PORT` | No | `3001` | Dedicated worker `/health` and `/metrics` HTTP port. |
 | `OUTBOX_MAX_CONSECUTIVE_FAILURES` | No | `5` | Worker exits after this many consecutive failed batches so its supervisor can restart it. |
 | `OUTBOX_HEARTBEAT_TTL_SECONDS` | No | `30` | Redis heartbeat freshness/TTL in seconds; allowed range is 10-300. |
+| `OUTBOX_PROCESSED_RETENTION_DAYS` | No | `30` | Processed outbox retention; allowed range is 1-3650 days. |
+| `OUTBOX_DEAD_RETENTION_DAYS` | No | `90` | Dead outbox retention; allowed range is 1-3650 days. |
+| `OTP_RETENTION_DAYS` | No | `30` | Retention after OTP expiry; allowed range is 1-3650 days. |
+| `REFRESH_TOKEN_RETENTION_DAYS` | No | `90` | Retention after token expiry/revocation; allowed range is 1-3650 days. |
+| `AUDIT_LOG_RETENTION_DAYS` | No | `365` | Audit retention; align with the approved legal policy. |
 | `SMS_PROVIDER` | No | `console` | Production must use `pg365`; `console` is development only. |
 | `SMS_API_URL` | Provider-specific | Empty | Required when `SMS_PROVIDER=generic_http`. |
 | `SMS_API_KEY` | Provider-specific | Empty | Required when `SMS_PROVIDER=generic_http`. Store securely. |

@@ -150,6 +150,7 @@ jobs:
           npm run test:backend-access
           npm run test:company-report-isolation
           npm run test:report-aggregation
+          npm run test:retention
           npm run test:backend-infrastructure
           npm run test:security-headers
           npm run test:text-id-locks

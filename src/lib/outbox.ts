@@ -4,6 +4,7 @@ import { logger } from './logger';
 import { prisma } from './prisma';
 import { Role } from '../types/prisma';
 import { cleanupExpiredIdempotencyKeys } from './idempotency';
+import { cleanupRetentionBatch } from './retention';
 import { deliverProviderOutboxEvent } from './provider-outbox';
 import { isPermanentProviderError } from './provider-http';
 import { getRedisClient } from './redis';
@@ -13,6 +14,7 @@ const MAX_ATTEMPTS = 10;
 const STALE_CLAIM_MS = 5 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5_000;
 const IDEMPOTENCY_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
+const RETENTION_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_HEARTBEAT_TTL_SECONDS = 30;
 const DEFAULT_FAILURE_THRESHOLD = 5;
 
@@ -45,6 +47,7 @@ export interface OutboxProcessorHealth {
 let timer: NodeJS.Timeout | null = null;
 let activeBatch: Promise<number> | null = null;
 let lastIdempotencyCleanupAt = 0;
+let lastRetentionCleanupAt = 0;
 let fatalFailureNotified = false;
 let processorOptions: Required<Pick<OutboxProcessorOptions, 'failureThreshold' | 'unrefTimer'>>
   & Pick<OutboxProcessorOptions, 'onUnhealthy'> = {
@@ -126,6 +129,19 @@ async function runOutboxBatch(limit: number): Promise<number> {
         logger.warn('Expired idempotency cleanup failed', {
           error: safeErrorMessage(error),
         });
+      }
+    }
+
+    if (now.getTime() - lastRetentionCleanupAt >= RETENTION_CLEANUP_INTERVAL_MS) {
+      try {
+        const retention = await cleanupRetentionBatch(now);
+        if (!retention.hasMore) lastRetentionCleanupAt = now.getTime();
+        const deleted = Object.values(retention)
+          .filter((value): value is number => typeof value === 'number')
+          .reduce((total, value) => total + value, 0);
+        if (deleted > 0) logger.info('Retention cleanup completed', { ...retention, deleted });
+      } catch (error) {
+        logger.warn('Retention cleanup failed', { error: safeErrorMessage(error) });
       }
     }
 
