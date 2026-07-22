@@ -134,6 +134,8 @@ export async function updateMyWorker(
             email_verification_code_hash: null,
             email_verification_expires_at: null,
             email_verification_sent_at: null,
+            email_verification_attempts: 0,
+            email_verification_blocked_until: null,
           },
         });
       } else if (cleanedEmail === updated.user.pending_email) {
@@ -544,6 +546,8 @@ export async function requestMyAccountDeletion(userId: string) {
         email_verification_code_hash: null,
         email_verification_expires_at: null,
         email_verification_sent_at: null,
+        email_verification_attempts: 0,
+        email_verification_blocked_until: null,
         password_hash: null,
         password_set_at: null,
         name: 'Deleted Worker',

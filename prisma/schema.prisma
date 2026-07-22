@@ -135,6 +135,8 @@ model User {
   email_verification_code_hash  String?
   email_verification_expires_at DateTime?
   email_verification_sent_at    DateTime?
+  email_verification_attempts   Int       @default(0)
+  email_verification_blocked_until DateTime?
   password_hash                 String?
   password_set_at               DateTime?
   role                          Role
@@ -168,6 +170,7 @@ model User {
   @@index([phone])
   @@index([email])
   @@index([email_verified_at])
+  @@index([email_verification_blocked_until])
   @@index([role])
   @@index([deleted_at])
   @@map("users")

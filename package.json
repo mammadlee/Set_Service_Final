@@ -20,6 +20,7 @@
     "test:pg365-sms": "ts-node scripts/pg365-sms-regression.ts",
     "test:jwt-rotation": "ts-node scripts/jwt-rotation-regression.ts",
     "test:jwt-ttl": "ts-node scripts/jwt-ttl-regression.ts",
+    "test:email-verification-attempts": "ts-node scripts/email-verification-attempt-regression.ts",
     "smoke:mvp": "ts-node scripts/mvp-flow-smoke.ts",
     "test:auth-security": "ts-node scripts/auth-security-regression.ts",
     "test:worker-security": "ts-node scripts/worker-security-regression.ts",

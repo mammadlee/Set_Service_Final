@@ -63,6 +63,8 @@ export async function updateMyCompany(userId: string, data: { name?: string; ema
           email_verification_code_hash: null,
           email_verification_expires_at: null,
           email_verification_sent_at: null,
+          email_verification_attempts: 0,
+          email_verification_blocked_until: null,
         },
       });
     } else if (cleanedEmail === updated.user.pending_email) {

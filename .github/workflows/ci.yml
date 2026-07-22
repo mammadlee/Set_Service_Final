@@ -155,6 +155,7 @@ jobs:
           npm run test:security-headers
           npm run test:text-id-locks
           npm run test:jwt-ttl
+          npm run test:email-verification-attempts
           npm run test:audit-transactions
           npm run test:approval-document-security
           npm run test:privacy-deletion

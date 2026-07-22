@@ -57,6 +57,8 @@ const OTP_RATE_WINDOW_MS = 15 * 60 * 1000;
 const OTP_RATE_MAX_BY_PHONE = 5;
 const OTP_RATE_MAX_BY_IP = 20;
 const EMAIL_VERIFICATION_EXPIRES_MS = 5 * 60 * 1000;
+const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
+const EMAIL_VERIFICATION_BLOCK_MS = 15 * 60 * 1000;
 const OTP_CHALLENGE_EXPIRES_MS = 5 * 60 * 1000;
 
 type VerifiedOtpCode = {
@@ -494,6 +496,8 @@ export async function startEmailVerification(userId: string, email: string) {
         email_verification_code_hash: codeHash,
         email_verification_expires_at: new Date(now.getTime() + EMAIL_VERIFICATION_EXPIRES_MS),
         email_verification_sent_at: now,
+        email_verification_attempts: 0,
+        email_verification_blocked_until: null,
       },
     });
     await queueProviderDelivery(tx, deliveryEvent, now);
@@ -513,49 +517,82 @@ export async function confirmEmailVerification(
   input: EmailVerificationConfirmInput
 ) {
   const now = new Date();
-  const user = await prisma.user.findFirst({
-    where: { id: userId, deleted_at: null, is_active: true },
-    select: {
-      id: true,
-      pending_email: true,
-      email_verification_code_hash: true,
-      email_verification_expires_at: true,
-    },
-  });
-  if (!user) throw Errors.unauthorized('Giriş tələb olunur.', 'UNAUTHORIZED');
-  if (
-    !user.pending_email ||
-    !user.email_verification_code_hash ||
-    !user.email_verification_expires_at ||
-    user.email_verification_expires_at <= now
-  ) {
-    throw Errors.unauthorized('Təsdiq kodu yanlışdır və ya vaxtı bitib.', 'INVALID_EMAIL_VERIFICATION_CODE');
-  }
-
-  const expected = emailVerificationHash(user.pending_email, input.otp_code);
-  if (!safeCompareHex(expected, user.email_verification_code_hash)) {
-    throw Errors.unauthorized('Təsdiq kodu yanlışdır və ya vaxtı bitib.', 'INVALID_EMAIL_VERIFICATION_CODE');
-  }
-
   try {
-    const updated = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        email: user.pending_email,
-        email_verified_at: now,
-        pending_email: null,
-        email_verification_code_hash: null,
-        email_verification_expires_at: null,
-        email_verification_sent_at: null,
-      },
-      select: {
-        email: true,
-        email_verified_at: true,
-      },
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      const user = await tx.user.findFirst({
+        where: { id: userId, deleted_at: null, is_active: true },
+        select: {
+          id: true,
+          pending_email: true,
+          email_verification_code_hash: true,
+          email_verification_expires_at: true,
+          email_verification_attempts: true,
+          email_verification_blocked_until: true,
+        },
+      });
+      if (!user) throw Errors.unauthorized('Giriş tələb olunur.', 'UNAUTHORIZED');
+      if (user.email_verification_blocked_until && user.email_verification_blocked_until > now) {
+        return {
+          status: 'blocked' as const,
+          retryAfterSeconds: Math.ceil((user.email_verification_blocked_until.getTime() - now.getTime()) / 1000),
+        };
+      }
+      if (
+        !user.pending_email
+        || !user.email_verification_code_hash
+        || !user.email_verification_expires_at
+        || user.email_verification_expires_at <= now
+      ) {
+        return { status: 'invalid' as const };
+      }
+
+      const expected = emailVerificationHash(user.pending_email, input.otp_code);
+      if (!safeCompareHex(expected, user.email_verification_code_hash)) {
+        const attempts = user.email_verification_attempts + 1;
+        const blockedUntil = attempts >= EMAIL_VERIFICATION_MAX_ATTEMPTS
+          ? new Date(now.getTime() + EMAIL_VERIFICATION_BLOCK_MS)
+          : null;
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            email_verification_attempts: { increment: 1 },
+            email_verification_blocked_until: blockedUntil,
+          },
+        });
+        return blockedUntil
+          ? { status: 'blocked' as const, retryAfterSeconds: Math.ceil(EMAIL_VERIFICATION_BLOCK_MS / 1000) }
+          : { status: 'invalid' as const };
+      }
+
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          email: user.pending_email,
+          email_verified_at: now,
+          pending_email: null,
+          email_verification_code_hash: null,
+          email_verification_expires_at: null,
+          email_verification_sent_at: null,
+          email_verification_attempts: 0,
+          email_verification_blocked_until: null,
+        },
+        select: { email: true, email_verified_at: true },
+      });
+      return { status: 'verified' as const, updated };
     });
+
+    if (result.status === 'blocked') {
+      throw Errors.tooMany('Email təsdiqi müvəqqəti bloklanıb.', 'EMAIL_VERIFICATION_BLOCKED', {
+        retry_after_seconds: result.retryAfterSeconds,
+      });
+    }
+    if (result.status === 'invalid') {
+      throw Errors.unauthorized('Təsdiq kodu yanlışdır və ya vaxtı bitib.', 'INVALID_EMAIL_VERIFICATION_CODE');
+    }
     return {
-      email: updated.email,
-      email_verified_at: updated.email_verified_at,
+      email: result.updated.email,
+      email_verified_at: result.updated.email_verified_at,
       email_verified: true,
     };
   } catch (error) {
