@@ -180,10 +180,12 @@ jobs:
           OUTBOX_MAX_CONSECUTIVE_FAILURES: "5"
           SWAGGER_DOCS_ENABLED: "false"
           CORS_ORIGINS: https://admin.example.com,https://company.example.com
-          SMS_PROVIDER: generic_http
-          SMS_API_URL: https://sms.example.test/send
-          SMS_API_KEY: ci-sms-api-key-12345678901234567890
-          SMS_FROM: SET Service
+          SMS_PROVIDER: pg365
+          PG365_API_URL: https://pg365.example.test
+          PG365_PUBLIC_KEY: ci-Pg365Public-K7vN2mQ9xR4tL8wD1sF6
+          PG365_PRIVATE_KEY: ci-Pg365Private-H3yB7zU0cJ5pM9kT2vQ8
+          PG365_ORIGINATOR: SET
+          PG365_TIMEOUT_MS: "8000"
           EMAIL_PROVIDER: generic_http
           EMAIL_API_URL: https://email.example.test/send
           EMAIL_API_KEY: ci-email-api-key-12345678901234567890
