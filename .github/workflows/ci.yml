@@ -148,6 +148,7 @@ jobs:
       - name: Backend and release security regression suite
         run: |
           npm run test:backend-access
+          npm run test:company-report-isolation
           npm run test:backend-infrastructure
           npm run test:text-id-locks
           npm run test:jwt-ttl

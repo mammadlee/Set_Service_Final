@@ -3,7 +3,14 @@ import { Errors } from '../../lib/errors';
 import { prisma } from '../../lib/prisma';
 import { ReportQueryInput } from './reports.schema';
 
-export async function getAdminReportSummary(filters: ReportQueryInput) {
+type ReportSummaryOptions = {
+  includePendingWorkerApprovals?: boolean;
+};
+
+export async function getAdminReportSummary(
+  filters: ReportQueryInput,
+  options: ReportSummaryOptions = {},
+) {
   const now = new Date();
   const todayStart = startOfDay(now);
   const tomorrowStart = new Date(todayStart);
@@ -57,7 +64,9 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
       select: { assignment: { select: { worker_id: true } } },
     }),
     prisma.assignment.count({ where: { ...assignmentWhere, status: 'rejected' } }),
-    prisma.worker.count({ where: pendingWorkerWhere }),
+    options.includePendingWorkerApprovals === false
+      ? Promise.resolve(0)
+      : prisma.worker.count({ where: pendingWorkerWhere }),
     prisma.company.count({ where: pendingCompanyWhere }),
     prisma.attendanceLog.findMany({
       where: { ...attendanceWhere, checkout_time: { not: null } },
@@ -224,10 +233,13 @@ export async function getCompanyReportSummary(userId: string, filters: ReportQue
   }
 
   const { foc_training: _focTraining, ...companyVisibleFilters } = filters;
-  return getAdminReportSummary({
-    ...companyVisibleFilters,
-    company_id: company.id,
-  });
+  return getAdminReportSummary(
+    {
+      ...companyVisibleFilters,
+      company_id: company.id,
+    },
+    { includePendingWorkerApprovals: false },
+  );
 }
 
 async function assertCompanyWorkerReportAccess(
