@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!swagger.yaml
+!src
+!src/**
+!prisma
+!prisma/**

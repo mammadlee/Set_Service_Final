@@ -19,44 +19,96 @@ import {
 import * as Service from './attendance.service';
 
 const router = Router();
+const legacyKioskPathsEnabled = process.env.NODE_ENV !== 'production';
 
 // Public token-protected kiosk endpoints. These do not require admin/company
 // credentials on venue tablets.
-router.get('/kiosk-sessions/:token', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/kiosk-sessions/context', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.getKioskSession(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.getKioskSession(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.post('/kiosk-sessions/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/kiosk-sessions/qr-token', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.generateKioskQrToken(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.generateKioskQrToken(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/venue-kiosks/:token', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/venue-kiosks/context', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.getKioskSession(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.getKioskSession(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.post('/venue-kiosks/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/venue-kiosks/qr-token', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.generateKioskQrToken(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.generateKioskQrToken(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
+
+// Local-only migration bridge for kiosk links issued before capability headers
+// were introduced. These routes are not registered in production, keeping raw
+// capabilities out of the production API route surface and application logs.
+// LOCAL_ONLY_KIOSK_LEGACY_START
+if (legacyKioskPathsEnabled) {
+  router.get('/kiosk-sessions/:token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.getKioskSession(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.post('/kiosk-sessions/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.generateKioskQrToken(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get('/venue-kiosks/:token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.getKioskSession(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.post('/venue-kiosks/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.generateKioskQrToken(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+}
+// LOCAL_ONLY_KIOSK_LEGACY_END
 
 router.use(requireAuth);
 
@@ -238,3 +290,15 @@ router.get(
 );
 
 export default router;
+
+function readKioskCapability(req: Request): string {
+  return KioskTokenParamsSchema.parse({
+    token: req.get('x-kiosk-capability'),
+  }).token;
+}
+
+function setKioskResponseHeaders(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}

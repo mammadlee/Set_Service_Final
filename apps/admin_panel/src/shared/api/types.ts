@@ -68,7 +68,6 @@ export interface AuthUser {
 
 export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
   user: AuthUser;
 }
 
@@ -187,8 +186,16 @@ export interface CompanyProfile {
   phone: string;
   email?: string | null;
   status: CompanyStatus;
-  docs_url?: string | null;
-  documents?: unknown;
+  documents?: Array<{
+    type: string;
+    name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    uploaded_at?: string;
+    status: string;
+    scan_status: string;
+    available: boolean;
+  }>;
   reject_reason?: string | null;
   created_at: string;
 }

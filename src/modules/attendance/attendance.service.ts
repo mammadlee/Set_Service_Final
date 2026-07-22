@@ -4,11 +4,13 @@ import { Errors } from '../../lib/errors';
 import { sendPushToUser } from '../../lib/fcm';
 import { logger } from '../../lib/logger';
 import {
+  AttendanceQrPayload,
   generateAttendanceQrToken,
   hashQrToken,
   verifyAttendanceQrToken,
 } from '../../lib/qr';
 import { Role } from '../../types/prisma';
+import { ORDER_ATTENDANCE_STATUSES } from '../orders/orders.lifecycle';
 import {
   CheckInInput,
   CheckOutInput,
@@ -51,6 +53,14 @@ export async function generateQrToken(userId: string, roleValue: string, input: 
     orderId: assignment.order_id,
     companyId: assignment.order.company_id,
     ttlSeconds: input.ttl_seconds,
+  });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    assignmentId: assignment.id,
+    orderId: assignment.order_id,
+    companyId: assignment.order.company_id,
+    expiresAt: qr.expiresAt,
   });
 
   return {
@@ -109,7 +119,7 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
 
 export async function getKioskSession(token: string) {
   const venueKiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
-  if (venueKiosk) return toVenueKioskResponse(venueKiosk);
+  if (venueKiosk) return toVenueKioskPublicResponse(venueKiosk);
 
   const session = await findValidKioskSessionByToken(token);
   return toKioskSessionResponse(session);
@@ -117,14 +127,24 @@ export async function getKioskSession(token: string) {
 
 export async function generateKioskQrToken(token: string) {
   const venueKiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
-  if (venueKiosk) return generateVenueKioskQrTokenFromRecord(venueKiosk);
+  if (venueKiosk) return await generateVenueKioskQrTokenFromRecord(venueKiosk);
 
   const session = await findValidKioskSessionByToken(token);
   const qr = generateAttendanceQrToken({
     assignmentId: session.assignment_id,
     orderId: session.order_id,
     companyId: session.company_id,
+    kioskSessionId: session.id,
     ttlSeconds: KIOSK_QR_REFRESH_SECONDS,
+  });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    assignmentId: session.assignment_id,
+    orderId: session.order_id,
+    companyId: session.company_id,
+    kioskSessionId: session.id,
+    expiresAt: qr.expiresAt,
   });
 
   return {
@@ -159,7 +179,7 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
       });
 
       return {
-        ...toVenueKioskResponse(kiosk),
+        ...toVenueKioskPublicResponse(kiosk),
         kiosk_token: kioskToken,
         kiosk_url: buildKioskUrl(kioskToken),
       };
@@ -187,7 +207,7 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
     data: (await AttendanceRepository.listVenueKiosks({
       deleted_at: null,
       ...(companyId ? { company_id: companyId } : {}),
-    })).map(toVenueKioskResponse),
+    })).map(toVenueKioskManagementResponse),
   };
 }
 
@@ -214,20 +234,22 @@ export async function activateVenueKiosk(
   if (order.company_id !== kiosk.company_id) {
     throw Errors.forbidden('Kiosk yalnız öz müəssisəsinin sifarişləri üçün aktiv edilə bilər.', 'FORBIDDEN');
   }
-  if (order.status !== 'active') {
+  if (!ORDER_ATTENDANCE_STATUSES.includes(order.status)) {
     throw Errors.conflict('QR ekranı yalnız aktiv sifariş üçün aktiv edilə bilər.', 'ORDER_NOT_ACTIVE');
   }
   if (order._count.assignments < 1) {
     throw Errors.conflict('Bu sifariş üzrə işi qəbul etmiş işçi yoxdur.', 'NO_ACCEPTED_ASSIGNMENTS');
   }
 
-  return toVenueKioskResponse(await AttendanceRepository.activateVenueKiosk({
+  const activated = await AttendanceRepository.activateVenueKiosk({
     kioskId: kiosk.id,
     companyId: kiosk.company_id,
     orderId: order.id,
     activatedById: userId,
     expiresAt: parseOptionalFutureDate(input.expires_at, 'Kiosk aktiv sessiyasının bitmə tarixi gələcək tarix olmalıdır.'),
-  }));
+  });
+  if (!activated) throw Errors.gone('Bu QR ekranÄ± deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
+  return toVenueKioskManagementResponse(activated);
 }
 
 export async function deactivateVenueKiosk(userId: string, roleValue: string, id: string) {
@@ -239,7 +261,7 @@ export async function deactivateVenueKiosk(userId: string, roleValue: string, id
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
   const kiosk = await AttendanceRepository.deactivateVenueKiosk({ id, companyId });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk);
 }
 
 export async function disableVenueKiosk(userId: string, roleValue: string, id: string) {
@@ -251,7 +273,7 @@ export async function disableVenueKiosk(userId: string, roleValue: string, id: s
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
   const kiosk = await AttendanceRepository.disableVenueKiosk({ id, companyId });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk);
 }
 
 export async function revokeKioskSession(userId: string, roleValue: string, id: string) {
@@ -287,29 +309,32 @@ export async function checkIn(userId: string, roleValue: string, input: CheckInI
   }
 
   const worker = await getApprovedWorkerForUser(userId);
-  const assignment = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
+  const { assignment, payload } = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
 
   const result = await AttendanceRepository.createCheckInWithAudit({
     assignmentId: assignment.id,
     workerId: worker.id,
     actorId: userId,
     actorRole: role,
-    qrTokenHash: hashQrToken(input.qr_token),
+    qr: toQrContext(input.qr_token, payload),
     location: input.location,
     notes: input.notes,
   });
 
-  if (result.kind === 'already_checked_in') {
-    throw Errors.conflict('Bu təyinat üzrə artıq giriş edilib.', 'ATTENDANCE_ALREADY_CHECKED_IN');
-  }
-  if (result.kind === 'already_completed') {
-    throw Errors.conflict(
-      'Bu təyinat üzrə giriş-çıxış artıq tamamlanıb.',
-      'ATTENDANCE_ALREADY_COMPLETED'
-    );
-  }
-  if (result.kind === 'assignment_not_accepted') {
-    throw Errors.conflict('Giriş üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+  if (result.kind !== 'checked_in') {
+    if (result.kind === 'already_checked_in') {
+      throw Errors.conflict('Bu təyinat üzrə artıq giriş edilib.', 'ATTENDANCE_ALREADY_CHECKED_IN');
+    }
+    if (result.kind === 'already_completed') {
+      throw Errors.conflict(
+        'Bu təyinat üzrə giriş-çıxış artıq tamamlanıb.',
+        'ATTENDANCE_ALREADY_COMPLETED'
+      );
+    }
+    if (result.kind === 'assignment_not_accepted') {
+      throw Errors.conflict('Giriş üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+    }
+    throwQrUseError(result.kind);
   }
 
   await createAttendanceNotificationSafely(result.attendance, 'checked_in');
@@ -335,22 +360,26 @@ export async function checkOut(userId: string, roleValue: string, input: CheckOu
   }
 
   const worker = await getApprovedWorkerForUser(userId);
-  const assignment = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
+  const { assignment, payload } = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
 
   const result = await AttendanceRepository.checkOutWithAudit({
     assignmentId: assignment.id,
     workerId: worker.id,
     actorId: userId,
     actorRole: role,
+    qr: toQrContext(input.qr_token, payload),
     location: input.location,
     notes: input.notes,
   });
 
-  if (result.kind === 'not_checked_in') {
-    throw Errors.badRequest('Çıxış üçün əvvəlcə giriş edilməlidir.', 'ATTENDANCE_NOT_CHECKED_IN');
-  }
-  if (result.kind === 'assignment_not_accepted') {
-    throw Errors.conflict('Çıxış üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+  if (result.kind !== 'checked_out') {
+    if (result.kind === 'not_checked_in') {
+      throw Errors.badRequest('Çıxış üçün əvvəlcə giriş edilməlidir.', 'ATTENDANCE_NOT_CHECKED_IN');
+    }
+    if (result.kind === 'assignment_not_accepted') {
+      throw Errors.conflict('Çıxış üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+    }
+    throwQrUseError(result.kind);
   }
 
   await createAttendanceNotificationSafely(result.attendance, 'checked_out');
@@ -487,7 +516,7 @@ async function resolveManageableCompanyId(
   return requestedCompanyId;
 }
 
-function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
+async function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
   ensureVenueKioskUsable(kiosk);
   const activeSession = getUsableActiveSession(kiosk);
   if (!activeSession) {
@@ -501,9 +530,18 @@ function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
     kioskSessionId: activeSession.id,
     ttlSeconds: KIOSK_QR_REFRESH_SECONDS,
   });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    orderId: activeSession.order_id,
+    companyId: activeSession.company_id,
+    kioskId: kiosk.id,
+    kioskSessionId: activeSession.id,
+    expiresAt: qr.expiresAt,
+  });
 
   return {
-    ...toVenueKioskResponse(kiosk),
+    ...toVenueKioskPublicResponse(kiosk),
     token: qr.token,
     expires_at: qr.expiresAt,
     refresh_after_seconds: KIOSK_QR_REFRESH_SECONDS,
@@ -533,7 +571,7 @@ function getUsableActiveSession(kiosk: VenueKioskRecord) {
     session.deleted_at !== null ||
     session.status !== 'active' ||
     session.order.deleted_at !== null ||
-    session.order.status !== 'active' ||
+    !ORDER_ATTENDANCE_STATUSES.includes(session.order.status) ||
     session.order.company_id !== kiosk.company_id
   ) {
     return null;
@@ -551,7 +589,7 @@ function ensureKioskSessionActive(session: KioskSessionRecord): void {
     session.company.deleted_at !== null ||
     session.company.status !== 'approved' ||
     session.order.deleted_at !== null ||
-    session.order.status !== 'active' ||
+    !ORDER_ATTENDANCE_STATUSES.includes(session.order.status) ||
     session.assignment.deleted_at !== null ||
     session.assignment.status !== 'accepted' ||
     session.assignment.order_id !== session.order_id ||
@@ -626,16 +664,17 @@ function decryptKioskToken(ciphertext: string | null): string | null {
 
 function kioskEncryptionKey(): Buffer {
   const secret =
-    process.env.KIOSK_TOKEN_ENCRYPTION_SECRET ||
-    process.env.JWT_SECRET ||
-    process.env.QR_HMAC_SECRET ||
-    'development-kiosk-token-encryption-secret';
+    process.env.KIOSK_TOKEN_ENCRYPTION_SECRET ??
+    (process.env.NODE_ENV !== 'production' ? 'development-kiosk-token-encryption-secret' : undefined);
+  if (!secret) {
+    throw new Error('KIOSK_TOKEN_ENCRYPTION_SECRET is required in production.');
+  }
   return crypto.createHash('sha256').update(secret).digest();
 }
 
 function buildKioskUrl(token: string): string {
   const base = (process.env.KIOSK_PUBLIC_BASE_URL ?? process.env.PUBLIC_APP_URL ?? '').replace(/\/+$/, '');
-  const path = `/kiosk/${encodeURIComponent(token)}`;
+  const path = `/kiosk#capability=${encodeURIComponent(token)}`;
   return base ? `${base}${path}` : path;
 }
 
@@ -659,9 +698,8 @@ function toKioskSessionResponse(session: KioskSessionRecord) {
   };
 }
 
-function toVenueKioskResponse(kiosk: VenueKioskRecord) {
+function toVenueKioskPublicResponse(kiosk: VenueKioskRecord) {
   const activeSession = getUsableActiveSession(kiosk);
-  const kioskToken = decryptKioskToken(kiosk.token_ciphertext);
   return {
     id: kiosk.id,
     kiosk_id: kiosk.id,
@@ -676,7 +714,6 @@ function toVenueKioskResponse(kiosk: VenueKioskRecord) {
     created_at: kiosk.created_at,
     updated_at: kiosk.updated_at,
     refresh_interval_seconds: KIOSK_QR_REFRESH_SECONDS,
-    kiosk_url: kioskToken ? buildKioskUrl(kioskToken) : undefined,
     active_session: activeSession
       ? {
           id: activeSession.id,
@@ -696,6 +733,15 @@ function toVenueKioskResponse(kiosk: VenueKioskRecord) {
     location: activeSession?.order.location ?? kiosk.location_label,
     shift_start: activeSession?.order.shift_start ?? null,
     shift_end: activeSession?.order.shift_end ?? null,
+  };
+}
+
+function toVenueKioskManagementResponse(kiosk: VenueKioskRecord) {
+  const response = toVenueKioskPublicResponse(kiosk);
+  const kioskToken = decryptKioskToken(kiosk.token_ciphertext);
+  return {
+    ...response,
+    kiosk_url: kioskToken ? buildKioskUrl(kioskToken) : undefined,
   };
 }
 
@@ -722,7 +768,11 @@ async function findVisibleAttendance(id: string, userId: string, role: Role): Pr
 async function getAssignmentForQr(assignmentId: string): Promise<AssignmentRecord> {
   const assignment = await AttendanceRepository.findAcceptedAssignmentById(assignmentId);
   if (!assignment) throw Errors.notFound('Təyinat tapılmadı.', 'ASSIGNMENT_NOT_FOUND');
-  if (assignment.status !== 'accepted' || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+  if (
+    assignment.status !== 'accepted' ||
+    !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status) ||
+    assignment.order.deleted_at !== null
+  ) {
     throw Errors.conflict('QR yaratmaq üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
   }
   return assignment;
@@ -732,7 +782,7 @@ async function getWorkerAssignmentForQr(
   qrToken: string,
   submittedAssignmentId: string | undefined,
   workerId: string
-): Promise<AssignmentRecord> {
+): Promise<{ assignment: AssignmentRecord; payload: AttendanceQrPayload }> {
   const verified = verifyAttendanceQrToken(qrToken);
   if (!verified.valid) {
     if (verified.expired) throw Errors.gone('QR token has expired.', 'QR_TOKEN_EXPIRED');
@@ -742,7 +792,7 @@ async function getWorkerAssignmentForQr(
   if (verified.payload.assignment_id) {
     const assignment = await getWorkerAcceptedAssignment(verified.payload.assignment_id, workerId);
     verifyPayloadForAssignment(verified.payload, assignment);
-    return assignment;
+    return { assignment, payload: verified.payload };
   }
 
   const assignment = await AttendanceRepository.findAcceptedAssignmentForWorkerOrder(workerId, verified.payload.order_id);
@@ -756,7 +806,7 @@ async function getWorkerAssignmentForQr(
     // The QR is order-based; use the authenticated worker's accepted assignment for that order.
   }
   verifyPayloadForAssignment(verified.payload, assignment);
-  return assignment;
+  return { assignment, payload: verified.payload };
 }
 
 async function getWorkerAcceptedAssignment(assignmentId: string, workerId: string): Promise<AssignmentRecord> {
@@ -765,7 +815,11 @@ async function getWorkerAcceptedAssignment(assignmentId: string, workerId: strin
   if (assignment.worker_id !== workerId) {
     throw Errors.forbidden('Worker can use attendance only for own assignment.', 'FORBIDDEN');
   }
-  if (assignment.status !== 'accepted' || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+  if (
+    assignment.status !== 'accepted' ||
+    !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status) ||
+    assignment.order.deleted_at !== null
+  ) {
     throw Errors.conflict('Davamiyyət üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED', {
       status: assignment.status,
       order_status: assignment.order.status,
@@ -799,6 +853,27 @@ function verifyPayloadForAssignment(
   ) {
     throw Errors.unauthorized('QR token bu təyinat üçün uyğun deyil.', 'QR_TOKEN_INVALID');
   }
+}
+
+function toQrContext(qrToken: string, payload: AttendanceQrPayload): AttendanceRepository.AttendanceQrContext {
+  return {
+    tokenHash: hashQrToken(qrToken),
+    nonce: payload.nonce,
+    assignmentId: payload.assignment_id,
+    orderId: payload.order_id,
+    companyId: payload.company_id,
+    kioskId: payload.kiosk_id,
+    kioskSessionId: payload.kiosk_session_id,
+  };
+}
+
+function throwQrUseError(kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_replayed'): never {
+  if (kind === 'qr_expired') throw Errors.gone('QR token has expired.', 'QR_TOKEN_EXPIRED');
+  if (kind === 'qr_revoked') throw Errors.gone('QR session has been revoked.', 'QR_TOKEN_REVOKED');
+  if (kind === 'qr_replayed') {
+    throw Errors.conflict('This QR token was already used by the worker.', 'QR_TOKEN_REPLAYED');
+  }
+  throw Errors.unauthorized('QR token yanlÄ±ÅŸdÄ±r.', 'QR_TOKEN_INVALID');
 }
 
 async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord> {

@@ -1,16 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/network/api_exception.dart';
 import '../../../../core/push/push_registration_service.dart';
+import '../../../../core/session/session_coordinator.dart';
 import '../../../../shared/app_strings.dart';
 import '../../data/auth_repository.dart';
 import '../../data/models/auth_models.dart';
 
 class AuthController extends ChangeNotifier {
-  AuthController(this._repository, this._pushRegistrationService);
+  AuthController(
+    this._repository,
+    this._pushRegistrationService,
+    this._sessionCoordinator,
+  ) {
+    _sessionInvalidationSubscription = _sessionCoordinator.invalidations
+        .where((event) => event.sessionKey == 'worker')
+        .listen(_handleSessionInvalidation);
+  }
 
   final AuthRepository _repository;
   final PushRegistrationService _pushRegistrationService;
+  final SessionCoordinator _sessionCoordinator;
+  late final StreamSubscription<SessionInvalidation>
+  _sessionInvalidationSubscription;
 
   AuthViewState state = AuthViewState.splash;
   WorkerMe? worker;
@@ -33,6 +47,8 @@ class AuthController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_sessionInvalidationSubscription.cancel());
+    unawaited(_pushRegistrationService.dispose());
     super.dispose();
   }
 
@@ -43,6 +59,7 @@ class AuthController extends ChangeNotifier {
     final hasTokens = await _repository.hasStoredTokens();
     if (!hasTokens) {
       state = AuthViewState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
       return;
     }
@@ -50,17 +67,45 @@ class AuthController extends ChangeNotifier {
     try {
       worker = await _repository.getWorkerProfile();
       state = _stateForWorkerStatus(worker?.status);
+      _notifySessionState(
+        state == AuthViewState.authenticated
+            ? SessionState.authenticated
+            : SessionState.blocked,
+      );
     } on ApiException catch (error) {
       if (_applyAccountApprovalError(error)) {
         await _repository.clearLocalSession();
-      } else {
+        _notifySessionState(SessionState.blocked, code: error.code);
+      } else if (isTerminalSessionErrorCode(error.code)) {
         await _repository.clearLocalSession();
         state = AuthViewState.unauthenticated;
+      } else {
+        // A timeout, offline startup, or temporary server failure must not
+        // destroy a valid local session. The protected screens can surface
+        // their own retry state until connectivity returns.
+        state = AuthViewState.authenticated;
+        errorMessage = error.message;
+        _notifySessionState(SessionState.offlineAuthenticated);
       }
     } catch (_) {
-      await _repository.clearLocalSession();
-      state = AuthViewState.unauthenticated;
+      state = AuthViewState.authenticated;
+      errorMessage = AppStrings.unknownError;
+      _notifySessionState(SessionState.offlineAuthenticated);
     }
+    notifyListeners();
+  }
+
+  void _handleSessionInvalidation(SessionInvalidation event) {
+    worker = null;
+    pendingPhone = null;
+    pendingEmail = null;
+    pendingOtpCode = null;
+    pendingOtpChallenge = null;
+    pendingPurpose = null;
+    blockedStatus = null;
+    successMessage = null;
+    errorMessage = AppStrings.backendError(code: event.code);
+    state = AuthViewState.unauthenticated;
     notifyListeners();
   }
 
@@ -95,6 +140,11 @@ class AuthController extends ChangeNotifier {
       await _repository.loginWorker(phone: phone, password: password);
       worker = await _repository.getWorkerProfile();
       state = _stateForWorkerStatus(worker?.status);
+      _notifySessionState(
+        state == AuthViewState.authenticated
+            ? SessionState.authenticated
+            : SessionState.blocked,
+      );
     });
   }
 
@@ -232,6 +282,7 @@ class AuthController extends ChangeNotifier {
       successMessage = null;
       isSubmitting = false;
       state = AuthViewState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
     }
   }
@@ -246,6 +297,7 @@ class AuthController extends ChangeNotifier {
     errorMessage = null;
     successMessage = null;
     state = AuthViewState.unauthenticated;
+    _notifySessionState(SessionState.unauthenticated);
     notifyListeners();
   }
 
@@ -302,6 +354,14 @@ class AuthController extends ChangeNotifier {
       return AuthViewState.accountBlocked;
     }
     return AuthViewState.pendingApproval;
+  }
+
+  void _notifySessionState(SessionState sessionState, {String? code}) {
+    _sessionCoordinator.notifyState(
+      sessionKey: 'worker',
+      state: sessionState,
+      code: code,
+    );
   }
 }
 

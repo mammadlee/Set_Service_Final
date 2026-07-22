@@ -1,6 +1,11 @@
 import 'package:flutter/foundation.dart';
 
-enum AppConfigIssue { missingBaseUrl, localBaseUrl }
+enum AppConfigIssue {
+  missingBaseUrl,
+  invalidBaseUrl,
+  localBaseUrl,
+  insecureBaseUrl,
+}
 
 class AppConfig {
   static const _defaultBaseUrl = 'http://localhost:3000';
@@ -10,10 +15,13 @@ class AppConfig {
     defaultValue: kReleaseMode,
   );
 
-  static String get rawBaseUrl {
-    const configured = _configuredBaseUrl;
-    if (configured.trim().isEmpty) return _defaultBaseUrl;
-    return configured.replaceAll(RegExp(r'/+$'), '');
+  static String get rawBaseUrl => normalizeBaseUrl(_configuredBaseUrl);
+
+  @visibleForTesting
+  static String normalizeBaseUrl(String configured) {
+    final normalized = configured.trim();
+    if (normalized.isEmpty) return _defaultBaseUrl;
+    return normalized.replaceAll(RegExp(r'/+$'), '');
   }
 
   static String get apiBaseUrl {
@@ -22,13 +30,33 @@ class AppConfig {
   }
 
   static AppConfigIssue? get configIssue {
-    if (!kReleaseMode) return null;
+    return validateBaseUrl(_configuredBaseUrl, releaseMode: kReleaseMode);
+  }
 
-    final configured = _configuredBaseUrl.trim();
-    if (configured.isEmpty) return AppConfigIssue.missingBaseUrl;
+  @visibleForTesting
+  static AppConfigIssue? validateBaseUrl(
+    String configured, {
+    required bool releaseMode,
+  }) {
+    if (!releaseMode) return null;
 
-    final normalized = configured.replaceAll(RegExp(r'/+$'), '');
+    final value = configured.trim();
+    if (value.isEmpty) return AppConfigIssue.missingBaseUrl;
+
+    final normalized = value.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(normalized);
+    if (uri == null ||
+        !uri.isAbsolute ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return AppConfigIssue.invalidBaseUrl;
+    }
     if (_isLocalBaseUrl(normalized)) return AppConfigIssue.localBaseUrl;
+    if (uri.scheme.toLowerCase() != 'https') {
+      return AppConfigIssue.insecureBaseUrl;
+    }
 
     return null;
   }

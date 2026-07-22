@@ -67,6 +67,7 @@ flutter:
 
   assets:
     - assets/brand/set_app_logo.png
+    - assets/brand/set_outline_logo.png
     - assets/brand/role_selection_background.png
     - assets/brand/admin_hotel_backdrop.png
 

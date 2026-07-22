@@ -2,12 +2,25 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { Errors } from '../../lib/errors';
-import { sendPushToUser } from '../../lib/fcm';
-import { createUploadService } from '../../lib/uploads';
+import { sendPushToDeviceTargets, sendPushToUser } from '../../lib/fcm';
+import {
+  createUploadService,
+  PrivateUploadObjectResult,
+  UploadObjectResult,
+} from '../../lib/uploads';
+import {
+  inspectUpload,
+  InspectedUpload,
+  MalwareScanResult,
+  sanitizePublicImageUpload,
+  scanUpload,
+} from '../../lib/file-security';
+import { logger } from '../../lib/logger';
 import { normalizeEmail } from '../../lib/password';
 import { Role, WorkerClass, WorkerStatus } from '../../types/prisma';
 import * as TaxonomyService from '../taxonomy/taxonomy.service';
 import { startEmailVerification } from '../auth/auth.service';
+import { enqueueStorageCleanupEvents } from '../../lib/storage-cleanup-outbox';
 
 const WORKER_STATUSES = new Set<string>([
   'draft',
@@ -62,7 +75,6 @@ export async function updateMyWorker(
   data: {
     skills?: unknown;
     languages?: unknown;
-    documents?: unknown;
     availability?: boolean;
     work_history_summary?: string | null;
     work_history?: unknown;
@@ -80,7 +92,15 @@ export async function updateMyWorker(
     });
   }
 
-  const { email, position_ids, ...workerData } = data;
+  const { email, position_ids } = data;
+  const workerData: Prisma.WorkerUpdateInput = {};
+  if (data.skills !== undefined) workerData.skills = data.skills as Prisma.InputJsonValue;
+  if (data.languages !== undefined) workerData.languages = data.languages as Prisma.InputJsonValue;
+  if (data.availability !== undefined) workerData.availability = data.availability;
+  if (data.work_history_summary !== undefined) workerData.work_history_summary = data.work_history_summary;
+  if (data.work_history !== undefined) workerData.work_history = data.work_history as Prisma.InputJsonValue;
+  if (data.gender !== undefined) workerData.gender = data.gender;
+  if (data.whatsapp_available !== undefined) workerData.whatsapp_available = data.whatsapp_available;
   const selectedPositions = position_ids ? await resolveWorkerPositions(position_ids) : null;
   let updated: WorkerProfileRecord;
   try {
@@ -136,19 +156,48 @@ export async function updateMyWorker(
 }
 
 export async function uploadMyProfilePhoto(userId: string, file: Express.Multer.File | undefined) {
-  const worker = await getApprovedWorkerRecord(userId);
+  const worker = await getDocumentEnrollmentWorkerRecord(userId);
   const upload = await putWorkerUpload({
     workerId: worker.id,
     file,
     folder: 'profile-photo',
     allowedMimeTypes: new Set(['image/jpeg', 'image/png', 'image/webp']),
+    visibility: 'public',
   });
 
-  const updated = await prisma.worker.update({
-    where: { id: worker.id },
-    data: { profile_photo_url: upload.url },
-    include: workerProfileInclude,
-  });
+  let updated: WorkerProfileRecord;
+  try {
+    updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedWorker = await tx.worker.update({
+        where: { id: worker.id },
+        data: { profile_photo_url: upload.url },
+        include: workerProfileInclude,
+      });
+      await tx.auditLog.create({
+        data: {
+          actor_id: userId,
+          actor_role: 'worker' as Role,
+          action: 'status_changed',
+          entity_type: 'worker_profile_photo',
+          entity_id: worker.id,
+          metadata: {
+            event: 'profile_photo_replaced',
+            content_sha256: upload.inspection.sha256,
+            scanner: upload.scan.scanner,
+          },
+        },
+      });
+      return updatedWorker;
+    });
+  } catch (error) {
+    await deleteObjectBestEffort(upload.key, 'public', 'new_profile_photo_rollback');
+    throw error;
+  }
+
+  const previousKey = publicObjectKeyFromUrl(worker.profile_photo_url);
+  if (previousKey && previousKey !== upload.key) {
+    await deleteObjectBestEffort(previousKey, 'public', 'replaced_profile_photo_cleanup');
+  }
 
   return toWorkerProfile(updated);
 }
@@ -171,7 +220,7 @@ export async function updateWorkerClass(
     return toWorkerProfile(worker, { includeWorkerClass: true });
   }
 
-  const updated = await prisma.$transaction(async (tx: typeof prisma) => {
+  const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updatedWorker = await tx.worker.update({
       where: { id },
       data: { worker_class: workerClass },
@@ -221,7 +270,7 @@ export async function updateWorkersFocTraining(
   const now = new Date();
   const noteWasProvided = note !== undefined;
   const cleanedNote = typeof note === 'string' ? note.trim() || null : null;
-  const updated = await prisma.$transaction(async (tx: typeof prisma) => {
+  const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updatedWorkers: WorkerProfileRecord[] = [];
 
     for (const worker of workers) {
@@ -280,31 +329,378 @@ export async function uploadMyDocument(
     file,
     folder: `documents/${documentType}`,
     allowedMimeTypes: new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
+    visibility: 'private',
   });
 
-  const currentDocuments = normalizeDocuments(worker.documents);
   const nextDocument: WorkerDocument = {
     type: documentType,
-    name: file!.originalname || documentType,
-    url: upload.url,
+    name: upload.inspection.safeOriginalName,
     key: upload.key,
-    mime_type: file!.mimetype,
-    size_bytes: file!.size,
+    mime_type: upload.inspection.detectedMimeType,
+    size_bytes: upload.inspection.sizeBytes,
     uploaded_at: new Date().toISOString(),
     company_visible: documentType === 'health_certificate',
+    status: 'ready',
+    scan_status: upload.scan.status,
+    scanner: upload.scan.scanner,
+    scanned_at: upload.scan.scannedAt,
+    content_sha256: upload.inspection.sha256,
   };
-  const nextDocuments = [
-    ...currentDocuments.filter((document) => document.type !== documentType),
-    nextDocument,
-  ];
 
-  const updated = await prisma.worker.update({
-    where: { id: worker.id },
-    data: { documents: nextDocuments as Prisma.InputJsonValue },
-    include: { user: { select: { name: true, phone: true, email: true } } },
+  let result: { updated: WorkerProfileRecord };
+  try {
+    result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+      const current = await tx.worker.findUniqueOrThrow({
+        where: { id: worker.id },
+        select: { documents: true },
+      });
+      const currentDocuments = normalizeDocuments(current.documents);
+      const previousDocument = currentDocuments.find((document) => document.type === documentType);
+      const nextDocuments = [
+        ...currentDocuments.filter((document) => document.type !== documentType),
+        nextDocument,
+      ];
+      const updatedWorker = await tx.worker.update({
+        where: { id: worker.id },
+        data: { documents: nextDocuments as Prisma.InputJsonValue },
+        include: workerProfileInclude,
+      });
+      if (
+        previousDocument?.key
+        && previousDocument.key !== upload.key
+        && privateDocumentKeyBelongsToWorker(previousDocument.key, worker.id, documentType)
+      ) {
+        await enqueueStorageCleanupEvents(tx, {
+          aggregate: 'worker_document',
+          aggregateId: worker.id,
+          reason: 'worker_document_replaced',
+          objects: [{ key: previousDocument.key, visibility: 'private' }],
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          actor_id: userId,
+          actor_role: 'worker' as Role,
+          action: 'status_changed',
+          entity_type: 'worker_document',
+          entity_id: worker.id,
+          metadata: {
+            event: previousDocument ? 'document_replaced' : 'document_uploaded',
+            document_type: documentType,
+            previous_key_hash: previousDocument?.key ? hashObjectKey(previousDocument.key) : null,
+            new_key_hash: hashObjectKey(upload.key),
+            content_sha256: upload.inspection.sha256,
+            scan_status: upload.scan.status,
+            scanner: upload.scan.scanner,
+          },
+        },
+      });
+      return { updated: updatedWorker };
+    });
+  } catch (error) {
+    await deletePrivateObjectBestEffort(upload.key, 'new_document_rollback');
+    throw error;
+  }
+
+  return toWorkerProfile(result.updated);
+}
+
+export async function deleteMyDocument(userId: string, type: string) {
+  const documentType = parseWorkerDocumentType(type);
+  const now = new Date();
+  const deletedAt = now.toISOString();
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const worker = await tx.worker.findFirst({
+      where: { user_id: userId, deleted_at: null },
+      select: { id: true },
+    });
+    if (!worker) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
+
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+    const current = await tx.worker.findUniqueOrThrow({
+      where: { id: worker.id },
+      select: { id: true, documents: true },
+    });
+    const currentDocuments = normalizeDocuments(current.documents);
+    const document = currentDocuments.find((item) =>
+      item.type === documentType
+      && item.status !== 'deleted'
+      && !item.deleted_at
+    );
+    if (!document) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
+
+    const nextDocuments = currentDocuments.map((item) =>
+      item.type === documentType ? deletedDocumentTombstone(item, deletedAt) : item
+    );
+    const cleanup = documentStorageCleanup(document, current.id);
+
+    await tx.worker.update({
+      where: { id: current.id },
+      data: { documents: nextDocuments as Prisma.InputJsonValue },
+    });
+    const scheduledCleanupCount = cleanup
+      ? await enqueueStorageCleanupEvents(tx, {
+          aggregate: 'worker_document',
+          aggregateId: current.id,
+          reason: 'worker_document_owner_deletion',
+          objects: [cleanup],
+        })
+      : 0;
+    await tx.auditLog.create({
+      data: {
+        actor_id: userId,
+        actor_role: 'worker' as Role,
+        action: 'status_changed',
+        entity_type: 'worker_document',
+        entity_id: current.id,
+        metadata: {
+          event: 'document_deleted_by_owner',
+          document_type: documentType,
+          previous_status: document.status ?? 'legacy',
+          new_status: 'deleted',
+          object_key_hash: document.key ? hashObjectKey(document.key) : null,
+          storage_cleanup_scheduled: scheduledCleanupCount > 0,
+          storage_cleanup_event_count: scheduledCleanupCount,
+        },
+      },
+    });
+
+    return { workerId: current.id };
   });
 
-  return toWorkerProfile(updated);
+  return {
+    status: 'deleted',
+    worker_id: result.workerId,
+    document_type: documentType,
+    deleted_at: deletedAt,
+  };
+}
+
+export async function requestMyAccountDeletion(userId: string) {
+  const now = new Date();
+  const effectiveAt = now.toISOString();
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const worker = await tx.worker.findFirst({
+      where: { user_id: userId, deleted_at: null },
+      select: { id: true },
+    });
+    if (!worker) throw Errors.notFound('Worker account not found.', 'WORKER_NOT_FOUND');
+
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+    const current = await tx.worker.findUniqueOrThrow({
+      where: { id: worker.id },
+      select: {
+        id: true,
+        user_id: true,
+        status: true,
+        documents: true,
+        profile_photo_url: true,
+      },
+    });
+    const currentDocuments = normalizeDocuments(current.documents);
+    const cleanups = currentDocuments.flatMap((document) => {
+      const cleanup = documentStorageCleanup(document, current.id);
+      return cleanup ? [cleanup] : [];
+    });
+    const profilePhotoCleanup = profilePhotoStorageCleanup(current.profile_photo_url, current.id);
+    if (profilePhotoCleanup) cleanups.push(profilePhotoCleanup);
+    const deletedDocuments = currentDocuments.map((document) =>
+      deletedDocumentTombstone(document, effectiveAt)
+    );
+
+    await tx.worker.update({
+      where: { id: current.id },
+      data: {
+        position: null,
+        profile_photo_url: null,
+        skills: [] as Prisma.InputJsonValue,
+        languages: [] as Prisma.InputJsonValue,
+        documents: deletedDocuments as Prisma.InputJsonValue,
+        work_history_summary: null,
+        work_history: [] as Prisma.InputJsonValue,
+        gender: null,
+        whatsapp_available: false,
+        status: 'inactive' as WorkerStatus,
+        reject_reason: null,
+        worker_class: null,
+        is_foc_training: false,
+        foc_training_note: null,
+        foc_training_updated_at: null,
+        foc_training_updated_by_id: null,
+        availability: false,
+        deleted_at: now,
+      },
+    });
+    await tx.user.update({
+      where: { id: current.user_id },
+      data: {
+        phone: `deleted-worker:${current.id}`,
+        email: null,
+        email_verified_at: null,
+        pending_email: null,
+        email_verification_code_hash: null,
+        email_verification_expires_at: null,
+        email_verification_sent_at: null,
+        password_hash: null,
+        password_set_at: null,
+        name: 'Deleted Worker',
+        fcm_token: null,
+        is_active: false,
+        session_version: { increment: 1 },
+        deleted_at: now,
+      },
+    });
+    await tx.refreshToken.updateMany({
+      where: { user_id: current.user_id, revoked_at: null },
+      data: { revoked_at: now, revoked_reason: 'account_deletion' },
+    });
+    await tx.deviceToken.updateMany({
+      where: { user_id: current.user_id, revoked_at: null },
+      data: { revoked_at: now, deleted_at: now },
+    });
+    const scheduledCleanupCount = await enqueueStorageCleanupEvents(tx, {
+      aggregate: 'worker',
+      aggregateId: current.id,
+      reason: 'worker_account_deletion',
+      objects: cleanups,
+    });
+    const audit = await tx.auditLog.create({
+      data: {
+        actor_id: userId,
+        actor_role: 'worker' as Role,
+        action: 'status_changed',
+        entity_type: 'worker_account_deletion_request',
+        entity_id: current.id,
+        metadata: {
+          event: 'account_deletion_requested',
+          fulfillment: 'soft_deleted_and_anonymized',
+          previous_status: current.status,
+          new_status: 'inactive',
+          documents_tombstoned: currentDocuments.length,
+          profile_photo_removed: Boolean(current.profile_photo_url),
+          sessions_revoked: true,
+          storage_cleanup_scheduled: scheduledCleanupCount > 0,
+          storage_cleanup_event_count: scheduledCleanupCount,
+        },
+      },
+      select: { id: true },
+    });
+
+    return { auditId: audit.id, workerId: current.id };
+  });
+
+  return {
+    request_id: result.auditId,
+    worker_id: result.workerId,
+    status: 'accepted',
+    account_state: 'inactive',
+    effective_at: effectiveAt,
+  };
+}
+
+export async function getWorkerDocumentDownload(
+  actor: { sub: string; role: string },
+  workerId: string,
+  type: string
+) {
+  const documentType = parseWorkerDocumentType(type);
+  const worker = await prisma.worker.findFirst({
+    where: { id: workerId, deleted_at: null },
+    select: {
+      id: true,
+      user_id: true,
+      status: true,
+      documents: true,
+    },
+  });
+  if (!worker) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
+
+  if (actor.role === 'worker') {
+    if (worker.user_id !== actor.sub) {
+      throw Errors.forbidden('Workers can only access their own documents.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+    }
+  } else if (actor.role === 'company') {
+    const company = await prisma.company.findFirst({
+      where: { user_id: actor.sub, deleted_at: null, status: 'approved' },
+      select: { id: true },
+    });
+    if (!company) throw Errors.forbidden('Company account is not approved.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+
+    const relatedAssignment = await prisma.assignment.findFirst({
+      where: {
+        worker_id: worker.id,
+        deleted_at: null,
+        status: { in: ['assigned', 'accepted', 'completed'] },
+        order: { company_id: company.id, deleted_at: null },
+      },
+      select: { id: true },
+    });
+    if (!relatedAssignment) {
+      throw Errors.forbidden('The worker is not assigned to this company.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+    }
+  } else if (actor.role !== 'admin' && actor.role !== 'super_admin') {
+    throw Errors.forbidden('Document access is not allowed for this role.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+  }
+
+  if (worker.status === 'rejected') {
+    throw Errors.gone('Rejected worker documents are not downloadable.', 'WORKER_DOCUMENT_REJECTED');
+  }
+  const document = normalizeDocuments(worker.documents).find((item) => item.type === documentType);
+  if (!document) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
+  if (document.status === 'deleted' || document.deleted_at) {
+    throw Errors.gone('Worker document has been deleted.', 'WORKER_DOCUMENT_DELETED');
+  }
+  if (actor.role === 'company' && !document.company_visible) {
+    throw Errors.forbidden('This document is not visible to companies.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+  }
+  if (!document.key) {
+    throw Errors.gone(
+      'This legacy document must be uploaded again before it can be downloaded securely.',
+      'WORKER_DOCUMENT_REUPLOAD_REQUIRED'
+    );
+  }
+  if (!privateDocumentKeyBelongsToWorker(document.key, worker.id, documentType)) {
+    throw Errors.gone(
+      'This document reference is not compatible with private storage and must be uploaded again.',
+      'WORKER_DOCUMENT_REUPLOAD_REQUIRED'
+    );
+  }
+  if (document.status !== 'ready' || document.scan_status !== 'clean') {
+    throw Errors.gone(
+      'This document has not completed security scanning and must be uploaded again.',
+      'WORKER_DOCUMENT_SCAN_REQUIRED'
+    );
+  }
+
+  const expiresInSeconds = signedDocumentUrlTtl();
+  const url = await createUploadService().createSignedDownloadUrl(
+    document.key,
+    expiresInSeconds,
+    document.name
+  );
+  await prisma.auditLog.create({
+    data: {
+      actor_id: actor.sub,
+      actor_role: actor.role as Role,
+      action: 'status_changed',
+      entity_type: 'worker_document',
+      entity_id: worker.id,
+      metadata: {
+        event: 'document_download_authorized',
+        document_type: documentType,
+        object_key_hash: hashObjectKey(document.key),
+        expires_in_seconds: expiresInSeconds,
+      },
+    },
+  });
+  return {
+    url,
+    expires_in_seconds: expiresInSeconds,
+    expires_at: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+  };
 }
 
 export async function listWorkers(filters: {
@@ -430,6 +826,7 @@ export async function getCompanyVisibleWorkerProfile(userId: string, workerId: s
       assignments: {
         some: {
           deleted_at: null,
+          status: { in: ['assigned', 'accepted', 'completed'] },
           order: { company_id: company.id, deleted_at: null },
         },
       },
@@ -447,22 +844,68 @@ export async function getCompanyVisibleWorkerProfile(userId: string, workerId: s
 export async function approveWorker(id: string, actor: { sub: string; role: string }) {
   const worker = await prisma.worker.findFirst({
     where: { id, deleted_at: null },
-    include: { user: true, positions: workerProfileInclude.positions },
+    include: {
+      user: {
+        include: {
+          otp_codes: {
+            where: { purpose: 'worker_registration', consumed_at: { not: null } },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+      positions: workerProfileInclude.positions,
+    },
   });
   if (!worker) throw Errors.notFound('Worker not found.', 'WORKER_NOT_FOUND');
   if (worker.status === 'approved') {
     return toWorkerProfile(worker, { includeWorkerClass: true });
   }
+  const missingPrerequisites = workerApprovalPrerequisites(worker);
+  if (missingPrerequisites.length > 0) {
+    throw Errors.conflict(
+      'Worker registration prerequisites are incomplete.',
+      'APPROVAL_PREREQUISITES_MISSING',
+      { status: worker.status, missing: missingPrerequisites }
+    );
+  }
 
-  const updated = await prisma.$transaction(async (tx: typeof prisma) => {
-    const updatedWorker = await tx.worker.update({
-      where: { id },
+  const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const transition = await tx.worker.updateMany({
+      where: {
+        id,
+        status: 'pending_approval',
+        deleted_at: null,
+        user: {
+          password_set_at: { not: null },
+          is_active: true,
+          deleted_at: null,
+          otp_codes: {
+            some: { purpose: 'worker_registration', consumed_at: { not: null } },
+          },
+        },
+      },
       data: {
         status: 'approved' as WorkerStatus,
         reject_reason: null,
         approved_at: new Date(),
         approved_by_id: actor.sub,
       },
+    });
+
+    if (transition.count !== 1) {
+      const current = await tx.worker.findFirst({
+        where: { id, deleted_at: null },
+        include: workerProfileInclude,
+      });
+      if (current?.status === 'approved') {
+        return { worker: current, transitioned: false };
+      }
+      throw Errors.conflict('Worker approval state changed.', 'WORKER_APPROVAL_STATE_CHANGED');
+    }
+
+    const updatedWorker = await tx.worker.findUniqueOrThrow({
+      where: { id },
       include: workerProfileInclude,
     });
 
@@ -487,16 +930,18 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
       },
     });
 
-    return updatedWorker;
+    return { worker: updatedWorker, transitioned: true };
   });
 
-  await sendPushToUser(worker.user_id, {
-    title: 'Profil təsdiqləndi',
-    body: 'İşçi profiliniz təsdiqləndi.',
-    data: { type: 'worker_approved', worker_id: id, role: 'worker' },
-  });
+  if (updated.transitioned) {
+    await sendPushToUser(worker.user_id, {
+      title: 'Profil təsdiqləndi',
+      body: 'İşçi profiliniz təsdiqləndi.',
+      data: { type: 'worker_approved', worker_id: id, role: 'worker' },
+    });
+  }
 
-  return toWorkerProfile(updated, { includeWorkerClass: true });
+  return toWorkerProfile(updated.worker, { includeWorkerClass: true });
 }
 
 export async function rejectWorker(id: string, reason: string, actor: { sub: string; role: string }) {
@@ -505,17 +950,62 @@ export async function rejectWorker(id: string, reason: string, actor: { sub: str
     include: { user: true, positions: workerProfileInclude.positions },
   });
   if (!worker) throw Errors.notFound('Worker not found.', 'WORKER_NOT_FOUND');
+  if (worker.status !== 'pending_approval') {
+    throw Errors.conflict(
+      'Only a worker awaiting approval can be rejected.',
+      'WORKER_REJECTION_NOT_PENDING',
+      { status: worker.status }
+    );
+  }
 
-  const updated = await prisma.$transaction(async (tx: typeof prisma) => {
-    const updatedWorker = await tx.worker.update({
-      where: { id },
+  const now = new Date();
+  const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const transition = await tx.worker.updateMany({
+      where: {
+        id,
+        status: 'pending_approval',
+        deleted_at: null,
+      },
       data: {
         status: 'rejected' as WorkerStatus,
         reject_reason: reason,
-        rejected_at: new Date(),
+        rejected_at: now,
         rejected_by_id: actor.sub,
       },
+    });
+
+    if (transition.count !== 1) {
+      const current = await tx.worker.findFirst({
+        where: { id, deleted_at: null },
+        select: { status: true },
+      });
+      throw Errors.conflict(
+        'Worker rejection state changed. Please retry.',
+        'WORKER_REJECTION_STATE_CHANGED',
+        { status: current?.status ?? 'deleted' }
+      );
+    }
+
+    const updatedWorker = await tx.worker.findUniqueOrThrow({
+      where: { id },
       include: workerProfileInclude,
+    });
+
+    const rejectionPushTargets = await tx.deviceToken.findMany({
+      where: { user_id: worker.user_id, revoked_at: null, deleted_at: null },
+      select: { id: true, token: true },
+    });
+    await tx.user.update({
+      where: { id: worker.user_id },
+      data: { session_version: { increment: 1 } },
+    });
+    await tx.refreshToken.updateMany({
+      where: { user_id: worker.user_id, revoked_at: null },
+      data: { revoked_at: now, revoked_reason: 'account_change' },
+    });
+    await tx.deviceToken.updateMany({
+      where: { user_id: worker.user_id, revoked_at: null },
+      data: { revoked_at: now, deleted_at: now },
     });
 
     await tx.auditLog.create({
@@ -539,16 +1029,16 @@ export async function rejectWorker(id: string, reason: string, actor: { sub: str
       },
     });
 
-    return updatedWorker;
+    return { worker: updatedWorker, rejectionPushTargets };
   });
 
-  await sendPushToUser(worker.user_id, {
+  await sendPushToDeviceTargets(updated.rejectionPushTargets, {
     title: 'Profil rədd edildi',
     body: 'İşçi profiliniz rədd edildi.',
     data: { type: 'worker_rejected', worker_id: id, role: 'worker' },
   });
 
-  return toWorkerProfile(updated, { includeWorkerClass: true });
+  return toWorkerProfile(updated.worker, { includeWorkerClass: true });
 }
 
 function toWorkerProfile(worker: {
@@ -676,7 +1166,7 @@ function toWorkerProfile(worker: {
     profile_photo_url: worker.profile_photo_url,
     skills: worker.skills,
     languages: worker.languages,
-    documents: worker.documents,
+    documents: documentResponseMetadata(worker.documents, worker.id),
     work_history_summary: worker.work_history_summary,
     work_history: worker.work_history,
     gender: worker.gender,
@@ -749,7 +1239,7 @@ function toCompanyWorkerProfile(worker: {
     profile_photo_url: worker.profile_photo_url,
     skills: worker.skills,
     languages: worker.languages,
-    documents: companyVisibleDocuments(worker.documents),
+    documents: companyVisibleDocuments(worker.documents, worker.id),
     work_history_summary: worker.work_history_summary,
     work_history: worker.work_history,
     gender: worker.gender,
@@ -837,17 +1327,42 @@ async function getApprovedWorkerRecord(userId: string) {
   return worker;
 }
 
+async function getDocumentEnrollmentWorkerRecord(userId: string) {
+  const worker = await prisma.worker.findUnique({
+    where: { user_id: userId },
+    include: { user: { select: { name: true, phone: true, email: true } } },
+  });
+  if (!worker || worker.deleted_at) throw Errors.notFound('Worker profile not found.', 'WORKER_NOT_FOUND');
+  if (!['pending_approval', 'approved'].includes(worker.status)) {
+    throw Errors.forbidden('Worker registration does not accept documents.', 'WORKER_ENROLLMENT_CLOSED', {
+      status: worker.status,
+    });
+  }
+  return worker;
+}
+
 type WorkerDocumentType = 'health_certificate' | 'criminal_record';
 
 type WorkerDocument = {
   type: string;
   name?: string;
-  url: string;
+  url?: string;
   key?: string;
   mime_type?: string;
   size_bytes?: number;
   uploaded_at?: string;
   company_visible?: boolean;
+  status?: 'quarantine' | 'ready' | 'rejected' | 'deleted';
+  scan_status?: 'pending' | 'clean' | 'infected' | 'error';
+  scanner?: string;
+  scanned_at?: string;
+  content_sha256?: string;
+  deleted_at?: string;
+};
+
+type StoredObjectCleanup = {
+  key: string;
+  visibility: 'public' | 'private';
 };
 
 function parseWorkerDocumentType(value: string | undefined): WorkerDocumentType {
@@ -855,28 +1370,66 @@ function parseWorkerDocumentType(value: string | undefined): WorkerDocumentType 
   throw Errors.badRequest('Invalid worker document type.', 'INVALID_DOCUMENT_TYPE');
 }
 
-async function putWorkerUpload(input: {
+type WorkerUploadInput = {
   workerId: string;
   file: Express.Multer.File | undefined;
   folder: string;
   allowedMimeTypes: Set<string>;
-}) {
+};
+
+type SecuredUploadMetadata = {
+  inspection: InspectedUpload;
+  scan: MalwareScanResult;
+};
+
+type PublicWorkerUploadResult = UploadObjectResult & SecuredUploadMetadata;
+type PrivateWorkerUploadResult = PrivateUploadObjectResult & SecuredUploadMetadata;
+
+async function putWorkerUpload(
+  input: WorkerUploadInput & { visibility: 'public' }
+): Promise<PublicWorkerUploadResult>;
+async function putWorkerUpload(
+  input: WorkerUploadInput & { visibility: 'private' }
+): Promise<PrivateWorkerUploadResult>;
+async function putWorkerUpload(
+  input: WorkerUploadInput & { visibility: 'public' | 'private' }
+): Promise<PublicWorkerUploadResult | PrivateWorkerUploadResult> {
   const file = input.file;
   if (!file) throw Errors.badRequest('Upload file is required.', 'UPLOAD_FILE_REQUIRED');
-  if (!input.allowedMimeTypes.has(file.mimetype)) {
-    throw Errors.badRequest('Unsupported upload MIME type.', 'UPLOAD_MIME_NOT_ALLOWED', {
-      allowed: [...input.allowedMimeTypes],
-    });
-  }
 
   const service = createUploadService();
-  const extension = extensionForMimeType(file.mimetype);
-  const key = `workers/${input.workerId}/${input.folder}/${crypto.randomUUID()}-${safeFileName(file.originalname, extension)}`;
-  return service.putObject({
-    key,
-    contentType: file.mimetype,
+  const inspection = await inspectUpload(file, input.allowedMimeTypes);
+  const finalKey = `workers/${input.workerId}/${input.folder}/${crypto.randomUUID()}${inspection.extension}`;
+
+  if (input.visibility === 'public') {
+    const sanitized = await sanitizePublicImageUpload(file.buffer, inspection);
+    const scan = await scanUpload(sanitized.body, sanitized.inspection, { sensitive: false });
+    const uploaded = await service.putObject({
+      key: finalKey,
+      contentType: sanitized.inspection.detectedMimeType,
+      body: sanitized.body,
+    });
+    return { ...uploaded, inspection: sanitized.inspection, scan };
+  }
+
+  const quarantineKey =
+    `workers/${input.workerId}/quarantine/${crypto.randomUUID()}${inspection.extension}`;
+  await service.putPrivateObject({
+    key: quarantineKey,
+    contentType: inspection.detectedMimeType,
     body: file.buffer,
+    downloadName: inspection.safeOriginalName,
   });
+
+  try {
+    const scan = await scanUpload(file.buffer, inspection, { sensitive: true });
+    const promoted = await service.promotePrivateObject(quarantineKey, finalKey);
+    return { ...promoted, inspection, scan };
+  } catch (error) {
+    await deleteObjectBestEffort(quarantineKey, 'private', 'quarantine_cleanup');
+    await deleteObjectBestEffort(finalKey, 'private', 'failed_promotion_cleanup');
+    throw error;
+  }
 }
 
 function normalizeDocuments(value: unknown): WorkerDocument[] {
@@ -885,46 +1438,194 @@ function normalizeDocuments(value: unknown): WorkerDocument[] {
     if (!item || typeof item !== 'object') return [];
     const document = item as Record<string, unknown>;
     const type = typeof document.type === 'string' ? document.type : '';
-    const url = typeof document.url === 'string' ? document.url : '';
-    if (!type || !url) return [];
+    const url = typeof document.url === 'string' ? document.url : undefined;
+    const key = typeof document.key === 'string' ? document.key : undefined;
+    const status = isDocumentStatus(document.status) ? document.status : undefined;
+    if (!type || (!url && !key && status !== 'deleted')) return [];
     return [
       {
         type,
         url,
         name: typeof document.name === 'string' ? document.name : undefined,
-        key: typeof document.key === 'string' ? document.key : undefined,
+        key,
         mime_type: typeof document.mime_type === 'string' ? document.mime_type : undefined,
         size_bytes: typeof document.size_bytes === 'number' ? document.size_bytes : undefined,
         uploaded_at: typeof document.uploaded_at === 'string' ? document.uploaded_at : undefined,
         company_visible: document.company_visible === true,
+        status,
+        scan_status: isScanStatus(document.scan_status) ? document.scan_status : undefined,
+        scanner: typeof document.scanner === 'string' ? document.scanner : undefined,
+        scanned_at: typeof document.scanned_at === 'string' ? document.scanned_at : undefined,
+        content_sha256: typeof document.content_sha256 === 'string' ? document.content_sha256 : undefined,
+        deleted_at: typeof document.deleted_at === 'string' ? document.deleted_at : undefined,
       },
     ];
   });
 }
 
-function companyVisibleDocuments(value: unknown): WorkerDocument[] {
-  return normalizeDocuments(value).filter(
-    (document) => document.type === 'health_certificate' || document.company_visible === true
-  );
+function deletedDocumentTombstone(document: WorkerDocument, deletedAt: string): WorkerDocument {
+  return {
+    type: document.type,
+    company_visible: false,
+    status: 'deleted',
+    deleted_at: deletedAt,
+  };
 }
 
-function extensionForMimeType(mimeType: string): string {
-  return (
-    {
-      'image/jpeg': 'jpg',
-      'image/png': 'png',
-      'image/webp': 'webp',
-      'application/pdf': 'pdf',
-    } satisfies Record<string, string>
-  )[mimeType] ?? 'bin';
+function documentStorageCleanup(
+  document: WorkerDocument,
+  workerId: string
+): StoredObjectCleanup | null {
+  if (
+    document.key
+    && privateDocumentKeyBelongsToWorker(document.key, workerId, document.type)
+  ) {
+    return { key: document.key, visibility: 'private' };
+  }
+
+  const publicKey = publicObjectKeyFromUrl(document.url);
+  if (publicKey?.startsWith(`workers/${workerId}/`)) {
+    return { key: publicKey, visibility: 'public' };
+  }
+  return null;
 }
 
-function safeFileName(originalName: string, extension: string): string {
-  const base = originalName
-    .replace(/\.[^.]+$/, '')
-    .normalize('NFKD')
-    .replace(/[^\w.-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
-  return `${base || 'upload'}.${extension}`;
+function profilePhotoStorageCleanup(
+  profilePhotoUrl: string | null | undefined,
+  workerId: string
+): StoredObjectCleanup | null {
+  const publicKey = publicObjectKeyFromUrl(profilePhotoUrl);
+  if (!publicKey?.startsWith(`workers/${workerId}/profile-photo/`)) return null;
+  return { key: publicKey, visibility: 'public' };
+}
+
+function companyVisibleDocuments(value: unknown, workerId: string) {
+  return documentResponseMetadata(value, workerId, true);
+}
+
+function documentResponseMetadata(value: unknown, workerId: string, companyOnly = false) {
+  return normalizeDocuments(value)
+    .filter((document) => !document.deleted_at && document.status !== 'deleted' && document.status !== 'rejected')
+    .filter((document) => !companyOnly || document.company_visible === true)
+    .map((document) => {
+      const hasOwnedPrivateKey = Boolean(
+        document.key &&
+        document.status === 'ready' &&
+        document.scan_status === 'clean' &&
+        privateDocumentKeyBelongsToWorker(document.key, workerId, document.type)
+      );
+      const downloadUrl = hasOwnedPrivateKey
+        ? `/v1/workers/${workerId}/documents/${document.type}/download`
+        : undefined;
+      return {
+        type: document.type,
+        name: document.name,
+        mime_type: document.mime_type,
+        size_bytes: document.size_bytes,
+        uploaded_at: document.uploaded_at,
+        company_visible: document.company_visible === true,
+        status: document.status ?? 'legacy',
+        scan_status: document.scan_status ?? 'unscanned',
+        available: hasOwnedPrivateKey,
+        ...(downloadUrl ? { url: downloadUrl, download_url: downloadUrl } : {}),
+      };
+    });
+}
+
+function privateDocumentKeyBelongsToWorker(key: string, workerId: string, type: string): boolean {
+  return key.startsWith(`workers/${workerId}/documents/${type}/`);
+}
+
+function workerApprovalPrerequisites(worker: {
+  id: string;
+  status: string;
+  position: string | null;
+  documents: unknown;
+  positions: unknown[];
+  user: {
+    name: string;
+    phone: string;
+    password_set_at: Date | null;
+    is_active: boolean;
+    deleted_at: Date | null;
+    otp_codes: { id: string }[];
+  };
+}): string[] {
+  const missing: string[] = [];
+  if (worker.status !== 'pending_approval') missing.push('status_pending_approval');
+  if (!worker.user.password_set_at) missing.push('password_set');
+  if (!worker.user.is_active || worker.user.deleted_at) missing.push('active_account');
+  if (worker.user.otp_codes.length === 0) missing.push('registration_otp_consumed');
+  if (!worker.user.name.trim()) missing.push('full_name');
+  if (!worker.user.phone.trim()) missing.push('phone');
+  if (!worker.position?.trim() && worker.positions.length === 0) missing.push('position');
+
+  const documents = normalizeDocuments(worker.documents);
+  for (const type of ['health_certificate', 'criminal_record'] as const) {
+    const document = documents.find((item) => item.type === type);
+    if (
+      !document?.key
+      || document.status !== 'ready'
+      || document.scan_status !== 'clean'
+      || !privateDocumentKeyBelongsToWorker(document.key, worker.id, type)
+    ) {
+      missing.push(`document:${type}`);
+    }
+  }
+  return missing;
+}
+
+async function deletePrivateObjectBestEffort(key: string, reason: string): Promise<void> {
+  await deleteObjectBestEffort(key, 'private', reason);
+}
+
+async function deleteObjectBestEffort(
+  key: string,
+  visibility: 'public' | 'private',
+  reason: string
+): Promise<void> {
+  try {
+    await createUploadService().deleteObject(key, visibility);
+  } catch (error) {
+    logger.warn('upload_cleanup_failed', {
+      reason,
+      visibility,
+      key_hash: crypto.createHash('sha256').update(key).digest('hex'),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function publicObjectKeyFromUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const baseUrl = (process.env.STORAGE_PUBLIC_BASE_URL ?? '/uploads').replace(/\/+$/, '');
+  if (baseUrl.startsWith('/')) {
+    const prefix = `${baseUrl}/`;
+    return url.startsWith(prefix) ? url.slice(prefix.length) : null;
+  }
+  try {
+    const base = new URL(`${baseUrl}/`);
+    const target = new URL(url);
+    if (base.origin !== target.origin || !target.pathname.startsWith(base.pathname)) return null;
+    return decodeURIComponent(target.pathname.slice(base.pathname.length));
+  } catch {
+    return null;
+  }
+}
+
+function signedDocumentUrlTtl(): number {
+  const value = Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS ?? 300);
+  return Number.isInteger(value) && value >= 1 && value <= 900 ? value : 300;
+}
+
+function hashObjectKey(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex');
+}
+
+function isDocumentStatus(value: unknown): value is NonNullable<WorkerDocument['status']> {
+  return value === 'quarantine' || value === 'ready' || value === 'rejected' || value === 'deleted';
+}
+
+function isScanStatus(value: unknown): value is NonNullable<WorkerDocument['scan_status']> {
+  return value === 'pending' || value === 'clean' || value === 'infected' || value === 'error';
 }

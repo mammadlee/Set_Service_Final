@@ -1,11 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../storage/secure_storage_config.dart';
 import 'app_role.dart';
 
 class RoleSessionController extends ChangeNotifier {
   RoleSessionController({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? SecureStorageConfig.storage;
 
   static const _activeRoleKey = 'setservice_active_role';
 

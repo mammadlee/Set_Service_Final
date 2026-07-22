@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { AssignmentStatus, Role } from '../../types/prisma';
+import {
+  ORDER_STAFFING_STATUSES,
+  reconcileOrderStaffingStatus,
+} from '../orders/orders.lifecycle';
 
 const departmentSummarySelect = {
   id: true,
@@ -203,7 +207,7 @@ export function createAssignmentsWithSideEffects(input: {
     await tx.$queryRaw`SELECT id FROM "order_category_items" WHERE order_id = ${input.orderId} AND deleted_at IS NULL FOR UPDATE`;
 
     const order = await tx.order.findFirst({
-      where: { id: input.orderId, status: 'active', deleted_at: null },
+      where: { id: input.orderId, status: { in: ORDER_STAFFING_STATUSES }, deleted_at: null },
       select: {
         id: true,
         title: true,
@@ -391,7 +395,18 @@ export function createAssignmentsWithSideEffects(input: {
       });
     }
 
-    return { kind: 'created' as const, assignments: created };
+    await reconcileOrderStaffingStatus(tx, input.orderId, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'assignment_created',
+    });
+
+    const refreshed = await tx.assignment.findMany({
+      where: { id: { in: created.map((assignment) => assignment.id) }, deleted_at: null },
+      include: assignmentInclude,
+      orderBy: { assigned_at: 'asc' },
+    });
+    return { kind: 'created' as const, assignments: refreshed };
   });
 }
 
@@ -465,6 +480,19 @@ export function changeWorkerAssignmentStatus(input: {
   nextStatus: Extract<AssignmentStatus, 'accepted' | 'rejected'>;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        deleted_at: null,
+      },
+      select: { order_id: true },
+    });
+    if (!candidate) return null;
+
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
+
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
@@ -472,7 +500,7 @@ export function changeWorkerAssignmentStatus(input: {
         deleted_at: null,
         status: 'assigned',
         order: {
-          status: 'active',
+          status: { in: ORDER_STAFFING_STATUSES },
           deleted_at: null,
         },
       },
@@ -480,6 +508,23 @@ export function changeWorkerAssignmentStatus(input: {
     });
 
     if (result.count !== 1) return null;
+
+    if (input.nextStatus === 'rejected') {
+      await tx.attendanceQrToken.updateMany({
+        where: {
+          assignment_id: input.assignmentId,
+          deleted_at: null,
+          revoked_at: null,
+        },
+        data: { revoked_at: new Date() },
+      });
+    }
+
+    await reconcileOrderStaffingStatus(tx, candidate.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: `assignment_${input.nextStatus}`,
+    });
 
     const assignment = await tx.assignment.findFirst({
       where: { id: input.assignmentId, worker_id: input.workerId, deleted_at: null },
@@ -529,26 +574,86 @@ export function cancelAssignmentWithAudit(input: {
   assignmentId: string;
   actorId: string;
   actorRole: Role;
-  previousStatus: AssignmentStatus;
   reason?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, deleted_at: null },
+      select: { order_id: true },
+    });
+    if (!candidate) return { kind: 'not_found' as const };
+
+    // Match check-in and whole-order cancellation: parent order is always locked
+    // before its assignment so concurrent lifecycle mutations cannot deadlock.
+    await tx.$queryRaw`
+      SELECT id
+      FROM "orders"
+      WHERE id = ${candidate.order_id}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id
+      FROM "assignments"
+      WHERE id = ${input.assignmentId}
+      FOR UPDATE
+    `;
+
+    const current = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, deleted_at: null },
+      include: assignmentInclude,
+    });
+    if (!current) return { kind: 'not_found' as const };
+    if (current.status === 'cancelled') return { kind: 'already_cancelled' as const };
+    if (current.status === 'completed') return { kind: 'already_completed' as const };
+
+    if (current.status === 'accepted') {
+      const openAttendance = await tx.attendanceLog.findFirst({
+        where: {
+          assignment_id: input.assignmentId,
+          checkout_time: null,
+          deleted_at: null,
+        },
+        select: { id: true },
+      });
+      if (openAttendance) {
+        return {
+          kind: 'open_attendance' as const,
+          attendanceId: openAttendance.id,
+        };
+      }
+    }
+
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
         deleted_at: null,
-        status: { notIn: ['cancelled', 'completed'] },
+        status: current.status,
       },
       data: { status: 'cancelled' },
     });
 
-    if (result.count !== 1) return null;
+    if (result.count !== 1) return { kind: 'state_changed' as const };
+
+    await tx.attendanceQrToken.updateMany({
+      where: {
+        assignment_id: input.assignmentId,
+        deleted_at: null,
+        revoked_at: null,
+      },
+      data: { revoked_at: new Date() },
+    });
+
+    await reconcileOrderStaffingStatus(tx, current.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'assignment_cancelled',
+    });
 
     const assignment = await tx.assignment.findFirst({
       where: { id: input.assignmentId, deleted_at: null },
       include: assignmentInclude,
     });
-    if (!assignment) return null;
+    if (!assignment) return { kind: 'state_changed' as const };
 
     await tx.auditLog.create({
       data: {
@@ -558,7 +663,7 @@ export function cancelAssignmentWithAudit(input: {
         entity_type: 'assignment',
         entity_id: input.assignmentId,
         metadata: {
-          previous_status: input.previousStatus,
+          previous_status: current.status,
           new_status: 'cancelled',
           order_id: assignment.order_id,
           worker_id: assignment.worker_id,
@@ -582,6 +687,6 @@ export function cancelAssignmentWithAudit(input: {
       },
     });
 
-    return assignment;
+    return { kind: 'cancelled' as const, assignment };
   });
 }

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
 import { sendPushToUser } from '../../lib/fcm';
 import { AssignmentStatus, Role } from '../../types/prisma';
+import { ORDER_STAFFING_STATUSES } from '../orders/orders.lifecycle';
 import {
   CancelAssignmentInput,
   CreateAssignmentsInput,
@@ -155,34 +156,34 @@ export async function cancelAssignment(
     throw Errors.forbidden('Only admin can cancel assignments.', 'ROLE_FORBIDDEN');
   }
 
-  const assignment = await AssignmentsRepository.findAssignmentById(id);
-  if (!assignment) throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
-  if (assignment.status === 'cancelled') {
-    throw Errors.conflict('Assignment is already cancelled.', 'ASSIGNMENT_ALREADY_CANCELLED');
-  }
-  if (assignment.status === 'completed') {
-    throw Errors.badRequest('Completed assignments cannot be cancelled.', 'ASSIGNMENT_ALREADY_COMPLETED');
-  }
-
-  const updated = await AssignmentsRepository.cancelAssignmentWithAudit({
+  const result = await AssignmentsRepository.cancelAssignmentWithAudit({
     assignmentId: id,
     actorId,
     actorRole: role,
-    previousStatus: assignment.status,
     reason: input.reason,
   });
 
-  if (!updated) {
-    const latest = await AssignmentsRepository.findAssignmentById(id);
-    if (latest?.status === 'cancelled') {
+  switch (result.kind) {
+    case 'not_found':
+      throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
+    case 'already_cancelled':
       throw Errors.conflict('Assignment is already cancelled.', 'ASSIGNMENT_ALREADY_CANCELLED');
-    }
-    if (latest?.status === 'completed') {
+    case 'already_completed':
       throw Errors.badRequest('Completed assignments cannot be cancelled.', 'ASSIGNMENT_ALREADY_COMPLETED');
-    }
-    throw Errors.conflict('Assignment could not be cancelled because it changed. Please retry.', 'ASSIGNMENT_CANCEL_CONFLICT');
+    case 'open_attendance':
+      throw Errors.conflict(
+        'Open attendance must be checked out before the assignment can be cancelled.',
+        'ASSIGNMENT_HAS_OPEN_ATTENDANCE',
+        { attendance_id: result.attendanceId }
+      );
+    case 'state_changed':
+      throw Errors.conflict(
+        'Assignment could not be cancelled because it changed. Please retry.',
+        'ASSIGNMENT_CANCEL_CONFLICT'
+      );
   }
 
+  const updated = result.assignment;
   await sendPushToUser(updated.worker.user.id, {
     title: 'Təyinat ləğv edildi',
     body: `"${updated.order.title}" üzrə təyinatınız ləğv edildi.`,
@@ -210,7 +211,7 @@ async function changeOwnAssignmentStatus(
   const worker = await getApprovedWorkerForUser(userId);
   const assignment = await AssignmentsRepository.findAssignmentByIdForWorker(id, worker.id);
   if (!assignment) throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
-  if (assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+  if (!ORDER_STAFFING_STATUSES.includes(assignment.order.status) || assignment.order.deleted_at !== null) {
     throw Errors.conflict('Order is not active.', 'ORDER_NOT_ACTIVE');
   }
 
@@ -228,7 +229,7 @@ async function changeOwnAssignmentStatus(
 
   if (!updated) {
     const latest = await AssignmentsRepository.findAssignmentByIdForWorker(id, worker.id);
-    if (latest && (latest.order.status !== 'active' || latest.order.deleted_at !== null)) {
+    if (latest && (!ORDER_STAFFING_STATUSES.includes(latest.order.status) || latest.order.deleted_at !== null)) {
       throw Errors.conflict('Order is not active.', 'ORDER_NOT_ACTIVE');
     }
     if (latest) throw assignmentStatusError(latest.status);

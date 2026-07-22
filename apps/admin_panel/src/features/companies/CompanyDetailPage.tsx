@@ -10,7 +10,7 @@ import { PageHeader } from '../../shared/components/PageHeader';
 import { ErrorState, LoadingState } from '../../shared/components/StateBlock';
 import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
-import { normalizeDocuments } from '../../shared/utils/documents';
+import { resolveAssetUrl } from '../../shared/utils/documents';
 import { companiesService } from './companies.service';
 
 export function CompanyDetailPage() {
@@ -18,10 +18,26 @@ export function CompanyDetailPage() {
   const { user } = useAuth();
   const canManageCompanies = hasPermission(user, 'manage_companies');
   const company = useAsync(() => companiesService.get(id), [id]);
-  const documents = normalizeDocuments(company.data?.documents);
+  const documents = company.data?.documents ?? [];
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [openingDocument, setOpeningDocument] = useState<string | null>(null);
+
+  async function openDocument(type: string) {
+    setOpeningDocument(type);
+    setActionError(null);
+    try {
+      const capability = await companiesService.authorizeDocument(id, type);
+      const url = resolveAssetUrl(capability.url);
+      if (!url) throw new Error(appStrings.companies.noDocuments);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+    } finally {
+      setOpeningDocument(null);
+    }
+  }
 
   async function confirm(reason?: string) {
     setWorking(true);
@@ -59,7 +75,6 @@ export function CompanyDetailPage() {
               <dt>{appStrings.companies.contact}</dt><dd>{company.data.contact_name || appStrings.notAvailable}</dd>
               <dt>{appStrings.companies.phone}</dt><dd>{company.data.phone}</dd>
               <dt>{appStrings.companies.email}</dt><dd>{company.data.email || appStrings.notAvailable}</dd>
-              <dt>{appStrings.companies.docsUrl}</dt><dd>{company.data.docs_url ? <a href={company.data.docs_url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : appStrings.notAvailable}</dd>
               <dt>{appStrings.companies.rejectReason}</dt><dd>{company.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
             {canManageCompanies ? (
@@ -75,9 +90,18 @@ export function CompanyDetailPage() {
             {documents.length > 0 ? (
               <ul className="document-list">
                 {documents.map((doc, index) => (
-                  <li key={`${doc.url}-${index}`}>
+                  <li key={`${doc.type}-${index}`}>
                     <span>{doc.name || doc.type || appStrings.workers.document}</span>
-                    {doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : null}
+                    {doc.available ? (
+                      <button
+                        className="btn secondary compact"
+                        type="button"
+                        disabled={openingDocument === doc.type}
+                        onClick={() => void openDocument(doc.type)}
+                      >
+                        {appStrings.workers.openDocument}
+                      </button>
+                    ) : <span className="muted">{appStrings.notAvailable}</span>}
                   </li>
                 ))}
               </ul>

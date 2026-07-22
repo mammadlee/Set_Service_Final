@@ -58,8 +58,17 @@ enum OtpPurpose {
 enum OrderStatus {
   draft
   active
+  published
+  partially_assigned
+  assigned
+  in_progress
   completed
   cancelled
+}
+
+enum IdempotencyStatus {
+  pending
+  completed
 }
 
 enum AssignmentStatus {
@@ -118,41 +127,43 @@ enum AuditAction {
 }
 
 model User {
-  id              String    @id @default(uuid())
-  phone           String    @unique
-  email           String?   @unique
-  email_verified_at DateTime?
-  pending_email   String?   @unique
-  email_verification_code_hash String?
+  id                            String    @id @default(uuid())
+  phone                         String    @unique
+  email                         String?   @unique
+  email_verified_at             DateTime?
+  pending_email                 String?   @unique
+  email_verification_code_hash  String?
   email_verification_expires_at DateTime?
-  email_verification_sent_at DateTime?
-  password_hash   String?
-  password_set_at DateTime?
-  role            Role
-  name            String
-  fcm_token       String?
-  is_active       Boolean   @default(true)
-  created_at      DateTime  @default(now())
-  updated_at      DateTime  @updatedAt
-  deleted_at      DateTime?
+  email_verification_sent_at    DateTime?
+  password_hash                 String?
+  password_set_at               DateTime?
+  role                          Role
+  name                          String
+  fcm_token                     String?
+  is_active                     Boolean   @default(true)
+  session_version               Int       @default(0)
+  created_at                    DateTime  @default(now())
+  updated_at                    DateTime  @updatedAt
+  deleted_at                    DateTime?
 
-  admin                  Admin?
-  company                Company?
-  worker                 Worker?
-  otp_codes              OtpCode[]
-  refresh_tokens         RefreshToken[]
-  device_tokens          DeviceToken[]
-  ratings_given          Rating[]       @relation("rater")
-  notifications          Notification[] @relation("notification_recipient")
-  audit_logs             AuditLog[]     @relation("audit_actor")
-  approved_workers       Worker[]       @relation("worker_approved_by")
-  rejected_workers       Worker[]       @relation("worker_rejected_by")
-  foc_training_updates    Worker[]       @relation("worker_foc_training_updated_by")
-  approved_companies     Company[]      @relation("company_approved_by")
-  rejected_companies     Company[]      @relation("company_rejected_by")
-  created_kiosk_sessions KioskSession[] @relation("kiosk_session_created_by")
-  created_venue_kiosks   VenueKiosk[]   @relation("venue_kiosk_created_by")
+  admin                    Admin?
+  company                  Company?
+  worker                   Worker?
+  otp_codes                OtpCode[]
+  refresh_tokens           RefreshToken[]
+  device_tokens            DeviceToken[]
+  ratings_given            Rating[]             @relation("rater")
+  notifications            Notification[]       @relation("notification_recipient")
+  audit_logs               AuditLog[]           @relation("audit_actor")
+  approved_workers         Worker[]             @relation("worker_approved_by")
+  rejected_workers         Worker[]             @relation("worker_rejected_by")
+  foc_training_updates     Worker[]             @relation("worker_foc_training_updated_by")
+  approved_companies       Company[]            @relation("company_approved_by")
+  rejected_companies       Company[]            @relation("company_rejected_by")
+  created_kiosk_sessions   KioskSession[]       @relation("kiosk_session_created_by")
+  created_venue_kiosks     VenueKiosk[]         @relation("venue_kiosk_created_by")
   activated_kiosk_sessions KioskActiveSession[] @relation("kiosk_active_session_activated_by")
+  order_status_history     OrderStatusHistory[] @relation("order_status_history_actor")
 
   @@index([phone])
   @@index([email])
@@ -197,43 +208,43 @@ model Admin {
 }
 
 model Worker {
-  id                   String       @id @default(uuid())
-  user_id              String       @unique
-  position             String?
-  profile_photo_url    String?
-  skills               Json         @default("[]")
-  languages            Json         @default("[]")
-  documents            Json         @default("[]")
-  work_history_summary String?
-  work_history         Json         @default("[]")
-  gender               String?
-  whatsapp_available   Boolean      @default(false)
-  status               WorkerStatus @default(pending_otp)
-  reject_reason        String?
-  approved_at          DateTime?
-  approved_by_id       String?
-  rejected_at          DateTime?
-  rejected_by_id       String?
-  suspended_at         DateTime?
-  worker_class         WorkerClass?
-  is_foc_training      Boolean      @default(false)
-  foc_training_note    String?
-  foc_training_updated_at DateTime?
+  id                         String       @id @default(uuid())
+  user_id                    String       @unique
+  position                   String?
+  profile_photo_url          String?
+  skills                     Json         @default("[]")
+  languages                  Json         @default("[]")
+  documents                  Json         @default("[]")
+  work_history_summary       String?
+  work_history               Json         @default("[]")
+  gender                     String?
+  whatsapp_available         Boolean      @default(false)
+  status                     WorkerStatus @default(pending_otp)
+  reject_reason              String?
+  approved_at                DateTime?
+  approved_by_id             String?
+  rejected_at                DateTime?
+  rejected_by_id             String?
+  suspended_at               DateTime?
+  worker_class               WorkerClass?
+  is_foc_training            Boolean      @default(false)
+  foc_training_note          String?
+  foc_training_updated_at    DateTime?
   foc_training_updated_by_id String?
-  rating_avg           Float        @default(0)
-  rating_count         Int          @default(0)
-  availability         Boolean      @default(true)
-  created_at           DateTime     @default(now())
-  updated_at           DateTime     @updatedAt
-  deleted_at           DateTime?
+  rating_avg                 Float        @default(0)
+  rating_count               Int          @default(0)
+  availability               Boolean      @default(true)
+  created_at                 DateTime     @default(now())
+  updated_at                 DateTime     @updatedAt
+  deleted_at                 DateTime?
 
-  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  approved_by User?        @relation("worker_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
-  rejected_by User?        @relation("worker_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
-  foc_training_updated_by User? @relation("worker_foc_training_updated_by", fields: [foc_training_updated_by_id], references: [id], onDelete: SetNull)
-  assignments Assignment[]
-  ratings     Rating[]     @relation("rated_worker")
-  positions   WorkerPosition[]
+  user                    User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  approved_by             User?            @relation("worker_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
+  rejected_by             User?            @relation("worker_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
+  foc_training_updated_by User?            @relation("worker_foc_training_updated_by", fields: [foc_training_updated_by_id], references: [id], onDelete: SetNull)
+  assignments             Assignment[]
+  ratings                 Rating[]         @relation("rated_worker")
+  positions               WorkerPosition[]
 
   @@index([status, created_at])
   @@index([availability, status])
@@ -261,12 +272,12 @@ model Company {
   updated_at     DateTime      @updatedAt
   deleted_at     DateTime?
 
-  user           User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  approved_by    User?          @relation("company_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
-  rejected_by    User?          @relation("company_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
-  orders         Order[]
-  kiosk_sessions KioskSession[]
-  venue_kiosks   VenueKiosk[]
+  user                  User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  approved_by           User?                @relation("company_approved_by", fields: [approved_by_id], references: [id], onDelete: SetNull)
+  rejected_by           User?                @relation("company_rejected_by", fields: [rejected_by_id], references: [id], onDelete: SetNull)
+  orders                Order[]
+  kiosk_sessions        KioskSession[]
+  venue_kiosks          VenueKiosk[]
   kiosk_active_sessions KioskActiveSession[]
 
   @@index([status, created_at])
@@ -282,6 +293,7 @@ model OtpCode {
   purpose       OtpPurpose
   expires_at    DateTime
   verified_at   DateTime?
+  consumed_at   DateTime?
   attempts      Int        @default(0)
   max_attempts  Int        @default(5)
   resend_count  Int        @default(0)
@@ -293,23 +305,30 @@ model OtpCode {
   user User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([phone, purpose, created_at])
+  @@index([user_id, purpose, consumed_at])
   @@index([expires_at])
   @@index([blocked_until])
   @@map("otp_codes")
 }
 
 model RefreshToken {
-  id            String    @id @default(uuid())
-  user_id       String
-  token_hash    String    @unique
-  expires_at    DateTime
-  revoked_at    DateTime?
-  created_at    DateTime  @default(now())
-  created_by_ip String?
+  id              String    @id @default(uuid())
+  user_id         String
+  token_hash      String    @unique
+  jti             String    @unique
+  family_id       String
+  replaced_by_jti String?
+  revoked_reason  String?
+  expires_at      DateTime
+  revoked_at      DateTime?
+  created_at      DateTime  @default(now())
+  created_by_ip   String?
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id])
+  @@index([user_id, family_id])
+  @@index([family_id, revoked_at])
   @@index([expires_at])
   @@index([revoked_at])
   @@map("refresh_tokens")
@@ -329,16 +348,18 @@ model Order {
   pay_rate        Decimal?    @db.Decimal(10, 2)
   notes           String?
   status          OrderStatus @default(draft)
+  version         Int         @default(1)
   created_at      DateTime    @default(now())
   updated_at      DateTime    @updatedAt
   deleted_at      DateTime?
 
-  company        Company             @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  category_items OrderCategoryItem[]
-  assignments    Assignment[]
-  ratings        Rating[]
-  kiosk_sessions KioskSession[]
+  company               Company              @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  category_items        OrderCategoryItem[]
+  assignments           Assignment[]
+  ratings               Rating[]
+  kiosk_sessions        KioskSession[]
   kiosk_active_sessions KioskActiveSession[]
+  status_history        OrderStatusHistory[]
 
   @@index([company_id, status])
   @@index([company_id, created_at])
@@ -348,24 +369,84 @@ model Order {
   @@map("orders")
 }
 
+model IdempotencyKey {
+  id           String            @id @default(uuid())
+  actor_id     String
+  scope        String
+  key          String
+  request_hash String
+  status       IdempotencyStatus @default(pending)
+  status_code  Int?
+  response     Json?
+  expires_at   DateTime
+  completed_at DateTime?
+  created_at   DateTime          @default(now())
+  updated_at   DateTime          @updatedAt
+
+  @@unique([actor_id, scope, key])
+  @@index([expires_at])
+  @@index([status, expires_at])
+  @@map("idempotency_keys")
+}
+
+model OutboxEvent {
+  id           String    @id @default(uuid())
+  aggregate    String
+  aggregate_id String
+  event_type   String
+  payload      Json
+  status       String    @default("pending")
+  attempts     Int       @default(0)
+  available_at DateTime  @default(now())
+  processed_at DateTime?
+  last_error   String?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@index([status, available_at, created_at])
+  @@index([status, updated_at])
+  @@index([aggregate, aggregate_id])
+  @@map("outbox_events")
+}
+
+model OrderStatusHistory {
+  id          String       @id @default(uuid())
+  order_id    String
+  from_status OrderStatus?
+  to_status   OrderStatus
+  actor_id    String?
+  actor_role  Role
+  reason      String?
+  version     Int
+  created_at  DateTime     @default(now())
+
+  order Order @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  actor User? @relation("order_status_history_actor", fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([order_id, created_at])
+  @@index([actor_id, created_at])
+  @@index([to_status, created_at])
+  @@map("order_status_history")
+}
+
 model OrderCategoryItem {
-  id             String    @id @default(uuid())
-  order_id       String
-  category       String
-  department_id  String?
+  id               String    @id @default(uuid())
+  order_id         String
+  category         String
+  department_id    String?
   subdepartment_id String?
-  position_id    String?
-  required_count Int
-  notes          String?
-  created_at     DateTime  @default(now())
-  updated_at     DateTime  @updatedAt
-  deleted_at     DateTime?
+  position_id      String?
+  required_count   Int
+  notes            String?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @default(now()) @updatedAt
+  deleted_at       DateTime?
 
   order         Order          @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  department   Department?    @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  department    Department?    @relation(fields: [department_id], references: [id], onDelete: SetNull)
   subdepartment Subdepartment? @relation(fields: [subdepartment_id], references: [id], onDelete: SetNull)
-  position     Position?      @relation(fields: [position_id], references: [id], onDelete: SetNull)
-  assignments  Assignment[]
+  position      Position?      @relation(fields: [position_id], references: [id], onDelete: SetNull)
+  assignments   Assignment[]
 
   @@index([order_id])
   @@index([order_id, category])
@@ -410,15 +491,15 @@ model Assignment {
 }
 
 model Department {
-  id             String         @id @default(uuid())
-  slug           String         @unique
-  name_az        String
-  name_en        String?
-  status         TaxonomyStatus @default(active)
-  created_at     DateTime       @default(now())
-  updated_at     DateTime       @updatedAt
+  id         String         @id @default(uuid())
+  slug       String         @unique
+  name_az    String
+  name_en    String?
+  status     TaxonomyStatus @default(active)
+  created_at DateTime       @default(now())
+  updated_at DateTime       @default(now()) @updatedAt
 
-  subdepartments      Subdepartment[]
+  subdepartments       Subdepartment[]
   order_category_items OrderCategoryItem[]
 
   @@index([status])
@@ -433,9 +514,9 @@ model Subdepartment {
   name_en       String?
   status        TaxonomyStatus @default(active)
   created_at    DateTime       @default(now())
-  updated_at    DateTime       @updatedAt
+  updated_at    DateTime       @default(now()) @updatedAt
 
-  department           Department @relation(fields: [department_id], references: [id], onDelete: Cascade)
+  department           Department          @relation(fields: [department_id], references: [id], onDelete: Cascade)
   positions            Position[]
   order_category_items OrderCategoryItem[]
 
@@ -451,7 +532,7 @@ model Position {
   name_en          String?
   status           TaxonomyStatus @default(active)
   created_at       DateTime       @default(now())
-  updated_at       DateTime       @updatedAt
+  updated_at       DateTime       @default(now()) @updatedAt
 
   subdepartment        Subdepartment       @relation(fields: [subdepartment_id], references: [id], onDelete: Cascade)
   workers              WorkerPosition[]
@@ -485,7 +566,7 @@ model KioskSession {
   expires_at    DateTime?
   revoked_at    DateTime?
   created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
+  updated_at    DateTime  @default(now()) @updatedAt
   deleted_at    DateTime?
 
   company    Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
@@ -502,18 +583,18 @@ model KioskSession {
 }
 
 model VenueKiosk {
-  id             String            @id @default(uuid())
-  company_id     String
-  name           String
-  location_label String?
-  token_hash     String            @unique
+  id               String           @id @default(uuid())
+  company_id       String
+  name             String
+  location_label   String?
+  token_hash       String           @unique
   token_ciphertext String?
-  status         VenueKioskStatus  @default(active)
-  created_by_id  String?
-  revoked_at     DateTime?
-  created_at     DateTime          @default(now())
-  updated_at     DateTime          @updatedAt
-  deleted_at     DateTime?
+  status           VenueKioskStatus @default(active)
+  created_by_id    String?
+  revoked_at       DateTime?
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
+  deleted_at       DateTime?
 
   company         Company              @relation(fields: [company_id], references: [id], onDelete: Cascade)
   created_by      User?                @relation("venue_kiosk_created_by", fields: [created_by_id], references: [id], onDelete: SetNull)
@@ -539,10 +620,10 @@ model KioskActiveSession {
   updated_at      DateTime                 @updatedAt
   deleted_at      DateTime?
 
-  kiosk       VenueKiosk @relation(fields: [kiosk_id], references: [id], onDelete: Cascade)
-  company     Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
-  order       Order      @relation(fields: [order_id], references: [id], onDelete: Cascade)
-  activated_by User?     @relation("kiosk_active_session_activated_by", fields: [activated_by_id], references: [id], onDelete: SetNull)
+  kiosk        VenueKiosk @relation(fields: [kiosk_id], references: [id], onDelete: Cascade)
+  company      Company    @relation(fields: [company_id], references: [id], onDelete: Cascade)
+  order        Order      @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  activated_by User?      @relation("kiosk_active_session_activated_by", fields: [activated_by_id], references: [id], onDelete: SetNull)
 
   @@index([kiosk_id, status, revoked_at])
   @@index([company_id, status])
@@ -573,6 +654,45 @@ model AttendanceLog {
   @@index([created_at])
   @@index([deleted_at])
   @@map("attendance_logs")
+}
+
+model AttendanceQrToken {
+  id               String    @id @default(uuid())
+  token_hash       String    @unique
+  nonce            String    @unique
+  assignment_id    String?
+  order_id         String
+  company_id       String
+  kiosk_id         String?
+  kiosk_session_id String?
+  expires_at       DateTime
+  revoked_at       DateTime?
+  created_at       DateTime  @default(now())
+  deleted_at       DateTime?
+
+  uses AttendanceQrUse[]
+
+  @@index([order_id, revoked_at])
+  @@index([assignment_id, revoked_at])
+  @@index([kiosk_id, kiosk_session_id])
+  @@index([expires_at])
+  @@map("attendance_qr_tokens")
+}
+
+model AttendanceQrUse {
+  id            String   @id @default(uuid())
+  qr_token_id   String
+  worker_id     String
+  assignment_id String
+  action        String
+  used_at       DateTime @default(now())
+
+  qr_token AttendanceQrToken @relation(fields: [qr_token_id], references: [id], onDelete: Cascade)
+
+  @@unique([qr_token_id, worker_id, action])
+  @@index([worker_id, used_at])
+  @@index([assignment_id, used_at])
+  @@map("attendance_qr_uses")
 }
 
 model Rating {

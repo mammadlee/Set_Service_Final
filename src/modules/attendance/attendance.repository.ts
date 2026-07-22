@@ -1,6 +1,25 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { Role } from '../../types/prisma';
+import { OrderStatus, Role } from '../../types/prisma';
+import {
+  completeOrderWhenFinished,
+  markOrderInProgress,
+  ORDER_ATTENDANCE_STATUSES,
+} from '../orders/orders.lifecycle';
+
+export type AttendanceQrContext = {
+  tokenHash: string;
+  nonce: string;
+  assignmentId?: string;
+  orderId: string;
+  companyId: string;
+  kioskId?: string;
+  kioskSessionId?: string;
+};
+
+type AttendanceQrConsumeResult =
+  | { kind: 'consumed' }
+  | { kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_replayed' };
 
 export const attendanceInclude = {
   assignment: {
@@ -244,6 +263,19 @@ export function activateVenueKiosk(input: {
   expiresAt?: Date;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM "venue_kiosks"
+      WHERE id = ${input.kioskId}
+        AND company_id = ${input.companyId}
+        AND status = 'active'
+        AND revoked_at IS NULL
+        AND deleted_at IS NULL
+      FOR UPDATE
+    `;
+    if (locked.length !== 1) return null;
+
+    const now = new Date();
     await tx.kioskActiveSession.updateMany({
       where: {
         kiosk_id: input.kioskId,
@@ -253,8 +285,12 @@ export function activateVenueKiosk(input: {
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.kioskId, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
     });
 
     await tx.kioskActiveSession.create({
@@ -276,16 +312,20 @@ export function activateVenueKiosk(input: {
 
 export function deactivateVenueKiosk(input: { id: string; companyId?: string }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const kiosk = await tx.venueKiosk.findFirst({
-      where: {
-        id: input.id,
-        deleted_at: null,
-        ...(input.companyId ? { company_id: input.companyId } : {}),
-      },
-      select: { id: true },
-    });
-    if (!kiosk) return null;
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND company_id = ${input.companyId} AND deleted_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND deleted_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return null;
 
+    const now = new Date();
     await tx.kioskActiveSession.updateMany({
       where: {
         kiosk_id: input.id,
@@ -295,8 +335,12 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
     });
 
     return tx.venueKiosk.findFirst({
@@ -308,6 +352,20 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
 
 export function disableVenueKiosk(input: { id: string; companyId?: string }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND company_id = ${input.companyId} AND deleted_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND deleted_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return null;
+
+    const now = new Date();
     const update = await tx.venueKiosk.updateMany({
       where: {
         id: input.id,
@@ -317,7 +375,7 @@ export function disableVenueKiosk(input: { id: string; companyId?: string }) {
       },
       data: {
         status: 'disabled',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
     });
     if (update.count !== 1) return null;
@@ -331,8 +389,12 @@ export function disableVenueKiosk(input: { id: string; companyId?: string }) {
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
     });
 
     return tx.venueKiosk.findFirst({
@@ -378,15 +440,163 @@ export function findKioskSessionById(id: string) {
 }
 
 export function revokeKioskSession(input: { id: string; companyId?: string }) {
-  return prisma.kioskSession.updateMany({
-    where: {
-      id: input.id,
-      deleted_at: null,
-      revoked_at: null,
-      ...(input.companyId ? { company_id: input.companyId } : {}),
-    },
-    data: { revoked_at: new Date() },
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "kiosk_sessions"
+          WHERE id = ${input.id} AND company_id = ${input.companyId}
+            AND deleted_at IS NULL AND revoked_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "kiosk_sessions"
+          WHERE id = ${input.id} AND deleted_at IS NULL AND revoked_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return { count: 0 };
+
+    const now = new Date();
+    const result = await tx.kioskSession.updateMany({
+      where: { id: input.id, deleted_at: null, revoked_at: null },
+      data: { revoked_at: now },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_session_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
+    });
+    return result;
   });
+}
+
+export function registerAttendanceQrToken(input: AttendanceQrContext & { expiresAt: Date }) {
+  return prisma.attendanceQrToken.create({
+    data: {
+      token_hash: input.tokenHash,
+      nonce: input.nonce,
+      assignment_id: input.assignmentId,
+      order_id: input.orderId,
+      company_id: input.companyId,
+      kiosk_id: input.kioskId,
+      kiosk_session_id: input.kioskSessionId,
+      expires_at: input.expiresAt,
+    },
+    select: { id: true },
+  });
+}
+
+async function consumeAttendanceQrToken(
+  tx: Prisma.TransactionClient,
+  input: {
+    qr: AttendanceQrContext;
+    assignmentId: string;
+    workerId: string;
+    action: 'checkin' | 'checkout';
+  },
+): Promise<AttendanceQrConsumeResult> {
+  const { qr } = input;
+
+  // Revocation and consumption take capability locks in the same order:
+  // physical/legacy session first, then the persisted short-lived QR grant.
+  if (qr.kioskId && qr.kioskSessionId) {
+    const lockedKiosk = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "venue_kiosks"
+      WHERE id = ${qr.kioskId}
+      FOR UPDATE
+    `;
+    const lockedSession = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "kiosk_active_sessions"
+      WHERE id = ${qr.kioskSessionId}
+      FOR UPDATE
+    `;
+    if (lockedKiosk.length !== 1 || lockedSession.length !== 1) return { kind: 'qr_revoked' };
+
+    const [kiosk, session] = await Promise.all([
+      tx.venueKiosk.findFirst({
+        where: {
+          id: qr.kioskId,
+          company_id: qr.companyId,
+          status: 'active',
+          revoked_at: null,
+          deleted_at: null,
+        },
+        select: { id: true },
+      }),
+      tx.kioskActiveSession.findFirst({
+        where: {
+          id: qr.kioskSessionId,
+          kiosk_id: qr.kioskId,
+          order_id: qr.orderId,
+          company_id: qr.companyId,
+          status: 'active',
+          revoked_at: null,
+          deleted_at: null,
+          OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }],
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (!kiosk || !session) return { kind: 'qr_revoked' };
+  } else if (qr.kioskSessionId) {
+    const lockedSession = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "kiosk_sessions"
+      WHERE id = ${qr.kioskSessionId}
+      FOR UPDATE
+    `;
+    if (lockedSession.length !== 1) return { kind: 'qr_revoked' };
+    const session = await tx.kioskSession.findFirst({
+      where: {
+        id: qr.kioskSessionId,
+        assignment_id: input.assignmentId,
+        order_id: qr.orderId,
+        company_id: qr.companyId,
+        revoked_at: null,
+        deleted_at: null,
+        OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }],
+      },
+      select: { id: true },
+    });
+    if (!session) return { kind: 'qr_revoked' };
+  }
+
+  const lockedGrant = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "attendance_qr_tokens"
+    WHERE token_hash = ${qr.tokenHash}
+    FOR UPDATE
+  `;
+  if (lockedGrant.length !== 1) return { kind: 'qr_invalid' };
+
+  const grant = await tx.attendanceQrToken.findUnique({
+    where: { token_hash: qr.tokenHash },
+  });
+  if (!grant || grant.deleted_at !== null) return { kind: 'qr_invalid' };
+  if (grant.revoked_at !== null) return { kind: 'qr_revoked' };
+  if (grant.expires_at.getTime() <= Date.now()) return { kind: 'qr_expired' };
+  if (
+    grant.nonce !== qr.nonce ||
+    grant.order_id !== qr.orderId ||
+    grant.company_id !== qr.companyId ||
+    grant.assignment_id !== (qr.assignmentId ?? null) ||
+    grant.kiosk_id !== (qr.kioskId ?? null) ||
+    grant.kiosk_session_id !== (qr.kioskSessionId ?? null) ||
+    (qr.assignmentId !== undefined && qr.assignmentId !== input.assignmentId)
+  ) {
+    return { kind: 'qr_invalid' };
+  }
+
+  try {
+    await tx.attendanceQrUse.create({
+      data: {
+        qr_token_id: grant.id,
+        worker_id: input.workerId,
+        assignment_id: input.assignmentId,
+        action: input.action,
+      },
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return { kind: 'qr_replayed' };
+    throw error;
+  }
+  return { kind: 'consumed' };
 }
 
 export function findAttendanceById(id: string) {
@@ -447,11 +657,37 @@ export function createCheckInWithAudit(input: {
   workerId: string;
   actorId: string;
   actorRole: Role;
-  qrTokenHash: string;
+  qr: AttendanceQrContext;
   location?: unknown;
   notes?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        deleted_at: null,
+      },
+      select: { order_id: true },
+    });
+    if (!candidate) return { kind: 'assignment_not_accepted' as const };
+
+    // Every lifecycle path locks parent order first, then assignment. This keeps
+    // check-in serialized with both whole-order and direct-assignment cancellation
+    // without introducing an assignment -> order deadlock.
+    await tx.$queryRaw`
+      SELECT id
+      FROM "orders"
+      WHERE id = ${candidate.order_id}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id
+      FROM "assignments"
+      WHERE id = ${input.assignmentId}
+      FOR UPDATE
+    `;
+
     const assignment = await tx.assignment.findFirst({
       where: {
         id: input.assignmentId,
@@ -467,7 +703,11 @@ export function createCheckInWithAudit(input: {
       },
     });
 
-    if (!assignment || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+    if (
+      !assignment ||
+      !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
+      assignment.order.deleted_at !== null
+    ) {
       return { kind: 'assignment_not_accepted' as const };
     }
 
@@ -482,6 +722,14 @@ export function createCheckInWithAudit(input: {
         : { kind: 'already_checked_in' as const };
     }
 
+    const qrResult = await consumeAttendanceQrToken(tx, {
+      qr: input.qr,
+      assignmentId: assignment.id,
+      workerId: input.workerId,
+      action: 'checkin',
+    });
+    if (qrResult.kind !== 'consumed') return qrResult;
+
     try {
       const attendance = await tx.attendanceLog.create({
         data: {
@@ -489,7 +737,7 @@ export function createCheckInWithAudit(input: {
           checkin_time: new Date(),
           checkin_location: input.location ?? undefined,
           checkin_notes: input.notes,
-          qr_token_hash: input.qrTokenHash,
+          qr_token_hash: input.qr.tokenHash,
         },
         include: attendanceInclude,
       });
@@ -509,7 +757,19 @@ export function createCheckInWithAudit(input: {
         },
       });
 
-      return { kind: 'checked_in' as const, attendance };
+      await markOrderInProgress(tx, assignment.order_id, {
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        reason: 'attendance_checked_in',
+      });
+
+      const refreshedAttendance = await tx.attendanceLog.findFirst({
+        where: { id: attendance.id, deleted_at: null },
+        include: attendanceInclude,
+      });
+      if (!refreshedAttendance) throw new Error('Created attendance record could not be reloaded.');
+
+      return { kind: 'checked_in' as const, attendance: refreshedAttendance };
 
       /*
       await tx.notification.create({
@@ -541,10 +801,19 @@ export function checkOutWithAudit(input: {
   workerId: string;
   actorId: string;
   actorRole: Role;
+  qr: AttendanceQrContext;
   location?: unknown;
   notes?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, worker_id: input.workerId, deleted_at: null },
+      select: { order_id: true },
+    });
+    if (!candidate) return { kind: 'assignment_not_accepted' as const };
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
+
     const openLog = await tx.attendanceLog.findFirst({
       where: {
         assignment_id: input.assignmentId,
@@ -554,7 +823,7 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: 'active', deleted_at: null },
+          order: { status: { in: ORDER_ATTENDANCE_STATUSES }, deleted_at: null },
         },
       },
       select: {
@@ -579,6 +848,14 @@ export function checkOutWithAudit(input: {
       return { kind: 'not_checked_in' as const };
     }
 
+    const qrResult = await consumeAttendanceQrToken(tx, {
+      qr: input.qr,
+      assignmentId: input.assignmentId,
+      workerId: input.workerId,
+      action: 'checkout',
+    });
+    if (qrResult.kind !== 'consumed') return qrResult;
+
     const updateResult = await tx.attendanceLog.updateMany({
       where: {
         id: openLog.id,
@@ -588,7 +865,7 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: 'active', deleted_at: null },
+          order: { status: { in: ORDER_ATTENDANCE_STATUSES }, deleted_at: null },
         },
       },
       data: {
@@ -613,6 +890,19 @@ export function checkOutWithAudit(input: {
       return { kind: 'not_checked_in' as const };
     }
 
+    const assignmentUpdate = await tx.assignment.updateMany({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        status: 'accepted',
+        deleted_at: null,
+      },
+      data: { status: 'completed' },
+    });
+    if (assignmentUpdate.count !== 1) {
+      return { kind: 'assignment_not_accepted' as const };
+    }
+
     const attendance = await tx.attendanceLog.findFirst({
       where: { id: openLog.id },
       include: attendanceInclude,
@@ -635,7 +925,18 @@ export function checkOutWithAudit(input: {
       },
     });
 
-    return { kind: 'checked_out' as const, attendance };
+    await completeOrderWhenFinished(tx, openLog.assignment.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'attendance_checked_out',
+    });
+    const refreshedAttendance = await tx.attendanceLog.findFirst({
+      where: { id: attendance.id, deleted_at: null },
+      include: attendanceInclude,
+    });
+    if (!refreshedAttendance) return { kind: 'not_checked_in' as const };
+
+    return { kind: 'checked_out' as const, attendance: refreshedAttendance };
 
     /*
     await tx.notification.create({
@@ -698,7 +999,7 @@ function isAssignmentBlockedForAttendance(
     !assignment ||
     assignment.status !== 'accepted' ||
     assignment.deleted_at !== null ||
-    assignment.order.status !== 'active' ||
+    !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
     assignment.order.deleted_at !== null
   );
 }

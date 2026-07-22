@@ -15,10 +15,14 @@ This app uses the current backend Swagger/OpenAPI contract. It does not require 
 - JWT access/refresh token persistence
 - Protected API requests with auth interceptor
 - Refresh-token retry on 401
+- Single-flight refresh and coordinated session states
 - Assignment list
 - Assignment detail
 - Accept/reject assignment
 - Attendance QR token check-in/check-out flow
+- Camera-based QR scanning with permission/error handling
+- Firebase push registration, token refresh, logout cleanup, and role-scoped deep links
+- Cached authenticated-session preservation during transient offline startup
 - Loading and error states
 - Logout
 
@@ -94,20 +98,17 @@ Web:
 flutter run -d chrome --dart-define=BASE_URL=http://localhost:3000
 ```
 
-## Development OTP
+## Local-only OTP testing
 
-For the current backend MVP, development OTP is usually:
-
-```text
-123456
-```
-
-The backend must have:
+A deterministic OTP may be enabled only in a non-production local/test environment:
 
 ```env
 OTP_TEST_MODE="true"
 OTP_TEST_CODE="123456"
 ```
+
+Backend environment validation rejects this mode in production. Never place the
+test code or OTP mode in a release configuration.
 
 ## Worker Flow
 
@@ -159,17 +160,22 @@ MVP backend rule:
 
 ## Validation
 
-Commands already run successfully:
+Core validation commands:
 
 ```bash
 flutter analyze
 flutter test
-flutter build web --dart-define=BASE_URL=http://localhost:3000
+flutter build web --release --dart-define=APP_ENV=staging --dart-define=BASE_URL="$STAGING_API_BASE_URL"
 ```
 
-## Known Client Limitations
+Release builds additionally require the native Firebase files and signing
+credentials described in `../../DEPLOYMENT_CHECKLIST.md`; Android release
+signing deliberately fails closed when credentials are absent.
 
-- QR camera scanning is not wired yet; the current MVP screen accepts pasted/scanned token text.
-- Push notifications are not wired in the Flutter client yet.
-- Deep links are not implemented.
-- Offline mode is not implemented.
+## Remaining platform/infrastructure work
+
+- Network-dependent business data is not cached for offline mutation; a cached
+  authenticated session is retained, while affected screens surface retryable
+  network states.
+- Signed iOS archive, APNs entitlement verification, and native Firebase
+  validation must be completed on macOS with the real release credentials.

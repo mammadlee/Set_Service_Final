@@ -1,4 +1,5 @@
 import { logger } from './logger';
+import { requestProvider } from './provider-http';
 
 export interface EmailMessage {
   to: string;
@@ -8,51 +9,58 @@ export interface EmailMessage {
 }
 
 export interface EmailProvider {
-  send(message: EmailMessage): Promise<void>;
+  send(message: EmailMessage, idempotencyKey: string): Promise<void>;
 }
 
 class ConsoleEmailProvider implements EmailProvider {
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage, idempotencyKey: string): Promise<void> {
     if (process.env.NODE_ENV === 'production') {
-      throw new Error('Console email provider production mühitində istifadə edilə bilməz.');
+      throw new Error('Console email provider cannot be used in production.');
     }
 
-    logger.info('Development email message', {
-      to: message.to,
+    logger.info('Development email delivery suppressed', {
+      channel: 'email',
       purpose: message.purpose,
-      subject: message.subject,
-      body: process.env.OTP_LOG_CODES === 'false' ? '[hidden]' : message.body,
+      idempotency_key: idempotencyKey,
+      recipient: '[hidden]',
+      subject: '[hidden]',
+      body: '[hidden]',
     });
   }
 }
 
 class GenericHttpEmailProvider implements EmailProvider {
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage, idempotencyKey: string): Promise<void> {
     const endpoint = process.env.EMAIL_API_URL;
     const apiKey = process.env.EMAIL_API_KEY;
     const from = process.env.EMAIL_FROM;
     if (!endpoint || !apiKey || !from) {
-      throw new Error('generic_http email provider üçün EMAIL_API_URL, EMAIL_API_KEY və EMAIL_FROM tələb olunur.');
+      throw new Error(
+        'EMAIL_API_URL, EMAIL_API_KEY, and EMAIL_FROM are required for generic_http email provider.'
+      );
     }
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
+    await requestProvider(
+      endpoint,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          from,
+          to: message.to,
+          subject: message.subject,
+          body: message.body,
+          purpose: message.purpose,
+        }),
       },
-      body: JSON.stringify({
-        from,
-        to: message.to,
-        subject: message.subject,
-        body: message.body,
-        purpose: message.purpose,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Email provider HTTP ${response.status} cavabı qaytardı.`);
-    }
+      {
+        circuitKey: `email:${new URL(endpoint).origin}`,
+        idempotencyKey,
+      }
+    );
   }
 }
 
@@ -60,19 +68,12 @@ function createEmailProvider(): EmailProvider {
   const provider = process.env.EMAIL_PROVIDER ?? 'console';
   if (provider === 'generic_http') return new GenericHttpEmailProvider();
   if (provider === 'console') return new ConsoleEmailProvider();
-  throw new Error(`EMAIL_PROVIDER dəstəklənmir: ${provider}`);
+  throw new Error(`Unsupported EMAIL_PROVIDER: ${provider}`);
 }
 
-export async function sendEmailCode(
-  email: string,
-  code: string,
-  purpose: string
+export async function deliverEmailMessage(
+  message: EmailMessage,
+  idempotencyKey: string
 ): Promise<void> {
-  const provider = createEmailProvider();
-  await provider.send({
-    to: email,
-    purpose,
-    subject: 'SET Service təsdiq kodu',
-    body: `SET Service təsdiq kodunuz: ${code}. Kod 5 dəqiqə ərzində etibarlıdır.`,
-  });
+  await createEmailProvider().send(message, idempotencyKey);
 }

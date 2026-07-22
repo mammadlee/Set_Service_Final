@@ -1,8 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { getTokenExpiration, signAccessToken, signRefreshToken, verifyToken } from '../../lib/jwt';
+import {
+  getTokenExpiration,
+  signAccessToken,
+  signRefreshToken,
+  signRegistrationToken,
+  verifyRefreshToken,
+} from '../../lib/jwt';
 import { Errors } from '../../lib/errors';
-import { generateNumericCode, hmacSha256, safeCompareHex, sha256 } from '../../lib/crypto';
+import { generateOtpCode, hmacSha256, safeCompareHex, sha256 } from '../../lib/crypto';
 import { normalizePhone } from '../../lib/phone';
 import { hashPassword, normalizeEmail, verifyPassword } from '../../lib/password';
 import { recordAudit } from '../../lib/audit';
@@ -13,8 +19,10 @@ import {
   consumeOtpRateLimit,
   setOtpCooldown,
 } from '../../lib/otp-state';
-import { sendOtpSms } from '../../lib/sms';
-import { sendEmailCode } from '../../lib/email';
+import {
+  buildOtpProviderOutboxEvent,
+  ProviderOutboxEventData,
+} from '../../lib/provider-outbox';
 import {
   AdminLoginInput,
   AdminForgotPasswordInput,
@@ -66,16 +74,16 @@ type OtpChallengePayload = {
   exp: number;
 };
 
-function generateOtp(): string {
-  if (process.env.NODE_ENV !== 'production' && process.env.OTP_TEST_MODE !== 'false') {
-    return process.env.OTP_TEST_CODE ?? '123456';
-  }
-
-  return generateNumericCode(6);
-}
+type AuthUser = Prisma.UserGetPayload<{
+  include: {
+    worker: true;
+    company: true;
+    admin: true;
+  };
+}>;
 
 function otpHash(phone: string, purpose: OtpPurpose, code: string): string {
-  return hmacSha256(`${phone}:${purpose}:${code}`, process.env.OTP_PEPPER ?? process.env.JWT_SECRET ?? 'dev-otp-pepper');
+  return hmacSha256(`${phone}:${purpose}:${code}`, process.env.OTP_PEPPER ?? process.env.JWT_ACCESS_SECRET ?? 'dev-otp-pepper');
 }
 
 function emailOtpKey(email: string): string {
@@ -85,12 +93,12 @@ function emailOtpKey(email: string): string {
 function emailVerificationHash(email: string, code: string): string {
   return hmacSha256(
     `email_verification:${normalizeEmail(email)}:${code}`,
-    process.env.OTP_PEPPER ?? process.env.JWT_SECRET ?? 'dev-otp-pepper'
+    process.env.OTP_PEPPER ?? process.env.JWT_ACCESS_SECRET ?? 'dev-otp-pepper'
   );
 }
 
 function otpChallengeSecret(): string {
-  return process.env.OTP_PEPPER ?? process.env.JWT_SECRET ?? 'dev-otp-pepper';
+  return process.env.OTP_PEPPER ?? process.env.JWT_ACCESS_SECRET ?? 'dev-otp-pepper';
 }
 
 function signOtpChallenge(otp: VerifiedOtpCode): string {
@@ -135,8 +143,6 @@ export async function register(input: RegisterInput, ip?: string) {
       contact_name: input.contact_name ?? input.name,
       email: input.email,
       phone: input.phone,
-      docs_url: input.docs_url,
-      documents: input.documents ?? [],
     }, ip);
   }
 
@@ -147,7 +153,6 @@ export async function register(input: RegisterInput, ip?: string) {
     position_ids: input.position_ids,
     skills: input.skills ?? [],
     languages: input.languages ?? [],
-    documents: input.documents ?? [],
   }, ip);
 }
 
@@ -156,7 +161,12 @@ export async function registerWorker(input: WorkerRegisterInput, ip?: string) {
   const existing = await prisma.user.findUnique({ where: { phone }, include: { worker: true } });
 
   if (existing) {
-    if (existing.role === 'worker' && existing.worker?.status === 'pending_otp') {
+    const canResumeRegistration = existing.role === 'worker'
+      && existing.worker
+      && !existing.password_set_at
+      && ['pending_otp', 'pending_approval'].includes(existing.worker.status);
+
+    if (canResumeRegistration && existing.worker) {
       await requestOtp({
         phone,
         purpose: 'worker_registration',
@@ -187,7 +197,6 @@ export async function registerWorker(input: WorkerRegisterInput, ip?: string) {
           position: displayPosition,
           skills: input.skills,
           languages: input.languages,
-          documents: input.documents,
           status: 'pending_otp' as WorkerStatus,
           positions: selectedPositions.length
             ? {
@@ -203,6 +212,9 @@ export async function registerWorker(input: WorkerRegisterInput, ip?: string) {
   });
 
   await requestOtp({ phone, purpose: 'worker_registration', user_id: user.id, ip_address: ip });
+  if (!user.worker) {
+    throw new Error('Worker profile creation did not return the related worker record.');
+  }
 
   return {
     user_id: user.id,
@@ -236,7 +248,10 @@ export async function requestWorkerOtp(input: WorkerRequestOtpInput, ip?: string
   }
 
   if (purpose === 'worker_registration') {
-    if (user.worker.status !== 'pending_otp') {
+    const canResumeRegistration = !user.password_set_at
+      && ['pending_otp', 'pending_approval'].includes(user.worker.status);
+
+    if (!canResumeRegistration) {
       throw Errors.forbidden('İşçi qeydiyyatı OTP təsdiqi mərhələsində deyil.', 'WORKER_REGISTRATION_ALREADY_VERIFIED', {
         status: user.worker.status,
       });
@@ -300,6 +315,12 @@ export async function completeWorkerRegistration(input: WorkerCompleteRegistrati
     worker_id: worker.id,
     status: worker.status,
     password_set: true,
+    registration_access_token: signRegistrationToken({
+      sub: user.id,
+      role: user.role,
+      session_version: user.session_version,
+    }),
+    required_document_types: ['health_certificate', 'criminal_record'],
     message: 'OTP təsdiqləndi. İşçi admin təsdiqini gözləyir.',
   };
 }
@@ -456,17 +477,27 @@ export async function startEmailVerification(userId: string, email: string) {
     });
   }
 
-  const code = generateOtp();
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      pending_email: normalizedEmail,
-      email_verification_code_hash: emailVerificationHash(normalizedEmail, code),
-      email_verification_expires_at: new Date(now.getTime() + EMAIL_VERIFICATION_EXPIRES_MS),
-      email_verification_sent_at: now,
-    },
+  const code = generateOtpCode();
+  const codeHash = emailVerificationHash(normalizedEmail, code);
+  const deliveryEvent = buildOtpProviderOutboxEvent({
+    channel: 'email',
+    to: normalizedEmail,
+    purpose: 'email_verification',
+    code,
+    dedupeKey: `${userId}:${now.toISOString()}:${codeHash}`,
   });
-  await sendEmailCode(normalizedEmail, code, 'email_verification');
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        pending_email: normalizedEmail,
+        email_verification_code_hash: codeHash,
+        email_verification_expires_at: new Date(now.getTime() + EMAIL_VERIFICATION_EXPIRES_MS),
+        email_verification_sent_at: now,
+      },
+    });
+    await queueProviderDelivery(tx, deliveryEvent, now);
+  });
 
   return {
     email: user.email,
@@ -540,7 +571,24 @@ export async function registerCompany(input: CompanyRegisterInput, ip?: string) 
   const email = normalizeEmail(input.email);
   const existing = await prisma.user.findFirst({
     where: { OR: [{ phone }, { email }] },
+    include: { company: true },
   });
+  const canResumeRegistration = existing?.role === 'company'
+    && existing.phone === phone
+    && existing.email === email
+    && existing.company?.status === 'pending_approval'
+    && !existing.password_set_at;
+
+  if (canResumeRegistration && existing.company) {
+    await requestOtp({ phone, purpose: 'company_registration', user_id: existing.id, ip_address: ip });
+    return {
+      user_id: existing.id,
+      company_id: existing.company.id,
+      status: existing.company.status,
+      otp_sent: true,
+    };
+  }
+
   if (existing?.phone === phone) throw Errors.conflict('Bu telefon nömrəsindən istifadə etmək mümkün deyil.', 'PHONE_ALREADY_REGISTERED');
   if (existing?.email === email) throw Errors.conflict('Bu email ünvanından istifadə etmək mümkün deyil.', 'EMAIL_ALREADY_REGISTERED');
 
@@ -553,8 +601,6 @@ export async function registerCompany(input: CompanyRegisterInput, ip?: string) 
       company: {
         create: {
           name: input.name,
-          docs_url: input.docs_url,
-          documents: input.documents,
           status: 'pending_approval' as CompanyStatus,
         },
       },
@@ -563,6 +609,9 @@ export async function registerCompany(input: CompanyRegisterInput, ip?: string) 
   });
 
   await requestOtp({ phone, purpose: 'company_registration', user_id: user.id, ip_address: ip });
+  if (!user.company) {
+    throw new Error('Company profile creation did not return the related company record.');
+  }
 
   return {
     user_id: user.id,
@@ -601,6 +650,13 @@ export async function completeCompanyRegistration(input: CompanyCompleteRegistra
     company_id: user.company.id,
     status: user.company.status,
     password_set: true,
+    registration_access_token: signRegistrationToken({
+      sub: user.id,
+      role: user.role,
+      session_version: user.session_version,
+    }),
+    email_verified: Boolean(user.email_verified_at),
+    required_document_types: ['registration_certificate'],
     message: 'OTP təsdiqləndi. Müəssisə admin təsdiqini gözləyir.',
   };
 }
@@ -693,10 +749,10 @@ export async function loginAdmin(input: AdminLoginInput, ip?: string) {
 }
 
 export async function forgotAdminPassword(_input: AdminForgotPasswordInput) {
-  return {
-    reset_requested: true,
-    message: 'Əgər admin hesabı mövcuddursa, əl ilə bərpa prosesi başladılacaq.',
-  };
+  throw Errors.gone(
+    'Admin password reset is disabled. Contact the security administrator.',
+    'ADMIN_PASSWORD_RESET_DISABLED'
+  );
 }
 
 export async function verifyOtp(input: VerifyOtpInput, ip?: string) {
@@ -720,19 +776,13 @@ export async function verifyOtp(input: VerifyOtpInput, ip?: string) {
 
   if (otp.purpose === 'worker_registration') {
     if (!user.worker) throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
-    const worker = await prisma.worker.update({
-      where: { id: user.worker.id },
-      data: {
-        status: user.worker.status === 'pending_otp' ? 'pending_approval' : user.worker.status,
-      },
-    });
     return {
       user_id: user.id,
-      worker_id: worker.id,
-      status: worker.status,
+      worker_id: user.worker.id,
+      status: user.worker.status,
       password_required: true,
       otp_challenge: otpChallenge,
-      message: 'OTP təsdiqləndi. İşçi admin təsdiqini gözləyir.',
+      message: 'OTP təsdiqləndi. Qeydiyyatı tamamlamaq üçün şifrə yaradın.',
     };
   }
 
@@ -782,33 +832,143 @@ export async function verifyOtp(input: VerifyOtpInput, ip?: string) {
 export async function refresh(refreshToken: string, ip?: string) {
   let payload;
   try {
-    payload = verifyToken(refreshToken);
+    payload = verifyRefreshToken(refreshToken);
   } catch {
     throw Errors.unauthorized('Sessiya yeniləmə tokeni etibarsızdır.', 'INVALID_REFRESH_TOKEN');
   }
 
   const now = new Date();
-  const rotation = await prisma.refreshToken.updateMany({
-    where: {
-      token_hash: sha256(refreshToken),
-      revoked_at: null,
-      expires_at: { gt: now },
-    },
-    data: { revoked_at: now },
+  const tokenHash = sha256(refreshToken);
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const stored = await tx.refreshToken.findUnique({
+      where: { token_hash: tokenHash },
+      include: {
+        user: {
+          include: {
+            worker: true,
+            company: true,
+            admin: true,
+          },
+        },
+      },
+    });
+
+    if (
+      !stored
+      || stored.user_id !== payload.sub
+      || stored.jti !== payload.jti
+      || stored.family_id !== payload.family_id
+      || stored.expires_at <= now
+    ) {
+      return { kind: 'invalid' as const };
+    }
+
+    if (stored.revoked_at) {
+      if (stored.revoked_reason === 'rotated') {
+        await revokeTokenFamily(tx, stored.user_id, stored.family_id, now, 'reuse_detected');
+        return { kind: 'reuse' as const };
+      }
+      return { kind: 'invalid' as const };
+    }
+
+    assertUserCanAuthenticate(stored.user, payload.role, payload.session_version);
+
+    const nextRefreshToken = signRefreshToken({
+      sub: stored.user_id,
+      role: stored.user.role,
+      session_version: stored.user.session_version,
+      family_id: stored.family_id,
+    });
+    const nextRefreshPayload = verifyRefreshToken(nextRefreshToken);
+    const nextAccessToken = signAccessToken({
+      sub: stored.user_id,
+      role: stored.user.role,
+      session_version: stored.user.session_version,
+    });
+
+    const rotation = await tx.refreshToken.updateMany({
+      where: {
+        id: stored.id,
+        revoked_at: null,
+        expires_at: { gt: now },
+      },
+      data: {
+        revoked_at: now,
+        revoked_reason: 'rotated',
+        replaced_by_jti: nextRefreshPayload.jti,
+      },
+    });
+
+    if (rotation.count !== 1) {
+      await revokeTokenFamily(tx, stored.user_id, stored.family_id, now, 'reuse_detected');
+      return { kind: 'reuse' as const };
+    }
+
+    await tx.refreshToken.create({
+      data: {
+        user_id: stored.user_id,
+        token_hash: sha256(nextRefreshToken),
+        jti: nextRefreshPayload.jti,
+        family_id: stored.family_id,
+        expires_at: getTokenExpiration(nextRefreshToken),
+        created_by_ip: ip,
+      },
+    });
+
+    return {
+      kind: 'ok' as const,
+      response: tokenResponse(stored.user, nextAccessToken, nextRefreshToken),
+    };
   });
 
-  if (rotation.count !== 1) {
-    throw Errors.unauthorized('Sessiya yeniləmə tokeni etibarsızdır və ya vaxtı bitib.', 'INVALID_REFRESH_TOKEN');
+  if (result.kind === 'reuse') {
+    throw Errors.unauthorized(
+      'Sessiya yeniləmə tokeninin təkrar istifadəsi aşkarlandı.',
+      'REFRESH_TOKEN_REUSE'
+    );
+  }
+  if (result.kind === 'invalid') {
+    throw Errors.unauthorized(
+      'Sessiya yeniləmə tokeni etibarsızdır və ya vaxtı bitib.',
+      'INVALID_REFRESH_TOKEN'
+    );
   }
 
-  return buildTokenResponse(payload.sub, payload.role, ip);
+  return result.response;
 }
 
-export async function logout(refreshToken: string): Promise<void> {
-  await prisma.refreshToken.updateMany({
-    where: { token_hash: sha256(refreshToken), revoked_at: null },
-    data: { revoked_at: new Date() },
+export async function logout(refreshToken: string, userId: string): Promise<void> {
+  let payload;
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw Errors.unauthorized('Sessiya yeniləmə tokeni etibarsızdır.', 'INVALID_REFRESH_TOKEN');
+  }
+  if (payload.sub !== userId) {
+    throw Errors.unauthorized('Sessiya yeniləmə tokeni bu hesaba aid deyil.', 'INVALID_REFRESH_TOKEN');
+  }
+
+  const now = new Date();
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const stored = await tx.refreshToken.findUnique({
+      where: { token_hash: sha256(refreshToken) },
+      select: { user_id: true, family_id: true, jti: true },
+    });
+    if (!stored || stored.user_id !== userId || stored.jti !== payload.jti) {
+      return;
+    }
+    await revokeTokenFamily(tx, userId, stored.family_id, now, 'logout');
   });
+}
+
+export async function logoutByRefreshToken(refreshToken: string): Promise<void> {
+  let payload;
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw Errors.unauthorized('Sessiya yeniləmə tokeni etibarsızdır.', 'INVALID_REFRESH_TOKEN');
+  }
+  await logout(refreshToken, payload.sub);
 }
 
 export async function registerFcmToken(userId: string, input: FcmTokenInput) {
@@ -930,13 +1090,13 @@ async function requestOtp(input: {
   user_id?: string;
   ip_address?: string;
 }) {
-  const code = await createOtpCode({
+  await createOtpCode({
     target: input.phone,
     purpose: input.purpose,
     user_id: input.user_id,
     ip_address: input.ip_address,
+    delivery: { channel: 'sms', to: input.phone },
   });
-  await sendOtpSms(input.phone, code, input.purpose);
 }
 
 async function requestEmailOtp(input: {
@@ -946,13 +1106,13 @@ async function requestEmailOtp(input: {
   ip_address?: string;
 }) {
   const email = normalizeEmail(input.email);
-  const code = await createOtpCode({
+  await createOtpCode({
     target: emailOtpKey(email),
     purpose: input.purpose,
     user_id: input.user_id,
     ip_address: input.ip_address,
+    delivery: { channel: 'email', to: email },
   });
-  await sendEmailCode(email, code, input.purpose);
 }
 
 async function createOtpCode(input: {
@@ -960,6 +1120,10 @@ async function createOtpCode(input: {
   purpose: OtpPurpose;
   user_id?: string;
   ip_address?: string;
+  delivery: {
+    channel: 'sms' | 'email';
+    to: string;
+  };
 }) {
   await consumeOtpRateLimit(['target', input.target, input.purpose], OTP_RATE_MAX_BY_PHONE, OTP_RATE_WINDOW_MS);
   await consumeOtpRateLimit(['ip', input.ip_address ?? 'unknown', input.purpose], OTP_RATE_MAX_BY_IP, OTP_RATE_WINDOW_MS);
@@ -984,42 +1148,77 @@ async function createOtpCode(input: {
     });
   }
 
-  const code = generateOtp();
+  const code = generateOtpCode();
   const expires_at = new Date(now.getTime() + OTP_EXPIRES_MS);
   const code_hash = otpHash(input.target, input.purpose, code);
+  const deliveryEvent = buildOtpProviderOutboxEvent({
+    channel: input.delivery.channel,
+    to: input.delivery.to,
+    purpose: input.purpose,
+    code,
+    dedupeKey: `${latest?.id ?? 'new'}:${now.toISOString()}:${code_hash}`,
+  });
 
-  if (latest) {
-    await prisma.otpCode.update({
-      where: { id: latest.id },
-      data: {
-        user_id: input.user_id ?? latest.user_id,
-        code_hash,
-        expires_at,
-        attempts: 0,
-        max_attempts: OTP_MAX_ATTEMPTS,
-        resend_count: { increment: 1 },
-        blocked_until: null,
-        last_sent_at: now,
-        ip_address: input.ip_address,
-      },
-    });
-  } else {
-    await prisma.otpCode.create({
-      data: {
-        user_id: input.user_id,
-        phone: input.target,
-        purpose: input.purpose,
-        code_hash,
-        expires_at,
-        max_attempts: OTP_MAX_ATTEMPTS,
-        last_sent_at: now,
-        ip_address: input.ip_address,
-      },
-    });
-  }
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    if (latest) {
+      await tx.otpCode.update({
+        where: { id: latest.id },
+        data: {
+          user_id: input.user_id ?? latest.user_id,
+          code_hash,
+          expires_at,
+          attempts: 0,
+          max_attempts: OTP_MAX_ATTEMPTS,
+          resend_count: { increment: 1 },
+          blocked_until: null,
+          last_sent_at: now,
+          ip_address: input.ip_address,
+        },
+      });
+    } else {
+      await tx.otpCode.create({
+        data: {
+          user_id: input.user_id,
+          phone: input.target,
+          purpose: input.purpose,
+          code_hash,
+          expires_at,
+          max_attempts: OTP_MAX_ATTEMPTS,
+          last_sent_at: now,
+          ip_address: input.ip_address,
+        },
+      });
+    }
+    await queueProviderDelivery(tx, deliveryEvent, now);
+  });
 
   await setOtpCooldown(input.target, input.purpose, OTP_COOLDOWN_MS);
   return code;
+}
+
+async function queueProviderDelivery(
+  tx: Prisma.TransactionClient,
+  event: ProviderOutboxEventData,
+  availableAt: Date
+): Promise<void> {
+  await tx.outboxEvent.upsert({
+    where: { id: event.id },
+    create: {
+      ...event,
+      available_at: availableAt,
+    },
+    update: {
+      aggregate: event.aggregate,
+      aggregate_id: event.aggregate_id,
+      event_type: event.event_type,
+      payload: event.payload,
+      status: 'pending',
+      attempts: 0,
+      available_at: availableAt,
+      processed_at: null,
+      last_error: null,
+    },
+  });
 }
 
 async function verifyOtpProof(input: {
@@ -1079,8 +1278,8 @@ async function consumeVerifiedOtp(
   now: Date
 ): Promise<void> {
   const consumed = await tx.otpCode.updateMany({
-    where: { id: otpId, expires_at: { gt: now } },
-    data: { expires_at: now },
+    where: { id: otpId, expires_at: { gt: now }, consumed_at: null },
+    data: { expires_at: now, consumed_at: now },
   });
   if (consumed.count !== 1) {
     throw Errors.unauthorized('Təsdiq sessiyası etibarsızdır və ya vaxtı bitib.', 'OTP_CHALLENGE_INVALID');
@@ -1111,10 +1310,25 @@ async function verifyOtpCode(phone: string, code: string, purpose?: OtpPurpose) 
     throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
   }
 
-  return prisma.otpCode.update({
-    where: { id: otp.id },
-    data: { verified_at: now },
-  });
+  const verified = await prisma.$queryRaw<VerifiedOtpCode[]>`
+    UPDATE "otp_codes"
+    SET "verified_at" = timezone('UTC', ${now}::timestamptz)
+    WHERE "id" = ${otp.id}
+      AND "verified_at" IS NULL
+      AND "expires_at" > timezone('UTC', ${now}::timestamptz)
+      AND "attempts" < "max_attempts"
+      AND (
+        "blocked_until" IS NULL
+        OR "blocked_until" <= timezone('UTC', ${now}::timestamptz)
+      )
+    RETURNING "id", "user_id", "phone", "purpose"
+  `;
+
+  if (!verified[0]) {
+    throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
+  }
+
+  return verified[0];
 }
 
 async function handleFailedOtp(otp: {
@@ -1122,11 +1336,32 @@ async function handleFailedOtp(otp: {
   user_id: string | null;
   phone: string;
   purpose: OtpPurpose;
-  attempts: number;
-  max_attempts: number;
 }) {
-  const attempts = otp.attempts + 1;
-  const shouldBlock = attempts >= otp.max_attempts;
+  const blockedUntil = new Date(Date.now() + OTP_BLOCK_MS);
+  const updated = await prisma.$queryRaw<Array<{
+    attempts: number;
+    max_attempts: number;
+    blocked_until: Date | null;
+  }>>`
+    UPDATE "otp_codes"
+    SET
+      "attempts" = "attempts" + 1,
+      "blocked_until" = CASE
+        WHEN "attempts" + 1 >= "max_attempts"
+          THEN timezone('UTC', ${blockedUntil}::timestamptz)
+        ELSE "blocked_until"
+      END
+    WHERE "id" = ${otp.id}
+      AND "verified_at" IS NULL
+      AND "expires_at" > timezone('UTC', CURRENT_TIMESTAMP)
+      AND "attempts" < "max_attempts"
+    RETURNING "attempts", "max_attempts", "blocked_until"
+  `;
+
+  if (!updated[0]) return;
+
+  const attempts = updated[0].attempts;
+  const shouldBlock = attempts >= updated[0].max_attempts;
 
   await recordAudit({
     actor_id: otp.user_id,
@@ -1135,14 +1370,6 @@ async function handleFailedOtp(otp: {
     entity_type: 'phone',
     entity_id: otp.phone,
     metadata: { purpose: otp.purpose, attempts },
-  });
-
-  await prisma.otpCode.update({
-    where: { id: otp.id },
-    data: {
-      attempts,
-      blocked_until: shouldBlock ? new Date(Date.now() + OTP_BLOCK_MS) : null,
-    },
   });
 
   if (shouldBlock) {
@@ -1164,30 +1391,34 @@ async function buildTokenResponse(userId: string, role: string, ip?: string) {
     include: { worker: true, company: true, admin: true },
   });
 
-  if (!user.is_active || user.deleted_at) {
-    throw Errors.forbidden('Hesab aktiv deyil.', 'ACCOUNT_INACTIVE');
-  }
+  assertUserCanAuthenticate(user, role, user.session_version);
 
-  if (user.role !== role) {
-    throw Errors.unauthorized('Sessiya yenilənməlidir.', 'SESSION_INVALID');
-  }
-
-  if (role === 'worker') assertWorkerCanLogin(user.worker?.status);
-  if (role === 'company') assertCompanyCanLogin(user.company?.status);
-
-  const accessToken = signAccessToken({ sub: userId, role });
-  const refreshToken = signRefreshToken({ sub: userId, role });
-
-  const refreshExpiresAt = getTokenExpiration(refreshToken);
+  const accessToken = signAccessToken({
+    sub: userId,
+    role,
+    session_version: user.session_version,
+  });
+  const refreshToken = signRefreshToken({
+    sub: userId,
+    role,
+    session_version: user.session_version,
+  });
+  const refreshPayload = verifyRefreshToken(refreshToken);
   await prisma.refreshToken.create({
     data: {
       user_id: userId,
       token_hash: sha256(refreshToken),
-      expires_at: refreshExpiresAt,
+      jti: refreshPayload.jti,
+      family_id: refreshPayload.family_id!,
+      expires_at: getTokenExpiration(refreshToken),
       created_by_ip: ip,
     },
   });
 
+  return tokenResponse(user, accessToken, refreshToken);
+}
+
+function tokenResponse(user: AuthUser, accessToken: string, refreshToken: string) {
   return {
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -1211,14 +1442,56 @@ async function buildTokenResponse(userId: string, role: string, ip?: string) {
 }
 
 async function revokeUserSessions(tx: Prisma.TransactionClient, userId: string, now: Date): Promise<void> {
+  await tx.user.update({
+    where: { id: userId },
+    data: { session_version: { increment: 1 } },
+  });
   await tx.refreshToken.updateMany({
     where: { user_id: userId, revoked_at: null },
-    data: { revoked_at: now },
+    data: { revoked_at: now, revoked_reason: 'password_change' },
   });
   await tx.deviceToken.updateMany({
     where: { user_id: userId, revoked_at: null },
     data: { revoked_at: now, deleted_at: now },
   });
+}
+
+async function revokeTokenFamily(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  familyId: string,
+  now: Date,
+  reason: 'reuse_detected' | 'logout'
+): Promise<void> {
+  await tx.refreshToken.updateMany({
+    where: {
+      user_id: userId,
+      family_id: familyId,
+      revoked_at: null,
+    },
+    data: {
+      revoked_at: now,
+      revoked_reason: reason,
+    },
+  });
+}
+
+function assertUserCanAuthenticate(
+  user: AuthUser,
+  role: string,
+  expectedSessionVersion: number
+): void {
+  if (!user.is_active || user.deleted_at) {
+    throw Errors.forbidden('Hesab aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
+  if (user.role !== role) {
+    throw Errors.unauthorized('Sessiya yenilənməlidir.', 'SESSION_INVALID');
+  }
+  if (user.session_version !== expectedSessionVersion) {
+    throw Errors.unauthorized('Sessiya ləğv edilib.', 'SESSION_REVOKED');
+  }
+  if (role === 'worker') assertWorkerCanLogin(user.worker?.status);
+  if (role === 'company') assertCompanyCanLogin(user.company?.status);
 }
 
 function assertWorkerCanLogin(status?: WorkerStatus): void {

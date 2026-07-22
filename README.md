@@ -133,13 +133,14 @@ cp .env.example .env
 Minimum development values:
 
 ```env
-DATABASE_URL="postgresql://postgres:postgres@localhost:5433/hireapp?schema=public"
-JWT_SECRET="change-this-to-a-secure-random-string-min-32-chars"
-QR_HMAC_SECRET="change-this-too-min-32-chars"
+DATABASE_URL="<database-url>"
+JWT_ACCESS_SECRET="<secret-reference>"
+JWT_REFRESH_SECRET="<secret-reference>"
+QR_HMAC_SECRET="<secret-reference>"
 QR_TOKEN_TTL_SECONDS="300"
-OTP_TEST_MODE="true"
-OTP_TEST_CODE="123456"
-OTP_LOG_CODES="true"
+OTP_TEST_MODE="false"
+OTP_TEST_CODE=""
+OTP_LOG_CODES="false"
 ```
 
 See [ENV_SETUP.md](./ENV_SETUP.md) for the full environment reference.
@@ -162,8 +163,11 @@ Company:     +994700000002
 Worker:      +994700000003 approved
 Worker:      +994700000004 pending approval
 Worker:      +994700000005 rejected
-Test OTP:    123456
 ```
+
+OTP codes are generated randomly in development and production. A fixed OTP can
+only be enabled for an isolated test process with `NODE_ENV=test`,
+`OTP_TEST_MODE=true`, and an explicit six-digit `OTP_TEST_CODE`.
 
 ### 5. Run Development Server
 
@@ -185,12 +189,20 @@ Swagger: http://localhost:3000/docs
 npm run dev
 npm run build
 npm run start
+npm run start:api
+npm run start:outbox
 npm run typecheck
 npm run db:migrate
 npm run db:seed
 npm run db:studio
 npm run smoke:mvp
 ```
+
+Production runs the API and durable outbox processor as two separately supervised
+services. Set `OUTBOX_WORKER_ENABLED=false` on the API, start it with
+`npm run start:api`, and run at least one `npm run start:outbox` replica. The API
+readiness probe stays unavailable until the worker publishes a fresh Redis
+heartbeat; the worker exposes `/health` and `/metrics` on port `3001` by default.
 
 ## MVP Smoke Test
 
@@ -199,6 +211,9 @@ Run with the API server already running:
 ```bash
 BASE_URL=http://localhost:3000 TEST_OTP=123456 npm run smoke:mvp
 ```
+
+`TEST_OTP` must match the API's explicitly configured test code. Fixed-code smoke
+tests require the API itself to run with `NODE_ENV=test` and `OTP_TEST_MODE=true`.
 
 PowerShell:
 
@@ -281,6 +296,10 @@ Auth -> Worker Approval -> Company Order -> Admin Assignment -> Worker Accept ->
 - `PATCH /v1/orders/:id/cancel`
 
 Orders now support multi-position staffing requirements through `category_items` with `department_id`, `subdepartment_id`, and `position_id`, for example 3 waiters and 2 bartenders in a single order. Legacy `category` + `required_count` requests remain supported.
+
+Production clients should send an `Idempotency-Key` header with `POST /v1/orders`. Replaying the same key and body returns the original order with `Idempotency-Replayed: true`; reusing the key with another body returns `409 IDEMPOTENCY_KEY_REUSED`.
+
+Order cancellation is transactional. It cancels active assignments, revokes kiosk sessions, and records durable notification/outbox events together. Completed orders return `400 ORDER_ALREADY_COMPLETED`, a second cancellation returns `409 ORDER_ALREADY_CANCELLED`, and an open attendance session returns `409 ORDER_HAS_ACTIVE_ATTENDANCE`.
 
 ### Assignments
 
@@ -376,3 +395,4 @@ Reports include dashboard counts, worker work counts, attendance totals, company
 - [POSTMAN_TESTING.md](./POSTMAN_TESTING.md)
 - [ENV_SETUP.md](./ENV_SETUP.md)
 - [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)
+- [CONTAINER_DEPLOYMENT.md](./CONTAINER_DEPLOYMENT.md)

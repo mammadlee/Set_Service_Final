@@ -43,7 +43,6 @@ export interface AuthUser {
 
 export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
   user: AuthUser;
 }
 

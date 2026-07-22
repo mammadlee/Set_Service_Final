@@ -6,17 +6,75 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
+  release-inputs:
+    name: Immutable release inputs
+    runs-on: ubuntu-latest
+    env:
+      NODE_BASE_IMAGE: ${{ vars.NODE_BASE_IMAGE }}
+      POSTGRES_CI_IMAGE: ${{ vars.POSTGRES_CI_IMAGE }}
+      REDIS_CI_IMAGE: ${{ vars.REDIS_CI_IMAGE }}
+    outputs:
+      node-base-image: ${{ steps.images.outputs.node-base-image }}
+      postgres-ci-image: ${{ steps.images.outputs.postgres-ci-image }}
+      redis-ci-image: ${{ steps.images.outputs.redis-ci-image }}
+    steps:
+      - name: Require immutable official CI images
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(NODE_BASE_IMAGE POSTGRES_CI_IMAGE REDIS_CI_IMAGE)
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Missing required immutable image variables: %s\n' \
+              "$(IFS=,; echo "${missing[*]}")"
+            exit 1
+          fi
+
+          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:20\.19\.4-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::NODE_BASE_IMAGE must be the official Node 20.19.4 bookworm-slim image pinned to a full sha256 digest."
+            exit 1
+          fi
+          if [[ ! "$POSTGRES_CI_IMAGE" =~ ^postgres:16(\.[0-9]+){1,2}-bookworm@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::POSTGRES_CI_IMAGE must be an official fully-versioned Postgres 16 bookworm image pinned to a full sha256 digest."
+            exit 1
+          fi
+          if [[ ! "$REDIS_CI_IMAGE" =~ ^redis:7(\.[0-9]+){2}-alpine([0-9]+\.[0-9]+)?@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::REDIS_CI_IMAGE must be an official fully-versioned Redis 7 alpine image pinned to a full sha256 digest."
+            exit 1
+          fi
+
+          {
+            echo "node-base-image=$NODE_BASE_IMAGE"
+            echo "postgres-ci-image=$POSTGRES_CI_IMAGE"
+            echo "redis-ci-image=$REDIS_CI_IMAGE"
+          } >> "$GITHUB_OUTPUT"
+
   backend:
     name: Backend API
     runs-on: ubuntu-latest
+    needs: release-inputs
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:ci-postgres-password@localhost:5432/setservice_test?schema=public
+      DIRECT_URL: postgresql://postgres:ci-postgres-password@localhost:5432/setservice_test?schema=public
       REDIS_URL: redis://localhost:6379
-      JWT_SECRET: ci-jwt-secret-123456789012345678901234567890
-      QR_HMAC_SECRET: ci-qr-secret-123456789012345678901234567890
-      OTP_PEPPER: ci-otp-pepper-123456789012345678901234567890
+      JWT_ACCESS_SECRET: "ci-Ax7mQ2vL9pR4tW8yK3nD6sF1hJ5cB0uZ"
+      JWT_REFRESH_SECRET: "ci-H6qN1zV8cM3rT7wP2kD9sL4yF0bJ5xGa"
+      JWT_ISSUER: set-service-ci
+      JWT_AUDIENCE: set-service-ci-clients
+      QR_HMAC_SECRET: "ci-Q4wB9mK2xT7pD1vL8sN5cR0yH6jF3zUa"
+      KIOSK_TOKEN_ENCRYPTION_SECRET: "ci-K8tR3vN7qL2xF9mD4wH1sB6yP0cJ5zGa"
+      OTP_PEPPER: "ci-P5yD0mV8kR3tN7xQ1wL6cH9sF2jB4zUa"
       OTP_TEST_MODE: "true"
       OTP_TEST_CODE: "123456"
       OTP_LOG_CODES: "false"
@@ -24,22 +82,24 @@ jobs:
       STORAGE_PROVIDER: local
       PUSH_NOTIFICATIONS_ENABLED: "false"
       CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+      OUTBOX_WORKER_ENABLED: "false"
+      OUTBOX_HEALTH_PORT: "3001"
     services:
       postgres:
-        image: postgres:16
+        image: ${{ needs.release-inputs.outputs.postgres-ci-image }}
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: setservice
+          POSTGRES_PASSWORD: ci-postgres-password
+          POSTGRES_DB: setservice_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d setservice"
+          --health-cmd "pg_isready -U postgres -d setservice_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: ${{ needs.release-inputs.outputs.redis-ci-image }}
         ports:
           - 6379:6379
         options: >-
@@ -50,16 +110,28 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 20.19.4
           cache: npm
+
+      - name: Secret scan
+        run: npm run secrets:check
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Migration toolchain and full dependency audit
+        run: npm audit --audit-level=high
 
       - name: Prisma validate
         run: npx prisma validate
@@ -67,20 +139,54 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Auth token and OTP security regression
+        run: npm run test:auth-security
+
+      - name: Worker document and PATCH security regression
+        run: npm run test:worker-security
+
+      - name: Backend and release security regression suite
+        run: |
+          npm run test:backend-access
+          npm run test:backend-infrastructure
+          npm run test:audit-transactions
+          npm run test:approval-document-security
+          npm run test:privacy-deletion
+          npm run test:provider-delivery
+          npm run test:document-backfill
+          npm run test:seed-security
+          npm run test:release-runbooks
+          npm run test:dependency-policy
+          npm run test:release-security
+          npm run swagger:security
+
       - name: Production env validation
         env:
           NODE_ENV: production
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
-          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/setservice?schema=public
+          DATABASE_URL: postgresql://postgres:ci-postgres-password@localhost:5432/setservice_test?schema=public
+          DIRECT_URL: postgresql://postgres:ci-postgres-password@localhost:5432/setservice_test?schema=public
           REDIS_URL: redis://localhost:6379
-          JWT_SECRET: ci-jwt-secret-123456789012345678901234567890
-          QR_HMAC_SECRET: ci-qr-secret-123456789012345678901234567890
-          OTP_PEPPER: ci-otp-pepper-123456789012345678901234567890
+          JWT_ACCESS_SECRET: "ci-Ax7mQ2vL9pR4tW8yK3nD6sF1hJ5cB0uZ"
+          JWT_REFRESH_SECRET: "ci-H6qN1zV8cM3rT7wP2kD9sL4yF0bJ5xGa"
+          JWT_ISSUER: set-service-ci
+          JWT_AUDIENCE: set-service-ci-clients
+          QR_HMAC_SECRET: "ci-Q4wB9mK2xT7pD1vL8sN5cR0yH6jF3zUa"
+          KIOSK_TOKEN_ENCRYPTION_SECRET: "ci-K8tR3vN7qL2xF9mD4wH1sB6yP0cJ5zGa"
+          OTP_PEPPER: "ci-P5yD0mV8kR3tN7xQ1wL6cH9sF2jB4zUa"
+          PROVIDER_OUTBOX_ENCRYPTION_SECRET: "ci-O7mC2xK9vR4tL8qD1wN6sH3yF0bJ5zUa"
+          OUTBOX_WORKER_ENABLED: "false"
+          OUTBOX_HEARTBEAT_TTL_SECONDS: "30"
+          OUTBOX_MAX_CONSECUTIVE_FAILURES: "5"
+          SWAGGER_DOCS_ENABLED: "false"
           CORS_ORIGINS: https://admin.example.com,https://company.example.com
           SMS_PROVIDER: generic_http
           SMS_API_URL: https://sms.example.test/send
           SMS_API_KEY: ci-sms-api-key-12345678901234567890
           SMS_FROM: SET Service
+          EMAIL_PROVIDER: generic_http
+          EMAIL_API_URL: https://email.example.test/send
+          EMAIL_API_KEY: ci-email-api-key-12345678901234567890
+          EMAIL_FROM: no-reply@example.test
           OTP_TEST_MODE: "false"
           OTP_LOG_CODES: "false"
           STORAGE_PROVIDER: s3
@@ -89,6 +195,10 @@ jobs:
           S3_ACCESS_KEY_ID: ci-s3-access-key
           S3_SECRET_ACCESS_KEY: ci-s3-secret-access-key
           STORAGE_PUBLIC_BASE_URL: https://cdn.example.com
+          STORAGE_SIGNED_URL_TTL_SECONDS: "300"
+          MALWARE_SCANNER_PROVIDER: http
+          MALWARE_SCAN_REQUIRED: "true"
+          MALWARE_SCANNER_URL: https://scanner.example.test/scan
         run: npx ts-node -e "import { checkEnv } from './src/lib/check-env'; checkEnv();"
 
       - name: Build
@@ -96,6 +206,9 @@ jobs:
 
       - name: Swagger parse check
         run: npm run swagger:check
+
+      - name: Swagger runtime drift check
+        run: npm run swagger:drift
 
       - name: Prepare smoke credentials
         run: |
@@ -124,37 +237,67 @@ jobs:
       - name: Apply migrations
         run: npm run db:migrate:deploy
 
+      - name: Migration status
+        run: npx prisma migrate status
+
+      - name: Migration/schema drift gate
+        run: npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: Auth sessions and OTP concurrency regression
+        env:
+          AUTH_SECURITY_INTEGRATION_CONFIRM: "1"
+        run: npm run test:auth-security
+
       - name: Seed smoke database
         run: npm run db:seed
+
+      - name: Order idempotency and cancellation regression
+        env:
+          ORDER_HARDENING_TEST_CONFIRM: "1"
+        run: npm run test:orders-hardening
+
+      - name: Order, assignment and attendance lifecycle concurrency regression
+        env:
+          LIFECYCLE_CONCURRENCY_TEST_CONFIRM: "1"
+        run: npm run test:lifecycle-concurrency
 
       - name: MVP smoke
         run: |
           set -euo pipefail
+          node dist/outbox-worker.js > outbox.log 2>&1 &
+          OUTBOX_PID=$!
           node dist/index.js > api.log 2>&1 &
           API_PID=$!
-          trap 'kill "$API_PID" 2>/dev/null || true' EXIT
+          trap 'kill "$API_PID" "$OUTBOX_PID" 2>/dev/null || true' EXIT
           for i in {1..30}; do
-            if curl -fsS http://localhost:3000/health >/dev/null; then
+            if curl -fsS http://localhost:3001/health >/dev/null \
+              && curl -fsS http://localhost:3000/ready >/dev/null; then
               npm run smoke:mvp
               exit 0
             fi
             sleep 1
           done
           cat api.log
+          cat outbox.log
           exit 1
 
   admin-panel:
     name: Admin Panel
     runs-on: ubuntu-latest
+    env:
+      VITE_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || vars.PRODUCTION_API_BASE_URL }}
+      VITE_KIOSK_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://kiosk.ci.setservice.az' || vars.PRODUCTION_KIOSK_BASE_URL }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 20.19.4
           cache: npm
           cache-dependency-path: apps/admin_panel/package-lock.json
 
@@ -162,6 +305,22 @@ jobs:
         working-directory: apps/admin_panel
         run: npm ci
 
+      - name: Production dependency audit
+        working-directory: apps/admin_panel
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Full dependency audit including build tooling
+        working-directory: apps/admin_panel
+        run: npm audit --audit-level=high
+
+      - name: Release environment regression
+        working-directory: apps/admin_panel
+        run: npm run test:release-config
+
+      - name: Web security regression
+        working-directory: apps/admin_panel
+        run: npm run test:security
+
       - name: Typecheck
         working-directory: apps/admin_panel
         run: npm run typecheck
@@ -170,18 +329,30 @@ jobs:
         working-directory: apps/admin_panel
         run: npm run build
 
+      - name: Upload admin panel artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: admin-panel-${{ github.event_name == 'pull_request' && 'pr-check' || 'production' }}-${{ github.sha }}
+          path: apps/admin_panel/dist
+          if-no-files-found: error
+          retention-days: 14
+
   company-dashboard:
     name: Company Dashboard
     runs-on: ubuntu-latest
+    env:
+      VITE_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || vars.PRODUCTION_API_BASE_URL }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 20.19.4
           cache: npm
           cache-dependency-path: apps/company_dashboard/package-lock.json
 
@@ -189,6 +360,22 @@ jobs:
         working-directory: apps/company_dashboard
         run: npm ci
 
+      - name: Production dependency audit
+        working-directory: apps/company_dashboard
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Full dependency audit including build tooling
+        working-directory: apps/company_dashboard
+        run: npm audit --audit-level=high
+
+      - name: Release environment regression
+        working-directory: apps/company_dashboard
+        run: npm run test:release-config
+
+      - name: Web security regression
+        working-directory: apps/company_dashboard
+        run: npm run test:security
+
       - name: Typecheck
         working-directory: apps/company_dashboard
         run: npm run typecheck
@@ -197,19 +384,215 @@ jobs:
         working-directory: apps/company_dashboard
         run: npm run build
 
+      - name: Upload company dashboard artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: company-dashboard-${{ github.event_name == 'pull_request' && 'pr-check' || 'production' }}-${{ github.sha }}
+          path: apps/company_dashboard/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  qr-kiosk:
+    name: QR Kiosk Web
+    runs-on: ubuntu-latest
+    env:
+      VITE_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || vars.PRODUCTION_API_BASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.19.4
+          cache: npm
+          cache-dependency-path: apps/qr_kiosk/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/qr_kiosk
+        run: npm ci
+
+      - name: Production dependency audit
+        working-directory: apps/qr_kiosk
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Full dependency audit including build tooling
+        working-directory: apps/qr_kiosk
+        run: npm audit --audit-level=high
+
+      - name: Release environment regression
+        working-directory: apps/qr_kiosk
+        run: npm run test:release-config
+
+      - name: Web security regression
+        working-directory: apps/qr_kiosk
+        run: npm run test:security
+
+      - name: Typecheck
+        working-directory: apps/qr_kiosk
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: apps/qr_kiosk
+        run: npm run build
+
+      - name: Upload QR kiosk artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qr-kiosk-${{ github.event_name == 'pull_request' && 'pr-check' || 'production' }}-${{ github.sha }}
+          path: apps/qr_kiosk/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  container-security:
+    name: Container build, SBOM and scan
+    runs-on: ubuntu-latest
+    needs: [release-inputs, backend]
+    env:
+      NODE_BASE_IMAGE: ${{ needs.release-inputs.outputs.node-base-image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Require immutable official Node base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_BASE_IMAGE:-}" ]]; then
+            echo "::error::Repository variable NODE_BASE_IMAGE is required."
+            exit 1
+          fi
+          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:20\.19\.4-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::NODE_BASE_IMAGE must be node:20.19.4-bookworm-slim pinned to a full sha256 digest."
+            exit 1
+          fi
+
+      - name: Build production release targets
+        run: |
+          docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target api --tag setservice-api:${{ github.sha }} .
+          docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target outbox-worker --tag setservice-outbox:${{ github.sha }} .
+          docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target migration --tag setservice-migration:${{ github.sha }} .
+
+      - name: Verify non-root runtime metadata
+        run: |
+          for image in \
+            setservice-api:${{ github.sha }} \
+            setservice-outbox:${{ github.sha }} \
+            setservice-migration:${{ github.sha }}
+          do
+            test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "node"
+            docker image inspect --format '{{json .Config.Entrypoint}}' "$image" | grep -q "dumb-init"
+          done
+          docker image inspect --format '{{json .Config.Healthcheck.Test}}' \
+            setservice-api:${{ github.sha }} | grep -q "/health"
+          docker image inspect --format '{{json .Config.Healthcheck.Test}}' \
+            setservice-outbox:${{ github.sha }} | grep -q "/health"
+          docker run --rm --entrypoint node setservice-migration:${{ github.sha }} -e "
+            require.resolve('prisma');
+            for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
+              try {
+                require.resolve(dependency);
+                throw new Error(dependency + ' must not be present in the migration image');
+              } catch (error) {
+                if (error && error.code !== 'MODULE_NOT_FOUND') throw error;
+              }
+            }
+          "
+
+      - name: Generate API SPDX SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.6
+        with:
+          image: setservice-api:${{ github.sha }}
+          format: spdx-json
+          output-file: setservice-api.spdx.json
+          upload-artifact: false
+
+      - name: Generate outbox SPDX SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.6
+        with:
+          image: setservice-outbox:${{ github.sha }}
+          format: spdx-json
+          output-file: setservice-outbox.spdx.json
+          upload-artifact: false
+
+      - name: Generate migration SPDX SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.6
+        with:
+          image: setservice-migration:${{ github.sha }}
+          format: spdx-json
+          output-file: setservice-migration.spdx.json
+          upload-artifact: false
+
+      - name: Scan API image
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.28.0
+        with:
+          image-ref: setservice-api:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+
+      - name: Scan outbox image
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.28.0
+        with:
+          image-ref: setservice-outbox:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+
+      - name: Scan migration image
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.28.0
+        with:
+          image-ref: setservice-migration:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setservice-release-sboms-${{ github.sha }}
+          path: |
+            setservice-api.spdx.json
+            setservice-outbox.spdx.json
+            setservice-migration.spdx.json
+          if-no-files-found: error
+          retention-days: 30
+
   worker-app:
     name: Worker Flutter App
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js for release configuration validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.19.4
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
-          channel: stable
+          flutter-version: 3.32.6
           cache: true
+
+      - name: Clean
+        working-directory: apps/worker_app
+        run: flutter clean
 
       - name: Install dependencies
         working-directory: apps/worker_app
@@ -223,6 +606,161 @@ jobs:
         working-directory: apps/worker_app
         run: flutter test
 
+      - name: Build Flutter web release
+        working-directory: apps/worker_app
+        run: >-
+          flutter build web --release
+          --dart-define=APP_ENV=staging
+          --dart-define=BASE_URL=https://api.ci.setservice.az
+
       - name: Build debug APK
         working-directory: apps/worker_app
         run: flutter build apk --debug
+
+      - name: Verify Android release signing fails closed without credentials
+        working-directory: apps/worker_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if env \
+            -u ANDROID_KEYSTORE_PATH \
+            -u ANDROID_KEYSTORE_PASSWORD \
+            -u ANDROID_KEY_ALIAS \
+            -u ANDROID_KEY_PASSWORD \
+            flutter build appbundle --release \
+              --dart-define=APP_ENV=staging \
+              --dart-define=BASE_URL=https://api.ci.setservice.az \
+              > release-signing-check.log 2>&1
+          then
+            echo "Unsigned release build unexpectedly succeeded."
+            exit 1
+          fi
+          grep -q "Release signing is not configured" release-signing-check.log
+
+      - name: Build required signed staging Android AAB
+        if: github.event_name != 'pull_request'
+        working-directory: apps/worker_app
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+          STAGING_API_BASE_URL: ${{ secrets.STAGING_API_BASE_URL }}
+        run: |
+          set -euo pipefail
+          REQUIRED_RELEASE_VALUES=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+            ANDROID_GOOGLE_SERVICES_JSON_BASE64
+            STAGING_API_BASE_URL
+          )
+          MISSING_RELEASE_VALUES=()
+          for name in "${REQUIRED_RELEASE_VALUES[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              MISSING_RELEASE_VALUES+=("$name")
+            fi
+          done
+          if (( ${#MISSING_RELEASE_VALUES[@]} > 0 )); then
+            printf '::error::Missing required Android release configuration: %s\n' \
+              "$(IFS=,; echo "${MISSING_RELEASE_VALUES[*]}")"
+            exit 1
+          fi
+
+          node ../../scripts/validate-web-env.mjs worker
+
+          KEYSTORE_PATH="$RUNNER_TEMP/setservice-release.jks"
+          GOOGLE_SERVICES_PATH="$PWD/android/app/google-services.json"
+          cleanup_release_files() {
+            rm -f -- "$KEYSTORE_PATH" "$GOOGLE_SERVICES_PATH"
+          }
+          trap cleanup_release_files EXIT
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" \
+            | base64 --decode > "$GOOGLE_SERVICES_PATH"
+          test -s "$KEYSTORE_PATH"
+          test -s "$GOOGLE_SERVICES_PATH"
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            >/dev/null
+          node - "$GOOGLE_SERVICES_PATH" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const configPath = process.argv[2];
+          const config = JSON.parse(readFileSync(configPath, 'utf8'));
+          const projectId = config?.project_info?.project_id;
+          const packages = Array.isArray(config?.client)
+            ? config.client.map(
+                (client) => client?.client_info?.android_client_info?.package_name,
+              )
+            : [];
+          if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+            throw new Error('google-services.json is missing project_info.project_id.');
+          }
+          if (!packages.includes('az.setservice.worker_app')) {
+            throw new Error(
+              'google-services.json does not contain az.setservice.worker_app.',
+            );
+          }
+          NODE
+          export ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH"
+          flutter build appbundle --release \
+            --dart-define=APP_ENV=staging \
+            --dart-define=BASE_URL="$STAGING_API_BASE_URL"
+
+      - name: Upload signed staging AAB
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setservice-worker-staging-aab-${{ github.sha }}
+          path: apps/worker_app/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
+  worker-ios:
+    name: Worker iOS unsigned release gate
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      STAGING_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || secrets.STAGING_API_BASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js for release configuration validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.19.4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.32.6
+          cache: true
+
+      - name: Clean
+        working-directory: apps/worker_app
+        run: flutter clean
+
+      - name: Install dependencies
+        working-directory: apps/worker_app
+        run: flutter pub get
+
+      - name: Validate iOS release API configuration
+        working-directory: apps/worker_app
+        run: node ../../scripts/validate-web-env.mjs worker
+
+      - name: Build unsigned iOS release
+        working-directory: apps/worker_app
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=APP_ENV=staging
+          --dart-define=BASE_URL="$STAGING_API_BASE_URL"

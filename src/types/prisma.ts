@@ -26,7 +26,15 @@ export type OtpPurpose =
   | 'company_login'
   | 'company_password_reset'
   | 'admin_login';
-export type OrderStatus = 'draft' | 'active' | 'completed' | 'cancelled';
+export type OrderStatus =
+  | 'draft'
+  | 'active'
+  | 'published'
+  | 'partially_assigned'
+  | 'assigned'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled';
 export type AssignmentStatus = 'assigned' | 'accepted' | 'rejected' | 'completed' | 'cancelled';
 export type NotificationType =
   | 'worker_approved'

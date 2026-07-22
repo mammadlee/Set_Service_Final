@@ -20,6 +20,11 @@ class KioskSessionResult {
   final int refreshIntervalSeconds;
 
   factory KioskSessionResult.fromJson(Map<String, dynamic> json) {
+    final kioskUrl = json['kiosk_url'] as String? ?? '';
+    if (!isSecureKioskUrl(kioskUrl)) {
+      throw const FormatException('Kiosk URL must use HTTPS.');
+    }
+
     return KioskSessionResult(
       id: json['id'] as String? ?? '',
       assignmentId: json['assignment_id'] as String? ?? '',
@@ -27,8 +32,17 @@ class KioskSessionResult {
       orderTitle: json['order_title'] as String? ?? '',
       companyName: json['company_name'] as String? ?? '',
       kioskToken: json['kiosk_token'] as String? ?? '',
-      kioskUrl: json['kiosk_url'] as String? ?? '',
+      kioskUrl: kioskUrl,
       refreshIntervalSeconds: json['refresh_interval_seconds'] as int? ?? 30,
     );
+  }
+
+  static bool isSecureKioskUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    return uri != null &&
+        uri.isAbsolute &&
+        uri.scheme.toLowerCase() == 'https' &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty;
   }
 }

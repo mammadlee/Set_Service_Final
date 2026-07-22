@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "test:release-config": "node --test ../../scripts/validate-web-env.test.mjs",
+    "test:security": "node --test ../../scripts/web-security-regression.test.mjs",
+    "prebuild": "node ../../scripts/validate-web-env.mjs admin",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
@@ -14,7 +17,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "~6.0.2",
-    "vite": "^8.0.12"
+    "vite": "^8.1.5"
   },
   "dependencies": {
     "clsx": "^2.1.1",

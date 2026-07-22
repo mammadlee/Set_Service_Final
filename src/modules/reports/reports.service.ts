@@ -219,11 +219,35 @@ export async function getCompanyReportSummary(userId: string, filters: ReportQue
     throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   }
 
+  if (filters.worker_id) {
+    await assertCompanyWorkerReportAccess(company.id, filters.worker_id);
+  }
+
   const { foc_training: _focTraining, ...companyVisibleFilters } = filters;
   return getAdminReportSummary({
     ...companyVisibleFilters,
     company_id: company.id,
   });
+}
+
+async function assertCompanyWorkerReportAccess(
+  companyId: string,
+  workerId: string,
+): Promise<void> {
+  const relationship = await prisma.assignment.findFirst({
+    where: {
+      worker_id: workerId,
+      deleted_at: null,
+      order: {
+        company_id: companyId,
+        deleted_at: null,
+      },
+    },
+    select: { id: true },
+  });
+  if (!relationship) {
+    throw Errors.notFound('Worker report was not found.', 'REPORT_WORKER_NOT_FOUND');
+  }
 }
 
 async function buildWorkerDetail(

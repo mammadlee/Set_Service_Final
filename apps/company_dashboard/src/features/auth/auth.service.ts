@@ -5,7 +5,7 @@ import { appStrings } from '../../shared/i18n/appStrings';
 
 export const authService = {
   async loginCompany(email: string, password: string) {
-    const result = await apiRequest<TokenResponse>('/auth/company/login', {
+    const result = await apiRequest<TokenResponse>('/auth/company/web-login', {
       method: 'POST',
       body: { email, password },
       auth: false,
@@ -18,20 +18,16 @@ export const authService = {
       throw new Error(appStrings.auth.notApproved);
     }
 
-    tokenStore.setTokens(result.access_token, result.refresh_token);
+    tokenStore.setAccessToken(result.access_token);
     return result;
   },
 
   async logout() {
-    const refreshToken = tokenStore.getRefreshToken();
     try {
-      if (refreshToken) {
-        await apiRequest<void>('/auth/logout', {
-          method: 'POST',
-          body: { refresh_token: refreshToken },
-          retry: false,
-        });
-      }
+      await apiRequest<void>('/auth/company/web-logout', {
+        method: 'POST',
+        retry: false,
+      });
     } finally {
       tokenStore.clear();
     }

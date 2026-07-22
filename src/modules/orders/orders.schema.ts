@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-export const ORDER_STATUSES = ['draft', 'active', 'completed', 'cancelled'] as const;
+export const ORDER_STATUSES = [
+  'draft',
+  'active',
+  'published',
+  'partially_assigned',
+  'assigned',
+  'in_progress',
+  'completed',
+  'cancelled',
+] as const;
 const DUPLICATE_CATEGORY_MESSAGE = 'Eyni kateqoriya bir sifarişdə təkrar seçilə bilməz.';
 
 const optionalTrimmedString = (max: number) =>
@@ -103,9 +112,17 @@ export const OrderIdParamsSchema = z.object({
   id: z.string().uuid(),
 });
 
+export const IdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(200)
+  .regex(/^[A-Za-z0-9._:-]+$/, 'Idempotency-Key contains unsupported characters');
+
 export const CancelOrderSchema = z
   .object({
     reason: optionalTrimmedString(500),
+    expected_version: z.coerce.number().int().positive().optional(),
   })
   .strict()
   .default({});

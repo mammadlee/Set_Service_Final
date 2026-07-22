@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
-import { sendPushToRole } from '../../lib/fcm';
+import { ORDER_IDEMPOTENCY_TTL_MS } from '../../lib/idempotency';
 import { Role } from '../../types/prisma';
 import {
   CancelOrderInput,
@@ -8,9 +9,12 @@ import {
   ListOrdersQueryInput,
 } from './orders.schema';
 import * as OrdersRepository from './orders.repository';
+import { assertOrderTransition } from './orders.state-machine';
 import * as TaxonomyService from '../taxonomy/taxonomy.service';
 
 type OrderRecord = NonNullable<Awaited<ReturnType<typeof OrdersRepository.findOrderById>>>;
+type OrderListRecord = Awaited<ReturnType<typeof OrdersRepository.listOrders>>['data'][number];
+type OrderResponseSource = OrderRecord | OrderListRecord;
 type CompanyRecord = NonNullable<Awaited<ReturnType<typeof OrdersRepository.findCompanyByUserId>>>;
 type OrderCategoryItemSummarySource = {
   id: string | null;
@@ -132,7 +136,7 @@ export async function listOrders(userId: string, roleValue: string, filters: Lis
   });
 
   return {
-    data: data.map(toOrderResponse),
+    data: data.map((order) => toOrderResponse(order)),
     meta: {
       page: filters.page,
       limit: filters.limit,
@@ -142,7 +146,12 @@ export async function listOrders(userId: string, roleValue: string, filters: Lis
   };
 }
 
-export async function createOrder(userId: string, roleValue: string, input: CreateOrderInput) {
+export async function createOrder(
+  userId: string,
+  roleValue: string,
+  input: CreateOrderInput,
+  idempotencyKey?: string
+) {
   const role = parseRole(roleValue);
   if (role !== 'company') {
     throw Errors.forbidden('Only approved companies can create orders.', 'ROLE_FORBIDDEN');
@@ -152,26 +161,26 @@ export async function createOrder(userId: string, roleValue: string, input: Crea
   const company = await getApprovedCompanyForUser(userId);
   const orderInput = await normalizeOrderInput(input);
 
-  const order = await OrdersRepository.createOrderWithSideEffects({
+  const result = await OrdersRepository.createOrderWithSideEffects({
     actorId: userId,
     actorRole: role,
     companyId: company.id,
     companyName: company.name,
     order: orderInput,
+    idempotency: idempotencyKey
+      ? {
+          actorId: userId,
+          scope: 'orders.create',
+          key: idempotencyKey,
+          requestHash: hashOrderRequest(orderInput),
+          expiresAt: new Date(Date.now() + ORDER_IDEMPOTENCY_TTL_MS),
+        }
+      : undefined,
+    buildResponse: (order) =>
+      JSON.parse(JSON.stringify(toOrderResponse(order))) as Prisma.InputJsonValue,
   });
 
-  await sendPushToRole('super_admin', {
-    title: 'Yeni sifariş yaradıldı',
-    body: `${company.name} "${input.title}" sifarişini yaratdı.`,
-    data: {
-      type: 'order_created',
-      order_id: order.id,
-      company_id: company.id,
-      role: 'super_admin',
-    },
-  });
-
-  return toOrderResponse(order);
+  return { response: result.response, replayed: result.replayed };
 }
 
 export async function getOrder(id: string, userId: string, roleValue: string) {
@@ -201,12 +210,20 @@ export async function cancelOrder(id: string, userId: string, roleValue: string,
   const order = await OrdersRepository.findOrderByIdForCompany(id, company.id);
   if (!order) throw Errors.notFound('Order not found.', 'ORDER_NOT_FOUND');
 
+  if (input.expected_version !== undefined && input.expected_version !== order.version) {
+    throw Errors.conflict(
+      'Order version is stale. Refresh the order and retry.',
+      'ORDER_VERSION_CONFLICT',
+      { expected_version: input.expected_version, current_version: order.version },
+    );
+  }
   if (order.status === 'cancelled') {
     throw Errors.conflict('Order is already cancelled.', 'ORDER_ALREADY_CANCELLED');
   }
   if (order.status === 'completed') {
     throw Errors.badRequest('Completed orders cannot be cancelled.', 'ORDER_ALREADY_COMPLETED');
   }
+  assertOrderTransition(order.status, 'cancelled');
 
   const updated = await OrdersRepository.cancelCompanyOrderWithAudit({
     orderId: id,
@@ -214,11 +231,23 @@ export async function cancelOrder(id: string, userId: string, roleValue: string,
     actorId: userId,
     actorRole: role,
     previousStatus: order.status,
+    expectedVersion: order.version,
     reason: input.reason,
   });
 
   if (!updated) {
     const latest = await OrdersRepository.findOrderByIdForCompany(id, company.id);
+    if (
+      input.expected_version !== undefined
+      && latest
+      && latest.version !== input.expected_version
+    ) {
+      throw Errors.conflict(
+        'Order version is stale. Refresh the order and retry.',
+        'ORDER_VERSION_CONFLICT',
+        { expected_version: input.expected_version, current_version: latest.version },
+      );
+    }
     if (latest?.status === 'cancelled') {
       throw Errors.conflict('Order is already cancelled.', 'ORDER_ALREADY_CANCELLED');
     }
@@ -228,7 +257,29 @@ export async function cancelOrder(id: string, userId: string, roleValue: string,
     throw Errors.conflict('Order could not be cancelled because it changed. Please retry.', 'ORDER_CANCEL_CONFLICT');
   }
 
-  return toOrderResponse(updated, { includeAssignments: true });
+  return toOrderResponse(updated.order, { includeAssignments: true });
+}
+
+export function hashOrderRequest(input: OrdersRepository.CreateOrderForPersistence): string {
+  return createHash('sha256').update(stableStringify(input)).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, canonicalize(item)])
+    );
+  }
+  return value;
 }
 
 function validateOrderWindow(start: Date, end: Date): void {
@@ -324,7 +375,7 @@ function parseRole(role: string): Role {
   throw Errors.forbidden('Account role is not supported.', 'ROLE_FORBIDDEN');
 }
 
-function toOrderResponse(order: OrderRecord, options: { includeAssignments?: boolean } = {}) {
+function toOrderResponse(order: OrderResponseSource, options: { includeAssignments?: boolean } = {}) {
   const categoryItems = toOrderCategoryItems(order);
 
   return {
@@ -351,6 +402,7 @@ function toOrderResponse(order: OrderRecord, options: { includeAssignments?: boo
     pay_rate: serializePayRate(order.pay_rate),
     notes: order.notes,
     status: order.status,
+    version: order.version,
     assignment_count: order._count?.assignments ?? 0,
     rating_count: order._count?.ratings ?? 0,
     assignments: options.includeAssignments ? order.assignments : undefined,
@@ -359,7 +411,7 @@ function toOrderResponse(order: OrderRecord, options: { includeAssignments?: boo
   };
 }
 
-function toOrderCategoryItems(order: OrderRecord) {
+function toOrderCategoryItems(order: OrderResponseSource) {
   const orderCategoryItems = order.category_items as OrderCategoryItemSummarySource[];
   const orderAssignments = order.assignments as OrderAssignmentSummarySource[];
   const sourceItems: OrderCategoryItemSummarySource[] = orderCategoryItems.length

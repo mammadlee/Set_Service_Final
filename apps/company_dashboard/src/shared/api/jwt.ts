@@ -4,6 +4,7 @@ export interface AccessTokenPayload {
   sub?: string;
   role?: Role;
   exp?: number;
+  token_use?: 'access' | 'refresh';
 }
 
 export function readAccessTokenPayload(token: string | null): AccessTokenPayload | null {
@@ -22,6 +23,10 @@ export function readAccessTokenPayload(token: string | null): AccessTokenPayload
 export function isAccessTokenExpired(payload: AccessTokenPayload | null): boolean {
   if (!payload?.exp) return true;
   return payload.exp <= Math.floor(Date.now() / 1000);
+}
+
+export function isAccessTokenPayload(payload: AccessTokenPayload | null): boolean {
+  return payload?.token_use === 'access';
 }
 
 function decodeBase64Url(value: string): string {

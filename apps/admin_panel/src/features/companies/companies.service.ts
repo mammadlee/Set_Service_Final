@@ -26,4 +26,10 @@ export const companiesService = {
       body: { reason },
     });
   },
+
+  authorizeDocument(id: string, type: string) {
+    return apiRequest<{ url: string; expires_in_seconds: number }>(
+      `/admin/companies/${id}/documents/${encodeURIComponent(type)}/download`,
+    );
+  },
 };

@@ -26,8 +26,12 @@ class AppStrings {
   static const configErrorTitle = 'Konfiqurasiya xətası';
   static const configErrorBaseUrlMissing =
       'Canlı versiya üçün BASE_URL mütləq verilməlidir.';
+  static const configErrorBaseUrlInvalid =
+      'BASE_URL etibarlı, tam API ünvanı olmalıdır.';
   static const configErrorBaseUrlLocal =
       'Canlı versiya localhost və ya emulator ünvanı ilə işləməməlidir. Canlı API ünvanını verin.';
+  static const configErrorBaseUrlInsecure =
+      'Canlı versiyada API ünvanı yalnız HTTPS istifadə etməlidir.';
 
   static const roleSelectionTitle = 'SET Service-ə xoş gəlmisiniz';
   static const roleSelectionSubtitle =
@@ -292,6 +296,8 @@ class AppStrings {
   static const profileLoadFailed = 'Profil məlumatları yüklənmədi.';
   static const profileUpdateFailed = 'Profil yenilənmədi.';
   static const pickFileCancelled = 'Fayl seçilmədi.';
+  static const uploadCancelled = 'Fayl yüklənməsi dayandırıldı.';
+  static const unsupportedFileFormat = 'Dəstəklənməyən fayl formatı.';
   static const noDocumentsUploaded = 'Hələ sənəd yüklənməyib.';
   static const uploadFileTooLarge = 'Fayl ölçüsü 5 MB-dan böyük olmamalıdır.';
   static const profilePrivateNote =

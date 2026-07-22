@@ -1,5 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'secure_storage_config.dart';
 import 'token_storage.dart';
 
 class SecureTokenStorage implements TokenStorage {
@@ -8,7 +9,7 @@ class SecureTokenStorage implements TokenStorage {
     FlutterSecureStorage? storage,
   }) : _accessTokenKey = 'setservice_${namespace}_access_token',
        _refreshTokenKey = 'setservice_${namespace}_refresh_token',
-       _storage = storage ?? const FlutterSecureStorage();
+       _storage = storage ?? SecureStorageConfig.storage;
 
   final String _accessTokenKey;
   final String _refreshTokenKey;

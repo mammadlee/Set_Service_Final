@@ -2,6 +2,10 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth } from '../../middleware/auth';
 import { requireRoleOrPermission } from '../../middleware/rbac';
 import * as Service from './notifications.service';
+import {
+  NotificationIdParamsSchema,
+  NotificationListQuerySchema,
+} from './notifications.schema';
 
 const router = Router();
 
@@ -10,11 +14,8 @@ router.use(requireRoleOrPermission('view_notifications', 'worker', 'company'));
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await Service.listNotifications(req.user!.sub, {
-      page: req.query.page ? Number(req.query.page) : undefined,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      unread_only: req.query.unread_only === 'true',
-    }));
+    const query = NotificationListQuerySchema.parse(req.query);
+    res.json(await Service.listNotifications(req.user!.sub, query));
   } catch (e) { next(e); }
 });
 
@@ -23,7 +24,10 @@ router.patch('/read-all', async (req: Request, res: Response, next: NextFunction
 });
 
 router.patch('/:id/read', async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.markNotificationRead(req.user!.sub, req.params.id)); } catch (e) { next(e); }
+  try {
+    const { id } = NotificationIdParamsSchema.parse(req.params);
+    res.json(await Service.markNotificationRead(req.user!.sub, id));
+  } catch (e) { next(e); }
 });
 
 export default router;

@@ -1,4 +1,5 @@
 import QRCode from 'qrcode';
+import { resolveApiBaseUrl } from './config';
 import './styles.css';
 
 type KioskContext = {
@@ -37,9 +38,7 @@ type KioskQrResponse = KioskContext & {
   refresh_after_seconds: number;
 };
 
-const API_BASE =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, '') ||
-  (import.meta.env.PROD ? `${window.location.origin}/v1` : 'http://localhost:3000/v1');
+const API_BASE = resolveApiBaseUrl();
 
 const token = readKioskToken();
 const elements = {
@@ -70,11 +69,18 @@ let inFlight = false;
 elements.fullscreenButton.addEventListener('click', () => {
   void document.documentElement.requestFullscreen?.();
 });
+document.addEventListener('visibilitychange', handleVisibilityChange);
+window.addEventListener('pagehide', handlePageHide);
+window.addEventListener('pageshow', handlePageShow);
 
 if (!token) {
   setInactiveState('Bu QR ekranı deaktiv edilib');
 } else {
-  void boot();
+  if (document.visibilityState !== 'visible') {
+    hideQrForScreenLock();
+  } else {
+    void boot();
+  }
 }
 
 async function boot() {
@@ -86,9 +92,8 @@ async function loadContext() {
   if (!token) return;
 
   try {
-    const context = await requestJson<KioskContext>(
-      `/attendance/venue-kiosks/${encodeURIComponent(token)}`
-    );
+    const context = await requestJson<KioskContext>('/attendance/venue-kiosks/context');
+    if (document.visibilityState !== 'visible') return;
     currentContext = context;
     renderContext(context);
     retryDelay = 1500;
@@ -120,12 +125,20 @@ async function refreshQr() {
 
   try {
     const qr = await requestJson<KioskQrResponse>(
-      `/attendance/venue-kiosks/${encodeURIComponent(token)}/qr-token`,
+      '/attendance/venue-kiosks/qr-token',
       { method: 'POST' }
     );
+    if (document.visibilityState !== 'visible') {
+      hideQrForScreenLock();
+      return;
+    }
     currentContext = qr;
     renderContext(qr);
     await renderQr(qr.token);
+    if (document.visibilityState !== 'visible') {
+      hideQrForScreenLock();
+      return;
+    }
     qrExpiresAt = new Date(qr.expires_at).getTime();
     retryDelay = 1500;
     setStatus('active', 'Aktiv');
@@ -143,8 +156,13 @@ async function refreshQr() {
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    cache: 'no-store',
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
     headers: {
       accept: 'application/json',
+      'cache-control': 'no-store',
+      ...(token ? { 'x-kiosk-capability': token } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -176,6 +194,7 @@ async function renderQr(value: string) {
     errorCorrectionLevel: 'M',
   });
 
+  if (document.visibilityState !== 'visible') return;
   elements.qrImage.src = dataUrl;
   elements.qrImage.classList.remove('visible', 'refreshed');
   void elements.qrImage.offsetWidth;
@@ -197,6 +216,7 @@ function renderContext(context: KioskContext) {
 }
 
 function scheduleRefresh(refreshAfterSeconds: number) {
+  if (document.visibilityState !== 'visible') return;
   const safeSeconds = Number.isFinite(refreshAfterSeconds) && refreshAfterSeconds > 0
     ? refreshAfterSeconds
     : 30;
@@ -207,6 +227,7 @@ function scheduleRefresh(refreshAfterSeconds: number) {
 }
 
 function scheduleRetry() {
+  if (document.visibilityState !== 'visible') return;
   retryTimeout = window.setTimeout(() => {
     void refreshQr();
   }, retryDelay);
@@ -214,6 +235,7 @@ function scheduleRetry() {
 }
 
 function scheduleContextPoll() {
+  if (document.visibilityState !== 'visible') return;
   clearTimeout(contextPollTimeout);
   contextPollTimeout = window.setTimeout(() => {
     void loadContext();
@@ -313,12 +335,89 @@ function getActiveSession(context: KioskContext) {
 }
 
 function readKioskToken(): string | null {
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const capability = fragment.get('capability')?.trim();
+  if (capability) {
+    clearCapabilityFromAddressBar(window.location.pathname);
+    return capability;
+  }
+  if (!import.meta.env.DEV) return null;
+
   const parts = window.location.pathname.split('/').filter(Boolean);
   const routeIndex = Math.max(parts.lastIndexOf('qr-kiosk'), parts.lastIndexOf('kiosk'));
-  if (routeIndex >= 0 && parts[routeIndex + 1]) {
-    return decodeURIComponent(parts[routeIndex + 1]);
+  const encodedToken = routeIndex >= 0 && parts[routeIndex + 1]
+    ? parts[routeIndex + 1]
+    : parts.at(-1);
+  if (!encodedToken) return null;
+
+  try {
+    const legacyCapability = decodeURIComponent(encodedToken);
+    const safePath = window.location.pathname.replace(
+      new RegExp(`/${escapeRegExp(encodedToken)}/*$`),
+      '',
+    );
+    clearCapabilityFromAddressBar(safePath);
+    return legacyCapability;
+  } catch {
+    return null;
   }
-  return parts.at(-1) ? decodeURIComponent(parts.at(-1)!) : null;
+}
+
+function clearCapabilityFromAddressBar(pathname: string): void {
+  const safePath = pathname || '/kiosk';
+  window.history.replaceState(null, '', `${window.location.origin}${safePath}`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState !== 'visible') {
+    stopScheduling();
+    hideQrForScreenLock();
+    return;
+  }
+
+  if (!token) return;
+  retryDelay = 1500;
+  startTicking();
+  void loadContext();
+}
+
+function handlePageHide() {
+  stopScheduling();
+  hideQrForScreenLock();
+}
+
+function handlePageShow(event: PageTransitionEvent) {
+  if (!event.persisted || !token || document.visibilityState !== 'visible') return;
+  retryDelay = 1500;
+  startTicking();
+  void loadContext();
+}
+
+function hideQrForScreenLock() {
+  qrExpiresAt = 0;
+  elements.qrImage.removeAttribute('src');
+  elements.qrImage.classList.remove('visible', 'refreshed');
+  elements.qrPlaceholder.textContent = 'Ekran aktiv olduqda yeni QR yaradılacaq';
+  elements.qrPlaceholder.classList.remove('hidden');
+  elements.countdownValue.textContent = '0';
+  elements.countdownText.textContent = 'QR təhlükəsizlik üçün gizlədildi';
+  setStatus('warning', 'Kilidli');
+  elements.networkText.textContent = 'Ekran aktiv olduqda sessiya yenidən yoxlanılacaq';
+}
+
+function stopScheduling() {
+  clearTimeout(refreshTimeout);
+  clearTimeout(retryTimeout);
+  clearTimeout(contextPollTimeout);
+  clearInterval(tickInterval);
+  refreshTimeout = undefined;
+  retryTimeout = undefined;
+  contextPollTimeout = undefined;
+  tickInterval = undefined;
 }
 
 function formatShift(start?: string | null, end?: string | null): string {

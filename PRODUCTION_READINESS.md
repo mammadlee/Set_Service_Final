@@ -30,7 +30,7 @@ The attendance preflight must return zero rows before deploying the one-session-
 Redis is required in production for OTP rate-limit, cooldown, and temporary block state.
 
 ```env
-REDIS_URL=redis://default:password@redis-host:6379
+REDIS_URL=<redis-url>
 ```
 
 Local development can run without Redis; the app uses an in-memory fallback only when `NODE_ENV` is not `production`.
@@ -43,22 +43,27 @@ Local development only:
 
 ```env
 SMS_PROVIDER=console
-OTP_TEST_MODE=true
-OTP_LOG_CODES=true
-```
-
-Production:
-
-```env
-SMS_PROVIDER=generic_http
-SMS_API_URL=https://sms-provider.example/send
-SMS_API_KEY=stored-in-secret-manager
-SMS_FROM=SET Service
 OTP_TEST_MODE=false
 OTP_LOG_CODES=false
 ```
 
-The generic HTTP provider is a production-ready boundary. Replace the endpoint and payload mapping with the chosen SMS vendor contract during provider onboarding.
+Fixed OTPs are available only to isolated test processes using `NODE_ENV=test`,
+`OTP_TEST_MODE=true`, and an explicitly configured six-digit `OTP_TEST_CODE`.
+
+Production:
+
+```env
+SMS_PROVIDER=pg365
+PG365_API_URL=https://api.poctgoyercini.com
+PG365_PUBLIC_KEY=<public-key>
+PG365_PRIVATE_KEY=<secret-reference>
+PG365_ORIGINATOR=SET
+PG365_TIMEOUT_MS=10000
+OTP_TEST_MODE=false
+OTP_LOG_CODES=false
+```
+
+PG365 is the production OTP provider. Its private key must remain in the deployment secret manager and OTP delivery requests are never retried automatically.
 
 ### Push Notifications
 
@@ -76,7 +81,7 @@ Production with push enabled:
 PUSH_NOTIFICATIONS_ENABLED=true
 FIREBASE_PROJECT_ID=hireapp-prod
 FIREBASE_CLIENT_EMAIL=firebase-adminsdk@example.iam.gserviceaccount.com
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+FIREBASE_PRIVATE_KEY=<secret-reference>
 ```
 
 When push is enabled in production, startup fails fast if Firebase service account variables are missing. Push delivery failures do not roll back the underlying business action; in-app notifications remain the durable source of truth. FCM tokens are stored per device in `device_tokens` and are revoked when the app logs out or Firebase reports an invalid registration token.
@@ -90,6 +95,8 @@ Local:
 ```env
 STORAGE_PROVIDER=local
 LOCAL_UPLOAD_DIR=uploads
+PRIVATE_DOWNLOAD_SIGNING_SECRET=<secret-reference>
+STORAGE_SIGNED_URL_TTL_SECONDS=300
 STORAGE_PUBLIC_BASE_URL=/uploads
 ```
 
@@ -99,14 +106,15 @@ Object storage preparation:
 STORAGE_PROVIDER=s3
 S3_BUCKET=hireapp-documents
 S3_REGION=eu-central-1
-S3_ACCESS_KEY_ID=stored-in-secret-manager
-S3_SECRET_ACCESS_KEY=stored-in-secret-manager
+S3_ACCESS_KEY_ID=<r2-access-key-id>
+S3_SECRET_ACCESS_KEY=<r2-secret-access-key>
+STORAGE_SIGNED_URL_TTL_SECONDS=300
 STORAGE_PUBLIC_BASE_URL=https://cdn.example.com
 ```
 
 For Cloudflare R2, use `STORAGE_PROVIDER=r2` and set `S3_ENDPOINT`.
 
-`STORAGE_PROVIDER=local` is blocked in production. Use S3/R2 before enabling real worker/company document uploads.
+`STORAGE_PROVIDER=local` is blocked in production. Worker documents are stored by object key and are delivered only through authenticated, short-lived signed URLs. `STORAGE_PUBLIC_BASE_URL` is reserved for explicitly public profile assets.
 
 ## Required Production Env Vars
 
@@ -114,18 +122,31 @@ For Cloudflare R2, use `STORAGE_PROVIDER=r2` and set `S3_ENDPOINT`.
 - `DATABASE_URL`
 - `DIRECT_URL`
 - `REDIS_URL`
-- `JWT_SECRET`
+- `OUTBOX_WORKER_ENABLED=false`
+- `OUTBOX_HEALTH_PORT`
+- `OUTBOX_MAX_CONSECUTIVE_FAILURES`
+- `OUTBOX_HEARTBEAT_TTL_SECONDS`
+- `JWT_ACCESS_SECRET`
+- `JWT_REFRESH_SECRET`
+- `JWT_ISSUER`
+- `JWT_AUDIENCE`
 - `QR_HMAC_SECRET`
+- `KIOSK_TOKEN_ENCRYPTION_SECRET`
 - `OTP_PEPPER`
 - `CORS_ORIGINS`
-- `SMS_PROVIDER=generic_http`
-- `SMS_API_URL`
-- `SMS_API_KEY`
-- `SMS_FROM`
+- `AUTH_COOKIE_SAME_SITE`
+- `SMS_PROVIDER=pg365`
+- `PG365_API_URL`
+- `PG365_PUBLIC_KEY`
+- `PG365_PRIVATE_KEY`
+- `PG365_ORIGINATOR`
+- `PG365_TIMEOUT_MS`
+- `PROVIDER_OUTBOX_ENCRYPTION_SECRET`
 - `PUSH_NOTIFICATIONS_ENABLED`
 - `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` when push is enabled
 - `OTP_TEST_MODE=false`
 - `OTP_LOG_CODES=false`
+- `SWAGGER_DOCS_ENABLED=false`
 
 Secrets must be long, random, and different from each other. The app fails fast when production secrets are missing, weak, reused, or still using placeholder values.
 
@@ -134,6 +155,7 @@ Secrets must be long, random, and different from each other. The app fails fast 
 - Helmet is enabled.
 - JSON body size is limited.
 - CORS is allowlisted through `CORS_ORIGINS`.
+- Browser refresh tokens use rotating `HttpOnly` cookies. `AUTH_COOKIE_SAME_SITE` must be `lax`/`strict` for same-site deployments; `none` is reserved for intentional cross-site HTTPS deployments and forces `Secure`.
 - OTP codes are never stored raw.
 - OTP test mode and OTP logging are blocked in production.
 - Refresh tokens remain hashed in PostgreSQL.
@@ -147,8 +169,22 @@ npm ci
 npm run db:migrate:deploy
 npx prisma generate
 npm run build
-npm start
 ```
+
+Run the compiled artifact as two separately supervised services:
+
+```bash
+# API replicas
+OUTBOX_WORKER_ENABLED=false npm run start:api
+
+# At least one durable outbox worker replica
+npm run start:outbox
+```
+
+Do not omit the worker: notification/provider delivery depends on it. An
+intentional single-process deployment may use `OUTBOX_WORKER_ENABLED=true`, but
+that topology couples API and delivery availability and is not the recommended
+production setup.
 
 ## Smoke Test
 
@@ -171,14 +207,17 @@ Do not enable OTP test mode in real production. Production smoke testing should 
 ## Observability
 
 - Logs are structured JSON through the logger abstraction.
-- HTTP request logs are emitted through Morgan into the logger stream.
 - Sentry is optional and enabled only when `SENTRY_DSN` is configured.
-- Health endpoint is safe for load balancers: `GET /health`.
+- API liveness is `GET /health`; API readiness is `GET /ready` and includes the
+  PostgreSQL, Redis, and outbox-heartbeat state.
+- The outbox worker exposes `GET /health` and Prometheus `GET /metrics` on
+  `OUTBOX_HEALTH_PORT` (default `3001`).
+- Alert on stale worker heartbeats, consecutive failed batches, pending backlog,
+  and dead-letter count.
 
 ## Remaining Before Real Launch
 
 - Choose and onboard the real SMS provider contract.
-- Wire the object storage SDK for S3/R2 document upload flows when document upload endpoints are introduced.
-- Add uptime monitoring for `/health`.
+- Add uptime monitoring for API `/health` and `/ready` plus worker `/health`.
 - Add database backup restore drill.
 - Run security review on production CORS origins and secrets management.

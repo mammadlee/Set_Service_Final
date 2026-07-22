@@ -1,7 +1,7 @@
 import { API_BASE_URL } from './config';
-import { isAccessTokenExpired, readAccessTokenPayload } from './jwt';
+import { isAccessTokenExpired, isAccessTokenPayload, readAccessTokenPayload } from './jwt';
 import { tokenStore } from './tokenStore';
-import type { ApiError, ApiErrorBody, TokenResponse } from './types';
+import type { ApiError, ApiErrorBody, AuthUser, TokenResponse } from './types';
 import { isAdminRole } from '../auth/permissions';
 import { apiErrorMessage, appStrings } from '../i18n/appStrings';
 
@@ -16,7 +16,7 @@ interface RequestOptions {
 }
 
 let onUnauthorized: (() => void) | undefined;
-let refreshPromise: Promise<boolean> | null = null;
+let refreshPromise: Promise<AuthUser | null> | null = null;
 
 export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
@@ -26,7 +26,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const response = await send(path, options);
 
   if (response.status === 401 && options.auth !== false && options.retry !== false) {
-    const refreshed = await refreshTokens();
+    const refreshed = await refreshSession();
     if (refreshed) {
       const retryResponse = await send(path, { ...options, retry: false });
       return parseResponse<T>(retryResponse);
@@ -57,6 +57,9 @@ async function send(path: string, options: RequestOptions) {
     method: options.method ?? 'GET',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    cache: 'no-store',
+    credentials: 'include',
+    referrerPolicy: 'no-referrer',
   });
 }
 
@@ -86,7 +89,7 @@ function parseJson(text: string) {
   }
 }
 
-async function refreshTokens() {
+export async function refreshSession() {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = performRefresh().finally(() => {
@@ -97,27 +100,28 @@ async function refreshTokens() {
 }
 
 async function performRefresh() {
-  const refreshToken = tokenStore.getRefreshToken();
-  if (!refreshToken) return false;
-
   try {
-    const response = await send('/auth/refresh', {
+    const response = await send('/auth/admin/web-refresh', {
       method: 'POST',
-      body: { refresh_token: refreshToken },
       auth: false,
     });
     const data = await parseResponse<TokenResponse>(response);
     const tokenPayload = readAccessTokenPayload(data.access_token);
-    if (!isAdminRole(data.user.role) || !isAdminRole(tokenPayload?.role) || isAccessTokenExpired(tokenPayload)) {
+    if (
+      !isAdminRole(data.user.role) ||
+      !isAdminRole(tokenPayload?.role) ||
+      !isAccessTokenPayload(tokenPayload) ||
+      isAccessTokenExpired(tokenPayload)
+    ) {
       tokenStore.clear();
       onUnauthorized?.();
-      return false;
+      return null;
     }
 
-    tokenStore.setTokens(data.access_token, data.refresh_token);
-    return true;
+    tokenStore.setAccessToken(data.access_token);
+    return data.user;
   } catch {
-    return false;
+    return null;
   }
 }
 

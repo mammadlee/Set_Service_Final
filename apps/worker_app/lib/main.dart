@@ -10,6 +10,7 @@ import 'core/push/push_registration_service.dart';
 import 'core/router/app_routes.dart';
 import 'core/session/app_role.dart';
 import 'core/session/role_session_controller.dart';
+import 'core/session/session_coordinator.dart';
 import 'core/storage/secure_token_storage.dart';
 import 'core/storage/token_storage.dart';
 import 'core/theme/app_theme.dart';
@@ -44,22 +45,30 @@ Future<void> main() async {
     namespace: AppRole.company.name,
   );
   final adminTokenStorage = SecureTokenStorage(namespace: AppRole.admin.name);
+  final sessionCoordinator = SessionCoordinator();
   final workerApiClient = ApiClient(
     baseUrl: AppConfig.apiBaseUrl,
     tokenStorage: workerTokenStorage,
     expectedRole: AppRole.worker.apiRole,
+    sessionCoordinator: sessionCoordinator,
   );
   final companyApiClient = ApiClient(
     baseUrl: AppConfig.apiBaseUrl,
     tokenStorage: companyTokenStorage,
     expectedRole: AppRole.company.apiRole,
+    sessionCoordinator: sessionCoordinator,
   );
   final adminApiClient = ApiClient(
     baseUrl: AppConfig.apiBaseUrl,
     tokenStorage: adminTokenStorage,
     expectedRole: AppRole.admin.apiRole,
+    sessionCoordinator: sessionCoordinator,
   );
   final pushNotificationService = PushNotificationService();
+
+  if (AppConfig.pushNotificationsEnabled) {
+    await pushNotificationService.initialize(navigatorKey: appNavigatorKey);
+  }
 
   runApp(
     SetServiceApp(
@@ -70,20 +79,13 @@ Future<void> main() async {
       adminApiClient: adminApiClient,
       adminTokenStorage: adminTokenStorage,
       pushNotificationService: pushNotificationService,
+      sessionCoordinator: sessionCoordinator,
     ),
   );
 
-  if (AppConfig.pushNotificationsEnabled) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(
-        Future<void>.delayed(const Duration(seconds: 2), () {
-          return pushNotificationService.initialize(
-            navigatorKey: appNavigatorKey,
-          );
-        }),
-      );
-    });
-  }
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(pushNotificationService.handlePendingInitialMessage());
+  });
 }
 
 class ConfigErrorApp extends StatelessWidget {
@@ -111,7 +113,9 @@ class _ConfigErrorScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final message = switch (issue) {
       AppConfigIssue.missingBaseUrl => AppStrings.configErrorBaseUrlMissing,
+      AppConfigIssue.invalidBaseUrl => AppStrings.configErrorBaseUrlInvalid,
       AppConfigIssue.localBaseUrl => AppStrings.configErrorBaseUrlLocal,
+      AppConfigIssue.insecureBaseUrl => AppStrings.configErrorBaseUrlInsecure,
     };
 
     return Scaffold(
@@ -162,6 +166,7 @@ class SetServiceApp extends StatelessWidget {
     required this.adminApiClient,
     required this.adminTokenStorage,
     required this.pushNotificationService,
+    required this.sessionCoordinator,
     super.key,
   });
 
@@ -172,6 +177,7 @@ class SetServiceApp extends StatelessWidget {
   final ApiClient adminApiClient;
   final TokenStorage adminTokenStorage;
   final PushNotificationService pushNotificationService;
+  final SessionCoordinator sessionCoordinator;
 
   @override
   Widget build(BuildContext context) {
@@ -180,6 +186,7 @@ class SetServiceApp extends StatelessWidget {
         Provider<ApiClient>.value(value: workerApiClient),
         Provider<TokenStorage>.value(value: workerTokenStorage),
         Provider<PushNotificationService>.value(value: pushNotificationService),
+        Provider<SessionCoordinator>.value(value: sessionCoordinator),
         ChangeNotifierProvider<RoleSessionController>(
           create: (_) => RoleSessionController()..bootstrap(),
         ),
@@ -226,6 +233,7 @@ class SetServiceApp extends StatelessWidget {
               apiClient: workerApiClient,
               pushNotificationService: pushNotificationService,
             ),
+            sessionCoordinator,
           )..bootstrap(),
         ),
         ChangeNotifierProvider<CompanyAuthController>(
@@ -235,6 +243,7 @@ class SetServiceApp extends StatelessWidget {
               apiClient: companyApiClient,
               pushNotificationService: pushNotificationService,
             ),
+            sessionCoordinator,
           )..bootstrap(),
         ),
         ChangeNotifierProvider<AdminAuthController>(
@@ -244,6 +253,7 @@ class SetServiceApp extends StatelessWidget {
               apiClient: adminApiClient,
               pushNotificationService: pushNotificationService,
             ),
+            sessionCoordinator,
           )..bootstrap(),
         ),
       ],

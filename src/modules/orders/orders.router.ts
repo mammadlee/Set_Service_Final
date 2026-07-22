@@ -5,6 +5,7 @@ import { validate } from '../../middleware/validate';
 import {
   CancelOrderSchema,
   CreateOrderSchema,
+  IdempotencyKeySchema,
   ListOrdersQuerySchema,
   OrderIdParamsSchema,
 } from './orders.schema';
@@ -37,7 +38,18 @@ router.post(
   validate(CreateOrderSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createOrder(req.user!.sub, req.user!.role, req.body));
+      const rawIdempotencyKey = req.header('Idempotency-Key');
+      const idempotencyKey = rawIdempotencyKey === undefined
+        ? undefined
+        : IdempotencyKeySchema.parse(rawIdempotencyKey);
+      const result = await Service.createOrder(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        idempotencyKey
+      );
+      if (result.replayed) res.setHeader('Idempotency-Replayed', 'true');
+      res.status(201).json(result.response);
     } catch (e) {
       next(e);
     }

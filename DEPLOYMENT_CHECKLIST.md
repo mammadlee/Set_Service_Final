@@ -45,10 +45,17 @@ Required:
 - [ ] `DATABASE_URL`
 - [ ] `DIRECT_URL`
 - [ ] `REDIS_URL`
-- [ ] `JWT_SECRET`
+- [ ] `JWT_ACCESS_SECRET`
+- [ ] `JWT_REFRESH_SECRET`
+- [ ] `JWT_ISSUER`
+- [ ] `JWT_AUDIENCE`
 - [ ] `QR_HMAC_SECRET`
+- [ ] `KIOSK_TOKEN_ENCRYPTION_SECRET`
 - [ ] `OTP_PEPPER`
+- [ ] `PROVIDER_OUTBOX_ENCRYPTION_SECRET`
+- [ ] `OUTBOX_WORKER_ENABLED=false`
 - [ ] `CORS_ORIGINS`
+- [ ] `AUTH_COOKIE_SAME_SITE`
 
 Recommended:
 
@@ -56,21 +63,32 @@ Recommended:
 - [ ] `JWT_REFRESH_EXPIRES_IN`
 - [ ] `QR_TOKEN_TTL_SECONDS`
 - [ ] `SENTRY_DSN`
+- [ ] `OUTBOX_HEALTH_PORT`
+- [ ] `OUTBOX_MAX_CONSECUTIVE_FAILURES`
+- [ ] `OUTBOX_HEARTBEAT_TTL_SECONDS`
 
 Production safety:
 
 - [ ] `NODE_ENV=production`
 - [ ] `OTP_TEST_MODE=false`
 - [ ] `OTP_LOG_CODES=false`
-- [ ] `SMS_PROVIDER=generic_http`
-- [ ] `SMS_API_URL`, `SMS_API_KEY`, and `SMS_FROM` are configured.
+- [ ] `SMS_PROVIDER=pg365`
+- [ ] `PG365_API_URL`, `PG365_PUBLIC_KEY`, `PG365_PRIVATE_KEY`, `PG365_ORIGINATOR`, and `PG365_TIMEOUT_MS` are configured; the private key is sourced from the secret manager.
 - [ ] `PUSH_NOTIFICATIONS_ENABLED` is explicitly set.
 - [ ] Firebase service account env vars are configured if push is enabled.
-- [ ] `JWT_SECRET` is 32+ random characters.
+- [ ] `JWT_ACCESS_SECRET` is 32+ random characters.
+- [ ] `JWT_REFRESH_SECRET` is 32+ random characters and differs from the access key.
 - [ ] `QR_HMAC_SECRET` is 32+ random characters.
+- [ ] `KIOSK_TOKEN_ENCRYPTION_SECRET` is 32+ random characters.
 - [ ] `OTP_PEPPER` is 32+ random characters.
-- [ ] JWT, QR, and OTP secrets are all different.
+- [ ] JWT access/refresh, kiosk, QR, and OTP secrets are all different.
 - [ ] `CORS_ORIGINS` contains only trusted frontend origins and no wildcard.
+- [ ] `AUTH_COOKIE_SAME_SITE` is `lax`/`strict` for a same-site topology, or `none` only when every cross-site web/API origin is HTTPS and explicitly allowlisted.
+- [ ] `SWAGGER_DOCS_ENABLED=false`.
+- [ ] API runs with `OUTBOX_WORKER_ENABLED=false`.
+- [ ] At least one separately supervised `npm run start:outbox` process is running.
+- [ ] API `/ready` verifies a fresh outbox-worker Redis heartbeat.
+- [ ] Worker `/health` and `/metrics` are monitored and alerted.
 
 ## 4. Auth and OTP
 
@@ -162,7 +180,7 @@ Production safety:
 - [ ] Company approval/rejection notifications are created.
 - [ ] Order-created notifications are created for admins.
 - [ ] Assignment notifications are created for workers.
-- [ ] Push/email/SMS delivery behavior is documented as future extension.
+- [ ] Durable provider outbox delivery is running and dead-letter/backlog metrics are monitored.
 
 ## 11. API Documentation
 
@@ -213,7 +231,7 @@ Expected passing flow:
 - Payroll is not implemented.
 - SMS provider integration is not productionized yet.
 - OTP test mode is for development only.
-- In-app notifications are implemented; push/email/SMS are extension points.
+- In-app notifications are durable; push/email/SMS delivery requires the separately supervised outbox worker and configured providers.
 - Attendance is one session per assignment for MVP.
 - Advanced scheduling and worker availability calendars are not implemented.
 - Order completion automation is not implemented.

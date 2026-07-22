@@ -2,12 +2,20 @@ openapi: 3.0.3
 
 info:
   title: SET Service API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     SET Service REST API for Worker, Company, Super Admin, and restricted Admin roles.
 
     Core worker flow:
     Worker registers -> verifies OTP -> becomes pending_approval -> super admin or permitted admin approves or rejects -> approved worker can log in and receive tokens.
+
+    Contract-wide observability and authentication rules:
+    - Every HTTP response includes `X-Request-ID` and `X-Correlation-ID`.
+    - Clients may send either header using 8-128 characters from `[A-Za-z0-9._:-]`; invalid values are replaced server-side.
+    - Error bodies include the effective `request_id`; the correlation identifier remains in the response header.
+    - `BearerAuth` accepts access tokens only. Refresh tokens are valid only in the documented refresh/logout request bodies.
+    - OTP request success means the request was accepted for delivery; it does not prove arrival at the handset or mailbox.
+    - Interactive Swagger UI is disabled in production and should be exposed only in controlled non-production environments.
 
 servers:
   - url: http://localhost:3000/v1
@@ -15,12 +23,105 @@ servers:
   - url: https://api.setservice.az/v1
     description: Production
 
+security: []
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: JWT access token
+      description: Short-lived SET Service JWT access token. Refresh tokens are rejected by authenticated API middleware.
+
+  headers:
+    XRequestId:
+      description: Effective request identifier used in structured logs and error responses.
+      schema: { $ref: '#/components/schemas/RequestId' }
+    XCorrelationId:
+      description: Correlation identifier propagated across related requests; defaults to the request identifier.
+      schema: { $ref: '#/components/schemas/RequestId' }
+    RateLimitLimit:
+      description: Maximum requests allowed in the current server window.
+      schema: { type: integer, minimum: 1 }
+    RateLimitRemaining:
+      description: Requests remaining in the current server window.
+      schema: { type: integer, minimum: 0 }
+    RateLimitReset:
+      description: Seconds until the current server rate-limit window resets.
+      schema: { type: integer, minimum: 0 }
+    RetryAfter:
+      description: Seconds the client should wait before retrying.
+      schema: { type: integer, minimum: 0 }
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Authentication credentials are missing, invalid, expired, revoked, or of the wrong token type.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: The authenticated account or permission set cannot perform this operation.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: The resource is absent or intentionally hidden from this caller.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: The request conflicts with current resource or idempotency state.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Gone:
+      description: The operation or capability is intentionally disabled, expired, or no longer available.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: A rate limit or OTP abuse-control threshold was exceeded.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+        RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+        RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+        RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: A required dependency, durable queue, scanner, or rate-limit store is unavailable.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   parameters:
     Page:
@@ -33,13 +134,40 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   schemas:
+    RequestId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._:-]+$'
+      example: 7fa22d18-6e54-4c33-8154-9f68f8e2f84b
+
     Error:
       type: object
+      required: [error, code, request_id, timestamp]
       properties:
         error: { type: string, example: Worker is not approved for login. }
         code: { type: string, example: WORKER_NOT_APPROVED }
         details: { type: object, nullable: true, example: { status: pending_approval } }
+        request_id: { $ref: '#/components/schemas/RequestId' }
         timestamp: { type: string, format: date-time }
+
+    OtpRequestAcceptedResponse:
+      type: object
+      required: [otp_sent, retry_after_seconds]
+      properties:
+        otp_sent:
+          type: boolean
+          enum: [true]
+          description: Generic anti-enumeration acknowledgement that the delivery request was accepted.
+        purpose:
+          type: string
+          nullable: true
+          description: OTP purpose when it is safe to return it.
+        message:
+          type: string
+          nullable: true
+          description: Generic anti-enumeration message.
+        retry_after_seconds: { type: integer, minimum: 1, example: 60 }
 
     PaginationMeta:
       type: object
@@ -65,6 +193,15 @@ components:
       enum: [pending_approval, approved, rejected, suspended, inactive]
       example: approved
 
+    OrderStatus:
+      type: string
+      description: |
+        Order lifecycle. `active` is retained for legacy records. New transitions use
+        `published -> partially_assigned -> assigned -> in_progress -> completed`;
+        `completed` and `cancelled` are terminal.
+      enum: [draft, active, published, partially_assigned, assigned, in_progress, completed, cancelled]
+      example: published
+
     Skill:
       oneOf:
         - type: string
@@ -74,7 +211,7 @@ components:
             name: { type: string, example: waiter }
             level: { type: integer, minimum: 1, maximum: 5, example: 4 }
 
-    Document:
+    CompanyDocument:
       type: object
       required: [type, url]
       properties:
@@ -85,6 +222,59 @@ components:
         size_bytes: { type: integer, example: 248000 }
         uploaded_at: { type: string, format: date-time }
         company_visible: { type: boolean, example: true }
+
+    WorkerDocumentMetadata:
+      type: object
+      description: Safe metadata for a private worker document. Object keys and permanent public URLs are never returned.
+      required: [type, company_visible, available, status, scan_status]
+      properties:
+        type: { type: string, enum: [health_certificate, criminal_record] }
+        name: { type: string, example: Health-certificate.pdf }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        size_bytes: { type: integer, minimum: 1, maximum: 5242880 }
+        uploaded_at: { type: string, format: date-time }
+        company_visible: { type: boolean, example: true }
+        status: { type: string, enum: [ready, legacy] }
+        scan_status: { type: string, enum: [clean, unscanned] }
+        available:
+          type: boolean
+          description: True only when the private key belongs to this worker and the document is ready with a clean scan result.
+        url:
+          type: string
+          example: /v1/workers/00000000-0000-4000-8000-000000000000/documents/health_certificate/download
+          description: Authenticated authorization endpoint; never a permanent object URL.
+        download_url:
+          type: string
+          description: Alias of `url` retained for client compatibility.
+
+    WorkerDocumentDeletionResponse:
+      type: object
+      required: [status, worker_id, document_type, deleted_at]
+      properties:
+        status: { type: string, enum: [deleted] }
+        worker_id: { type: string, format: uuid }
+        document_type: { type: string, enum: [health_certificate, criminal_record] }
+        deleted_at: { type: string, format: date-time }
+
+    WorkerAccountDeletionRequest:
+      type: object
+      required: [confirm]
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          enum: [true]
+          description: Explicit confirmation that the authenticated worker wants the account deletion request applied.
+
+    WorkerAccountDeletionResponse:
+      type: object
+      required: [request_id, worker_id, status, account_state, effective_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        worker_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        account_state: { type: string, enum: [inactive] }
+        effective_at: { type: string, format: date-time }
 
     WorkExperience:
       type: object
@@ -108,10 +298,6 @@ components:
           type: array
           items: { type: string }
           example: [az, en]
-        documents:
-          type: array
-          items: { $ref: '#/components/schemas/Document' }
-
     CompanyRegisterRequest:
       type: object
       required: [name, contact_name, email, phone]
@@ -123,7 +309,7 @@ components:
         docs_url: { type: string, format: uri }
         documents:
           type: array
-          items: { $ref: '#/components/schemas/Document' }
+          items: { $ref: '#/components/schemas/CompanyDocument' }
 
     RequestOtpRequest:
       type: object
@@ -340,6 +526,35 @@ components:
                 id: { type: string, format: uuid }
                 status: { $ref: '#/components/schemas/CompanyStatus' }
 
+    WebSessionResponse:
+      type: object
+      required: [access_token, user]
+      description: |
+        Browser-session response. The rotating refresh token is never exposed to JavaScript;
+        it is delivered only through a role-scoped HttpOnly cookie.
+      properties:
+        access_token:
+          type: string
+          description: Short-lived bearer access token. Keep it in memory only.
+        user:
+          type: object
+          required: [id, role]
+          properties:
+            id: { type: string, format: uuid }
+            phone: { type: string, nullable: true }
+            email: { type: string, format: email, nullable: true }
+            role: { type: string, enum: [super_admin, admin, company] }
+            name: { type: string }
+            permissions:
+              type: array
+              items: { $ref: '#/components/schemas/AdminPermission' }
+            company:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                status: { $ref: '#/components/schemas/CompanyStatus' }
+
     AdminPermission:
       type: string
       description: Manage permissions are normalized with required view permissions. `manage_workers` implies `view_workers`; `manage_companies` implies `view_companies`; `manage_assignments` implies `view_assignments`, `view_orders`, and `view_workers`; `manage_kiosks` implies `view_orders` and `view_assignments`.
@@ -414,7 +629,7 @@ components:
           items: { type: string }
         documents:
           type: array
-          items: { $ref: '#/components/schemas/Document' }
+          items: { $ref: '#/components/schemas/WorkerDocumentMetadata' }
         work_history_summary: { type: string, nullable: true }
         work_history:
           type: array
@@ -461,7 +676,7 @@ components:
         documents:
           type: array
           description: Only company-visible documents are returned.
-          items: { $ref: '#/components/schemas/Document' }
+          items: { $ref: '#/components/schemas/WorkerDocumentMetadata' }
         work_history_summary: { type: string, nullable: true }
         work_history:
           type: array
@@ -556,6 +771,15 @@ components:
         read_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
 
+    NotificationListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+
     TaxonomySummary:
       type: object
       properties:
@@ -623,6 +847,19 @@ components:
 
     Order:
       type: object
+      required:
+        - id
+        - company_id
+        - title
+        - description
+        - required_count
+        - start_datetime
+        - end_datetime
+        - location
+        - status
+        - version
+        - created_at
+        - updated_at
       properties:
         id: { type: string, format: uuid }
         company_id: { type: string, format: uuid }
@@ -651,11 +888,25 @@ components:
         location: { type: string, example: Grand Hotel Baku, Baku }
         pay_rate: { type: number, nullable: true, example: 18.5 }
         notes: { type: string, nullable: true, example: Formal dress required. }
-        status: { type: string, enum: [draft, active, completed, cancelled] }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        version:
+          type: integer
+          minimum: 1
+          description: Monotonic optimistic-concurrency version. Send it as `expected_version` for cancellation.
+          example: 1
         assignment_count: { type: integer, example: 0 }
         rating_count: { type: integer, example: 0 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    OrderListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
 
     UpdateWorkerFocTrainingRequest:
       type: object
@@ -725,8 +976,16 @@ components:
 
     CancelOrderRequest:
       type: object
+      additionalProperties: false
       properties:
         reason: { type: string, maxLength: 500, example: Client cancelled the event. }
+        expected_version:
+          type: integer
+          minimum: 1
+          description: |
+            Optional for legacy clients but strongly recommended. A stale value returns
+            `409 ORDER_VERSION_CONFLICT` without applying cancellation side effects.
+          example: 3
 
     AssignmentStatus:
       type: string
@@ -754,7 +1013,7 @@ components:
             id: { type: string, format: uuid }
             title: { type: string, example: Banquet service shift }
             category: { type: string, example: hospitality }
-            status: { type: string, enum: [draft, active, completed, cancelled], example: active }
+            status: { $ref: '#/components/schemas/OrderStatus' }
             required_count: { type: integer, example: 4 }
             category_items:
               type: array
@@ -863,7 +1122,7 @@ components:
         shift_start: { type: string, format: date-time, nullable: true }
         shift_end: { type: string, format: date-time, nullable: true }
 
-    VenueKiosk:
+    VenueKioskPublicContext:
       type: object
       properties:
         id: { type: string, format: uuid, example: "{{venue_kiosk_id}}" }
@@ -876,11 +1135,20 @@ components:
         status: { type: string, enum: [active, disabled], example: active }
         kiosk_status: { type: string, enum: [active, disabled], example: active }
         refresh_interval_seconds: { type: integer, example: 30 }
-        kiosk_url: { type: string, example: "/kiosk/{{venue_kiosk_token}}" }
         active_session:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/VenueKioskActiveSession'
+
+    VenueKiosk:
+      allOf:
+        - $ref: '#/components/schemas/VenueKioskPublicContext'
+        - type: object
+          properties:
+            kiosk_url:
+              type: string
+              description: Authenticated management link. The capability is carried only in the URL fragment.
+              example: "/kiosk#capability={{venue_kiosk_token}}"
 
     VenueKioskCreateResponse:
       allOf:
@@ -922,7 +1190,8 @@ components:
               example: "{{kiosk_token}}"
             kiosk_url:
               type: string
-              example: "/kiosk/{{kiosk_token}}"
+              description: The capability is carried only in the URL fragment and is removed from the address bar by the kiosk client after bootstrap.
+              example: "/kiosk#capability={{kiosk_token}}"
 
     KioskQrTokenResponse:
       allOf:
@@ -993,7 +1262,7 @@ components:
               properties:
                 id: { type: string, format: uuid }
                 title: { type: string, example: Banquet service shift }
-                status: { type: string, enum: [draft, active, completed, cancelled], example: active }
+                status: { $ref: '#/components/schemas/OrderStatus' }
                 company:
                   type: object
                   properties:
@@ -1010,6 +1279,38 @@ components:
           $ref: '#/components/schemas/PaginationMeta'
 
 paths:
+  /health:
+    get:
+      tags: [Operations]
+      summary: Process liveness probe
+      description: Confirms that the HTTP process is running. It does not check dependencies.
+      servers:
+        - url: http://localhost:3000
+        - url: https://api.setservice.az
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, timestamp]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  timestamp: { type: string, format: date-time }
+
+  /ready:
+    get:
+      tags: [Operations]
+      summary: Dependency readiness probe
+      description: Returns 200 only when PostgreSQL, configured Redis, and the in-process or separately deployed outbox worker heartbeat are ready.
+      servers:
+        - url: http://localhost:3000
+        - url: https://api.setservice.az
+      responses:
+        '200': { description: All required dependencies are ready }
+        '503': { description: At least one required dependency is unavailable }
+
   /auth/register:
     post:
       tags: [Auth]
@@ -1055,19 +1356,25 @@ paths:
     post:
       tags: [Auth]
       summary: Request worker OTP for registration resend or password reset
+      description: |
+        Returns a generic anti-enumeration acknowledgement after the OTP has been accepted into the
+        durable delivery flow. A successful HTTP response does not guarantee SMS delivery.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/RequestOtpRequest' }
       responses:
-        '200': { description: OTP sent or generic safe response }
+        '200':
+          description: OTP delivery request accepted or a generic anti-enumeration response returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
         '403':
           description: Worker is not approved or registration is not pending OTP
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
-        '429':
-          description: OTP cooldown, rate limit, or temporary block
-          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/login:
     post:
@@ -1103,13 +1410,22 @@ paths:
     post:
       tags: [Auth]
       summary: Request worker password reset OTP
+      description: |
+        Always returns an anti-enumeration response. For an eligible account, delivery is queued
+        asynchronously through the configured SMS or email provider.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/WorkerForgotPasswordRequest' }
       responses:
-        '200': { description: Generic OTP response }
+        '200':
+          description: Generic OTP delivery acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/reset-password:
     post:
@@ -1129,7 +1445,9 @@ paths:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
       summary: Request OTP for worker phone number change
-      description: The authenticated worker phone identity is not changed until OTP confirmation succeeds.
+      description: |
+        The authenticated worker phone identity is not changed until OTP confirmation succeeds.
+        Success means the OTP delivery was queued; it does not prove handset delivery.
       requestBody:
         required: true
         content:
@@ -1138,6 +1456,8 @@ paths:
       responses:
         '200': { description: OTP sent to the new phone number }
         '409': { description: Phone number is already registered }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/phone-change/confirm:
     post:
@@ -1158,7 +1478,9 @@ paths:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
       summary: Request email verification code for the authenticated user
-      description: The new email is stored as pending_email until code confirmation succeeds.
+      description: |
+        The new email is stored as pending_email until code confirmation succeeds.
+        Success means delivery was queued; it does not prove mailbox delivery.
       requestBody:
         required: true
         content:
@@ -1167,6 +1489,8 @@ paths:
       responses:
         '200': { description: Email verification code sent or email already verified }
         '409': { description: Email is already registered }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/email-verification/confirm:
     post:
@@ -1214,6 +1538,68 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
         '403': { description: Company is not approved }
 
+  /auth/company/web-login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Approved company browser login
+      description: |
+        Requires an exact trusted Origin. Returns the short-lived access token in the response
+        and sets the rotating company refresh token in a role-scoped HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
+      responses:
+        '200':
+          description: Browser session started
+          headers:
+            Set-Cookie:
+              description: Role-scoped HttpOnly refresh cookie; Secure is mandatory for SameSite=None.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '403': { description: Origin is not trusted or company is not approved }
+
+  /auth/company/web-refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate the company browser refresh cookie
+      description: |
+        Requires an exact trusted Origin and the company HttpOnly refresh cookie.
+        The previous refresh token is revoked during rotation and is never returned in JSON.
+      responses:
+        '200':
+          description: Browser session rotated
+          headers:
+            Set-Cookie:
+              description: Newly rotated role-scoped HttpOnly refresh cookie.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Browser session is missing, expired, or revoked }
+        '403': { description: Origin is not trusted }
+
+  /auth/company/web-logout:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Revoke and clear the company browser session
+      description: Requires an exact trusted Origin and revokes the refresh token from the HttpOnly cookie.
+      responses:
+        '204':
+          description: Browser session revoked
+          headers:
+            Set-Cookie:
+              description: Clears the role-scoped refresh cookie.
+              schema: { type: string }
+        '401': { description: Browser session is missing or expired }
+        '403': { description: Origin is not trusted }
+
   /auth/company/complete-registration:
     post:
       tags: [Auth]
@@ -1231,13 +1617,22 @@ paths:
     post:
       tags: [Auth]
       summary: Request company password reset OTP by email
+      description: |
+        Always returns an anti-enumeration response. For an eligible account, delivery is queued
+        asynchronously through the configured email or SMS provider.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompanyForgotPasswordRequest' }
       responses:
-        '200': { description: Generic OTP response }
+        '200':
+          description: Generic OTP delivery acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/company/reset-password:
     post:
@@ -1266,17 +1661,98 @@ paths:
           description: JWT token pair
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
 
+  /auth/admin/web-login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Admin browser login
+      description: |
+        Requires an exact trusted Origin. Returns the short-lived access token in the response
+        and sets the rotating admin refresh token in a role-scoped HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
+      responses:
+        '200':
+          description: Browser session started
+          headers:
+            Set-Cookie:
+              description: Role-scoped HttpOnly refresh cookie; Secure is mandatory for SameSite=None.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Invalid credentials }
+        '403': { description: Origin is not trusted }
+
+  /auth/admin/web-refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate the admin browser refresh cookie
+      description: |
+        Requires an exact trusted Origin and the admin HttpOnly refresh cookie.
+        The previous refresh token is revoked during rotation and is never returned in JSON.
+      responses:
+        '200':
+          description: Browser session rotated
+          headers:
+            Set-Cookie:
+              description: Newly rotated role-scoped HttpOnly refresh cookie.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Browser session is missing, expired, or revoked }
+        '403': { description: Origin is not trusted }
+
+  /auth/admin/web-logout:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Revoke and clear the admin browser session
+      description: Requires an exact trusted Origin and revokes the refresh token from the HttpOnly cookie.
+      responses:
+        '204':
+          description: Browser session revoked
+          headers:
+            Set-Cookie:
+              description: Clears the role-scoped refresh cookie.
+              schema: { type: string }
+        '401': { description: Browser session is missing or expired }
+        '403': { description: Origin is not trusted }
+
   /auth/admin/forgot-password:
     post:
       tags: [Auth]
-      summary: Request manual super admin password reset
+      deprecated: true
+      summary: Disabled public admin password-reset endpoint
+      description: |
+        This public recovery flow is intentionally disabled and always returns
+        `410 ADMIN_PASSWORD_RESET_DISABLED` without disclosing whether an admin account exists.
+        Admin recovery must follow the separately authorized operational recovery runbook.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/AdminForgotPasswordRequest' }
       responses:
-        '200': { description: Generic manual reset response }
+        '410':
+          description: Public admin password recovery is disabled (`ADMIN_PASSWORD_RESET_DISABLED`)
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: Public admin password recovery is disabled.
+                code: ADMIN_PASSWORD_RESET_DISABLED
+                request_id: 7fa22d18-6e54-4c33-8154-9f68f8e2f84b
+                timestamp: "2030-01-15T10:00:00.000Z"
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/verify-otp:
     post:
@@ -1433,11 +1909,6 @@ paths:
                   nullable: true
                   enum: [male, female]
                 whatsapp_available: { type: boolean }
-                documents:
-                  type: array
-                  deprecated: true
-                  description: Prefer secure upload endpoints for worker documents.
-                  items: { $ref: '#/components/schemas/Document' }
                 availability: { type: boolean }
       responses:
         '200': { description: Updated worker profile }
@@ -1469,7 +1940,7 @@ paths:
       tags: [Workers]
       security: [{ BearerAuth: [] }]
       summary: Upload worker document
-      description: Approved workers can upload PDF or image documents. `criminal_record` is private to worker/admin by default; `health_certificate` is company-visible.
+      description: Approved workers can upload PDF or image documents. Content is validated by extension, MIME, magic bytes, an image/PDF parser, and a malware scanner before promotion from quarantine to ready storage. `criminal_record` is private to worker/admin by default; `health_certificate` is company-visible.
       requestBody:
         required: true
         content:
@@ -1489,6 +1960,134 @@ paths:
         '201': { description: Updated worker profile, content: { application/json: { schema: { $ref: '#/components/schemas/WorkerProfile' } } } }
         '400': { description: Invalid upload file or document type, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: Worker is not approved }
+        '413': { description: Upload exceeds the five MiB limit, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '415': { description: Extension, declared MIME, or magic bytes are not allowed or do not match, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: Corrupt, active-content, polyglot, or malware-positive file, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: Required malware scanner is unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /workers/me/documents/{type}:
+    delete:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: deleteMyWorkerDocument
+      summary: Delete one document owned by the authenticated worker
+      description: The document metadata is replaced with a non-downloadable soft-delete tombstone and an audit event in one transaction. Only a worker can delete their own document. The owned private object is removed after commit on a best-effort basis; foreign or malformed keys are never deleted.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record] }
+      responses:
+        '200':
+          description: Document soft-deleted
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerDocumentDeletionResponse' }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not an approved worker, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Worker-owned document does not exist or was already deleted, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /workers/me/account-deletion-request:
+    post:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: requestMyWorkerAccountDeletion
+      summary: Request deletion of the authenticated worker account
+      description: Immediately soft-deletes and anonymizes the worker-owned profile and authentication data, revokes sessions and device tokens, tombstones documents, and writes an append-only audit event in one transaction. Historical operational relations remain intact; no database row is hard-deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerAccountDeletionRequest' }
+      responses:
+        '202':
+          description: Account deletion request accepted and applied
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerAccountDeletionResponse' }
+        '400': { description: Explicit confirmation is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not a worker, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Worker account does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /private-worker-documents/{token}:
+    get:
+      tags: [Workers]
+      security: []
+      operationId: downloadLocalPrivateWorkerDocument
+      summary: Read a local-development private document capability URL
+      description: |
+        Local storage only. The opaque, short-lived signed token is the capability; responses are
+        never cached and the token must not be logged, persisted, or forwarded. Production object
+        storage returns its own short-lived signed URL instead.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Private document bytes
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Cache-Control: { schema: { type: string }, description: "private, no-store, max-age=0" }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+            Content-Disposition: { schema: { type: string }, description: Forces download as an attachment. }
+            X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }
+            Content-Security-Policy: { schema: { type: string }, description: Blocks active document content in the browser. }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { description: Token is invalid, expired, or the private object does not exist }
+
+  /workers/{id}/documents/{type}/download:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: authorizeWorkerDocumentDownload
+      summary: Authorize access and issue a short-lived private document URL
+      description: |
+        Worker ownership, related approved company visibility, or admin `view_workers` permission is
+        required on every authorization request. Only ready documents with a clean scan result are
+        eligible. The returned provider capability expires after at most fifteen minutes, is audit
+        logged, and must not be logged, persisted, placed in analytics, or sent as a referrer.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record] }
+      responses:
+        '200':
+          description: Short-lived signed download URL
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Cache-Control: { schema: { type: string }, description: "private, no-store, max-age=0" }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_in_seconds, expires_at]
+                properties:
+                  url: { type: string }
+                  expires_in_seconds: { type: integer, minimum: 1, maximum: 900, example: 300 }
+                  expires_at: { type: string, format: date-time }
+        '401': { description: Bearer token is missing or invalid }
+        '403': { description: Caller is not allowed to access this document }
+        '404': { description: Worker or document not found }
+        '410': { description: Document is rejected, deleted, legacy-public, foreign, or not clean/ready }
 
   /workers/{id}/company-profile:
     get:
@@ -1520,6 +2119,45 @@ paths:
       summary: Update approved company profile
       responses:
         '200': { description: Updated company profile }
+
+  /companies/me/documents:
+    post:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Upload or replace a company document in private storage
+      description: Accepts an approved access token or the narrow registration token returned after OTP/password completion. Files are quarantined, type-inspected, malware-scanned, and only clean files are promoted.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              properties:
+                type: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Sanitized company profile/document metadata; no storage key or raw URL is returned }
+        '400': { description: Invalid type, file, MIME signature, or scan result }
+        '401': { description: Access or registration token is invalid }
+        '403': { description: Enrollment is closed }
+
+  /companies/me/documents/{type}/download:
+    get:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Authorize self-service company document download
+      description: Issues an audited, short-lived private capability URL. Raw object keys and permanent document URLs are never returned.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+      responses:
+        '200': { description: Short-lived signed download URL }
+        '401': { description: Access or registration token is invalid }
+        '404': { description: Company or document not found }
+        '410': { description: Legacy, foreign, or unscanned document must be uploaded again }
 
   /admin/workers:
     get:
@@ -1680,6 +2318,27 @@ paths:
       responses:
         '200': { description: Company detail }
         '404': { description: Company not found }
+
+  /admin/companies/{id}/documents/{type}/download:
+    get:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Authorize an audited company document download
+      description: Requires view_companies. Returns only a short-lived provider capability after ownership and clean-scan validation; the audit record stores a key hash, never the raw key or URL.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+      responses:
+        '200': { description: Short-lived signed download URL }
+        '403': { description: Requires view_companies }
+        '404': { description: Company or document not found }
+        '410': { description: Legacy, foreign, or unscanned document must be uploaded again }
 
   /admin/companies/{id}/approve:
     patch:
@@ -2047,6 +2706,14 @@ paths:
         '200': { description: Subdepartment updated }
 
   /taxonomy/admin/positions:
+    get:
+      tags: [Taxonomy]
+      security: [{ BearerAuth: [] }]
+      summary: List active and inactive positions
+      description: Requires super_admin or admin with manage_admins.
+      responses:
+        '200': { description: Full administrative position list }
+        '403': { description: Missing manage_admins permission }
     post:
       tags: [Taxonomy]
       security: [{ BearerAuth: [] }]
@@ -2102,7 +2769,18 @@ paths:
           in: query
           schema: { type: boolean }
       responses:
-        '200': { description: Paginated notifications }
+        '200':
+          description: Paginated notifications in stable newest-first order
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /notifications/{id}/read:
     patch:
@@ -2136,7 +2814,7 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - name: status
           in: query
-          schema: { type: string, enum: [draft, active, completed, cancelled] }
+          schema: { $ref: '#/components/schemas/OrderStatus' }
         - name: category
           in: query
           schema: { type: string, example: hospitality }
@@ -2158,8 +2836,12 @@ paths:
       responses:
         '200':
           description: Orders list
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/OrderListResponse' }
               example:
                 data:
                   - id: 6f6f09a0-0b32-47ea-ae22-8b35d7e0c111
@@ -2186,13 +2868,34 @@ paths:
                     end_datetime: "2030-01-15T18:00:00.000Z"
                     location: Grand Hotel Baku, Baku
                     status: active
+                    version: 1
                     assignment_count: 0
                 meta: { page: 1, limit: 20, total: 1, total_pages: 1 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: Create order as approved company
-      description: Worker and super admin tokens cannot create orders. Company must be approved.
+      description: |
+        Worker and super admin tokens cannot create orders. Company must be approved.
+        Production clients should send a stable `Idempotency-Key` for each logical create attempt.
+        Repeating the same key with the same body returns the original response; reusing it with
+        a different body returns `409 IDEMPOTENCY_KEY_REUSED`. Matching keys remain scoped to the
+        authenticated actor and `orders.create` operation for 24 hours. A matching request still being
+        processed returns `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`; retry it with the same key after backoff.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Client-generated key that uniquely identifies one logical order creation attempt.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+            pattern: '^[A-Za-z0-9._:-]+$'
       requestBody:
         required: true
         content:
@@ -2228,7 +2931,13 @@ paths:
                   notes: Formal dress required.
       responses:
         '201':
-          description: Order created
+          description: Order created or the original idempotent response replayed
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Idempotency-Replayed:
+              description: "true when this response was replayed from a previous matching request."
+              schema: { type: boolean }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
@@ -2238,6 +2947,13 @@ paths:
         '403':
           description: Company is not approved or role cannot create orders
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: |
+            Idempotency key was used with a different body (`IDEMPOTENCY_KEY_REUSED`) or the matching
+            original request is still pending (`IDEMPOTENCY_REQUEST_IN_PROGRESS`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /orders/{id}:
     get:
@@ -2267,7 +2983,13 @@ paths:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: Cancel own order as an approved company
-      description: Only the approved company owner can cancel its own order. Super admin cannot cancel orders for now.
+      description: |
+        Only the approved company owner can cancel its own order. Super admin cannot cancel orders for now.
+        Cancellation is transactional: active assignments and kiosk sessions are revoked and notification/outbox
+        records are created together. A completed order is terminal (`400 ORDER_ALREADY_COMPLETED`); a second
+        cancellation is rejected (`409 ORDER_ALREADY_CANCELLED`). Cancellation is also rejected while an open
+        attendance session exists (`409 ORDER_HAS_ACTIVE_ATTENDANCE`). Clients should send the current order
+        `version` as `expected_version`; stale writes return `409 ORDER_VERSION_CONFLICT`.
       parameters:
         - name: id
           in: path
@@ -2282,6 +3004,7 @@ paths:
               postman:
                 value:
                   reason: Client cancelled the event.
+                  expected_version: 3
       responses:
         '200':
           description: Order cancelled
@@ -2295,8 +3018,12 @@ paths:
           description: Worker and super admin roles cannot cancel orders
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '409':
-          description: Order is already cancelled
+          description: |
+            Order is already cancelled, has an open attendance session, changed concurrently, or the supplied
+            version is stale (`ORDER_ALREADY_CANCELLED`, `ORDER_HAS_ACTIVE_ATTENDANCE`,
+            `ORDER_CANCEL_CONFLICT`, or `ORDER_VERSION_CONFLICT`).
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /orders/{id}/assign:
     post:
@@ -2659,38 +3386,41 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VenueKioskCreateResponse' }
 
-  /attendance/venue-kiosks/{token}:
+  /attendance/venue-kiosks/context:
     get:
       tags: [Attendance]
       summary: Get public persistent kiosk context
-      description: Public but venue-kiosk-token-protected. Returns safe display context and current active order if any.
+      description: |
+        Capability-protected venue display context. The capability is sent only in
+        X-Kiosk-Capability and is never echoed in the response or placed in an API path.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Safe kiosk context
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/VenueKiosk' }
+              schema: { $ref: '#/components/schemas/VenueKioskPublicContext' }
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled or revoked
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
-  /attendance/venue-kiosks/{token}/qr-token:
+  /attendance/venue-kiosks/qr-token:
     post:
       tags: [Attendance]
       summary: Generate fresh order-based 30-second venue kiosk QR
+      description: The kiosk capability is accepted only in X-Kiosk-Capability and is never echoed.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Fresh kiosk QR token
@@ -2793,7 +3523,7 @@ paths:
                 revoked_at: null
                 refresh_interval_seconds: 30
                 kiosk_token: "{{kiosk_token}}"
-                kiosk_url: "/kiosk/{{kiosk_token}}"
+                kiosk_url: "/kiosk#capability={{kiosk_token}}"
         '403':
           description: Company cannot create a kiosk for another company's assignment
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -2804,16 +3534,18 @@ paths:
           description: Assignment is not accepted/active
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
-  /attendance/kiosk-sessions/{token}:
+  /attendance/kiosk-sessions/context:
     get:
       tags: [Attendance]
       summary: Get public QR kiosk display context
-      description: Public but kiosk-token-protected. Returns only safe venue/order context and never returns auth credentials or QR signing secrets.
+      description: |
+        Capability-protected display context. X-Kiosk-Capability carries the
+        capability; the response never returns it, auth credentials, or signing secrets.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Safe kiosk context
@@ -2821,7 +3553,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/KioskSession' }
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled, expired, revoked, or assignment/order inactive
@@ -2830,18 +3562,18 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: "QR ekrani deaktiv edilib.", code: KIOSK_SESSION_INACTIVE }
 
-  /attendance/kiosk-sessions/{token}/qr-token:
+  /attendance/kiosk-sessions/qr-token:
     post:
       tags: [Attendance]
       summary: Generate fresh 30-second kiosk QR token
       description: |
-        Public but kiosk-token-protected. Generates a fresh signed attendance QR token every 30 seconds.
+        X-Kiosk-Capability carries the kiosk capability outside the URL. Generates a fresh signed attendance QR token every 30 seconds.
         The previous displayed QR expires according to expires_at and must not be treated as valid after expiry.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Fresh kiosk QR token
@@ -2859,7 +3591,7 @@ paths:
                 expires_at: "2030-01-15T10:00:30.000Z"
                 refresh_after_seconds: 30
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled, expired, revoked, or assignment/order inactive
