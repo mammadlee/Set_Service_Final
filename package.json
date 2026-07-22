@@ -27,6 +27,7 @@
     "test:document-backfill": "ts-node scripts/private-document-backfill-regression.ts",
     "test:backend-access": "ts-node scripts/backend-access-regression.ts",
     "test:company-report-isolation": "ts-node scripts/company-report-isolation-regression.ts",
+    "test:report-aggregation": "ts-node scripts/report-aggregation-regression.ts",
     "test:backend-infrastructure": "ts-node scripts/backend-infrastructure-regression.ts",
     "test:audit-transactions": "ts-node scripts/audit-transaction-regression.ts",
     "test:privacy-deletion": "ts-node scripts/privacy-deletion-regression.ts",

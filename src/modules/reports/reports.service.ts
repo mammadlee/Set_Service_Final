@@ -32,8 +32,8 @@ export async function getAdminReportSummary(
     rejectedAssignments,
     pendingWorkerApprovals,
     pendingCompanyApprovals,
-    workerWorkRows,
-    companyUsageRows,
+    workerWorkGroups,
+    companyUsageGroups,
     attendanceTotal,
     attendanceCompleted,
     attendanceOpen,
@@ -68,23 +68,15 @@ export async function getAdminReportSummary(
       ? Promise.resolve(0)
       : prisma.worker.count({ where: pendingWorkerWhere }),
     prisma.company.count({ where: pendingCompanyWhere }),
-    prisma.attendanceLog.findMany({
+    prisma.attendanceLog.groupBy({
+      by: ['assignment_id'],
       where: { ...attendanceWhere, checkout_time: { not: null } },
-      select: {
-        assignment: {
-          select: {
-            worker_id: true,
-            worker: { select: { user: { select: { name: true } } } },
-          },
-        },
-      },
+      _count: { _all: true },
     }),
-    prisma.order.findMany({
+    prisma.order.groupBy({
+      by: ['company_id'],
       where: orderWhere,
-      select: {
-        company_id: true,
-        company: { select: { name: true } },
-      },
+      _count: { _all: true },
     }),
     prisma.attendanceLog.count({ where: attendanceWhere }),
     prisma.attendanceLog.count({ where: { ...attendanceWhere, checkout_time: { not: null } } }),
@@ -144,25 +136,43 @@ export async function getAdminReportSummary(
     checkedInWorkerIds.add(row.assignment.worker_id);
   }
 
+  const [workerAssignments, usageCompanies] = await Promise.all([
+    prisma.assignment.findMany({
+      where: { id: { in: workerWorkGroups.map((row) => row.assignment_id) } },
+      select: {
+        id: true,
+        worker_id: true,
+        worker: { select: { user: { select: { name: true } } } },
+      },
+    }),
+    prisma.company.findMany({
+      where: { id: { in: companyUsageGroups.map((row) => row.company_id) } },
+      select: { id: true, name: true },
+    }),
+  ]);
+
   const workerWorkCounts: Record<string, { worker_id: string; worker_name: string; completed_count: number }> = {};
-  for (const row of workerWorkRows) {
-    const workerId = row.assignment.worker_id;
+  const completedCountByAssignment = new Map(
+    workerWorkGroups.map((row) => [row.assignment_id, row._count._all]),
+  );
+  for (const assignment of workerAssignments) {
+    const workerId = assignment.worker_id;
     workerWorkCounts[workerId] ??= {
       worker_id: workerId,
-      worker_name: row.assignment.worker.user.name,
+      worker_name: assignment.worker.user.name,
       completed_count: 0,
     };
-    workerWorkCounts[workerId].completed_count += 1;
+    workerWorkCounts[workerId].completed_count += completedCountByAssignment.get(assignment.id) ?? 0;
   }
 
   const companyUsage: Record<string, { company_id: string; company_name: string; order_count: number }> = {};
-  for (const row of companyUsageRows) {
-    companyUsage[row.company_id] ??= {
+  const companyNames = new Map(usageCompanies.map((company) => [company.id, company.name]));
+  for (const row of companyUsageGroups) {
+    companyUsage[row.company_id] = {
       company_id: row.company_id,
-      company_name: row.company.name,
-      order_count: 0,
+      company_name: companyNames.get(row.company_id) ?? 'Unknown company',
+      order_count: row._count._all,
     };
-    companyUsage[row.company_id].order_count += 1;
   }
 
   const assignmentStats: Array<{ status: string; count: number }> = [];
