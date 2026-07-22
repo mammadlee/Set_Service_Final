@@ -32,6 +32,7 @@ class AppStrings {
       'Canlı versiya localhost və ya emulator ünvanı ilə işləməməlidir. Canlı API ünvanını verin.';
   static const configErrorBaseUrlInsecure =
       'Canlı versiyada API ünvanı yalnız HTTPS istifadə etməlidir.';
+  static const kioskUrlBlocked = 'Etibarsız QR linkinin açılması bloklandı.';
 
   static const roleSelectionTitle = 'SET Service-ə xoş gəlmisiniz';
   static const roleSelectionSubtitle =

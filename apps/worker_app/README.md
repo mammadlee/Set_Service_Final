@@ -57,7 +57,8 @@ The app uses:
 - Flutter Secure Storage for tokens
 - Provider/ChangeNotifier for app state
 - Typed models for backend responses
-- `--dart-define=BASE_URL=...` for environment configuration
+- `--dart-define=BASE_URL=...` for API environment configuration
+- `--dart-define=KIOSK_BASE_URL=...` to override the exact trusted kiosk origin/path base (defaults to `https://kiosk.setservice.az`)
 
 ## Backend Requirements
 

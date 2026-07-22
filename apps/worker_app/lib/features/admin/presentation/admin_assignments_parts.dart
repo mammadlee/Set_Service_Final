@@ -753,16 +753,14 @@ class _AssignmentCard extends StatelessWidget {
   }
 
   Future<void> _openKioskUrl(BuildContext context, String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) {
-      await Clipboard.setData(ClipboardData(text: url));
-      if (!context.mounted) return;
+    if (!KioskUrlPolicy.isAllowed(url)) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('QR linki kopyalandı.')));
+      ).showSnackBar(const SnackBar(content: Text(AppStrings.kioskUrlBlocked)));
       return;
     }
 
+    final uri = Uri.parse(url.trim());
     final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

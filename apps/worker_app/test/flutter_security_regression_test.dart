@@ -113,22 +113,28 @@ void main() {
   });
 
   group('kiosk URL security', () {
-    test('accepts only absolute credential-free HTTPS URLs', () {
+    test('accepts only the whitelisted kiosk origin and capability path', () {
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'https://kiosk.example.test/session?token=abc',
+          'https://kiosk.setservice.az/kiosk#capability=abc',
         ),
         isTrue,
       );
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'http://kiosk.example.test/session',
+          'https://evil.example.test/kiosk#capability=abc',
         ),
         isFalse,
       );
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'https://user:pass@kiosk.example.test/session',
+          'https://kiosk.setservice.az.evil.test/kiosk#capability=abc',
+        ),
+        isFalse,
+      );
+      expect(
+        KioskSessionResult.isSecureKioskUrl(
+          'https://user:pass@kiosk.setservice.az/kiosk#capability=abc',
         ),
         isFalse,
       );
@@ -142,7 +148,7 @@ void main() {
     test('rejects an insecure URL while parsing the API response', () {
       expect(
         () => KioskSessionResult.fromJson({
-          'kiosk_url': 'http://kiosk.example.test/session',
+          'kiosk_url': 'https://evil.example.test/kiosk#capability=abc',
         }),
         throwsFormatException,
       );

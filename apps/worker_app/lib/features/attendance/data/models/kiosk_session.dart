@@ -1,3 +1,5 @@
+import '../../../../core/config/kiosk_url_policy.dart';
+
 class KioskSessionResult {
   const KioskSessionResult({
     required this.id,
@@ -38,11 +40,6 @@ class KioskSessionResult {
   }
 
   static bool isSecureKioskUrl(String value) {
-    final uri = Uri.tryParse(value.trim());
-    return uri != null &&
-        uri.isAbsolute &&
-        uri.scheme.toLowerCase() == 'https' &&
-        uri.host.isNotEmpty &&
-        uri.userInfo.isEmpty;
+    return KioskUrlPolicy.isAllowed(value);
   }
 }

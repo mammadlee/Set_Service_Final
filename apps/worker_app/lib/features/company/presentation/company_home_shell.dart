@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/config/kiosk_url_policy.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/session/role_session_controller.dart';
 import '../../../core/theme/app_theme.dart';
