@@ -434,7 +434,7 @@ export async function uploadMyCompanyDocument(
 
   try {
     const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.$queryRaw`SELECT id FROM companies WHERE id = ${company.id}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM companies WHERE id = ${company.id} FOR UPDATE`;
       const current = await tx.company.findUniqueOrThrow({ where: { id: company.id }, select: { documents: true } });
       const currentDocuments = normalizeCompanyDocuments(current.documents);
       const previous = currentDocuments.find((item) => item.type === documentType);

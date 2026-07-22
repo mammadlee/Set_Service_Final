@@ -343,7 +343,7 @@ async function markDocumentPendingPublicCleanup(
   replacement: JsonDocument,
 ): Promise<void> {
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${workerId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${workerId} FOR UPDATE`;
     const current = await tx.worker.findUniqueOrThrow({
       where: { id: workerId },
       select: { documents: true },
@@ -391,7 +391,7 @@ async function clearPendingPublicCleanup(
   sourceKey: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${workerId}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${workerId} FOR UPDATE`;
     const current = await tx.worker.findUniqueOrThrow({
       where: { id: workerId },
       select: { documents: true },

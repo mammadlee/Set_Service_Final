@@ -149,6 +149,7 @@ jobs:
         run: |
           npm run test:backend-access
           npm run test:backend-infrastructure
+          npm run test:text-id-locks
           npm run test:audit-transactions
           npm run test:approval-document-security
           npm run test:privacy-deletion
@@ -242,6 +243,11 @@ jobs:
 
       - name: Migration/schema drift gate
         run: npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      - name: PostgreSQL text ID row-lock regression
+        env:
+          TEXT_ID_LOCK_TEST_CONFIRM: "1"
+        run: npm run test:text-id-locks
 
       - name: Auth sessions and OTP concurrency regression
         env:

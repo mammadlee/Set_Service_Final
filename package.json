@@ -22,6 +22,7 @@
     "smoke:mvp": "ts-node scripts/mvp-flow-smoke.ts",
     "test:auth-security": "ts-node scripts/auth-security-regression.ts",
     "test:worker-security": "ts-node scripts/worker-security-regression.ts",
+    "test:text-id-locks": "ts-node scripts/text-id-lock-regression.ts",
     "test:document-backfill": "ts-node scripts/private-document-backfill-regression.ts",
     "test:backend-access": "ts-node scripts/backend-access-regression.ts",
     "test:backend-infrastructure": "ts-node scripts/backend-infrastructure-regression.ts",

@@ -350,7 +350,7 @@ export async function uploadMyDocument(
   let result: { updated: WorkerProfileRecord };
   try {
     result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id} FOR UPDATE`;
       const current = await tx.worker.findUniqueOrThrow({
         where: { id: worker.id },
         select: { documents: true },
@@ -418,7 +418,7 @@ export async function deleteMyDocument(userId: string, type: string) {
     });
     if (!worker) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
 
-    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id} FOR UPDATE`;
     const current = await tx.worker.findUniqueOrThrow({
       where: { id: worker.id },
       select: { id: true, documents: true },
@@ -489,7 +489,7 @@ export async function requestMyAccountDeletion(userId: string) {
     });
     if (!worker) throw Errors.notFound('Worker account not found.', 'WORKER_NOT_FOUND');
 
-    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id}::uuid FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM workers WHERE id = ${worker.id} FOR UPDATE`;
     const current = await tx.worker.findUniqueOrThrow({
       where: { id: worker.id },
       select: {
