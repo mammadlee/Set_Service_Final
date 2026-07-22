@@ -10,6 +10,7 @@
     "test:security": "node --test ../../scripts/web-security-regression.test.mjs",
     "prebuild": "node ../../scripts/validate-web-env.mjs admin",
     "build": "tsc && vite build",
+    "postbuild": "node ../../scripts/verify-built-security-headers.mjs dist",
     "preview": "vite preview"
   },
   "devDependencies": {

@@ -55,6 +55,10 @@ const corsOptions: CorsOptions = {
 };
 
 app.use(helmet());
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(), payment=(), usb=()');
+  next();
+});
 app.use(cors(corsOptions));
 app.use(requestContextMiddleware);
 app.use(express.json({ limit: '1mb' }));

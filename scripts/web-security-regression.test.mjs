@@ -40,6 +40,11 @@ for (const app of ['admin_panel', 'company_dashboard']) {
     assert.match(main, /<ErrorBoundary>/);
     assert.match(vite, /sourcemap:\s*false/);
     assert.match(html, /name="referrer" content="no-referrer"/);
+    const headers = await source(`apps/${app}/public/_headers`);
+    assert.match(headers, /Content-Security-Policy: default-src 'self'/);
+    assert.match(headers, /frame-ancestors 'none'/);
+    assert.match(headers, /Strict-Transport-Security:/);
+    assert.match(headers, /Permissions-Policy:/);
   });
 }
 
@@ -72,6 +77,7 @@ test('QR kiosk suppresses token-bearing request metadata and locks hidden screen
   const main = await source('apps/qr_kiosk/src/main.ts');
   const config = await source('apps/qr_kiosk/src/config.ts');
   const html = await source('apps/qr_kiosk/index.html');
+  const headers = await source('apps/qr_kiosk/public/_headers');
   const attendanceRouter = await source('src/modules/attendance/attendance.router.ts');
   const attendanceService = await source('src/modules/attendance/attendance.service.ts');
 
@@ -91,6 +97,10 @@ test('QR kiosk suppresses token-bearing request metadata and locks hidden screen
   assert.match(config, /parsed\.protocol !== 'https:'/);
   assert.match(config, /isPrivateOrLocalHostname/);
   assert.match(html, /name="referrer" content="no-referrer"/);
+  assert.match(headers, /Content-Security-Policy: default-src 'self'/);
+  assert.match(headers, /frame-ancestors 'none'/);
+  assert.match(headers, /Strict-Transport-Security:/);
+  assert.match(headers, /Permissions-Policy:/);
   assert.match(attendanceService, /\/kiosk#capability=\$\{encodeURIComponent\(token\)\}/);
   assert.match(attendanceService, /toVenueKioskPublicResponse/);
   assert.match(attendanceService, /toVenueKioskManagementResponse/);
