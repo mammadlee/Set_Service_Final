@@ -4,7 +4,7 @@ export function resolveApiBaseUrl(): string {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim();
   if (!configuredUrl) {
     if (import.meta.env.PROD) {
-      throw new Error('VITE_API_BASE_URL is required for a production QR kiosk build.');
+      throw new Error('QR kiosk tətbiqinin canlı versiyası üçün VITE_API_BASE_URL mütləq verilməlidir.');
     }
     return appendApiVersion(DEV_BASE_URL);
   }
@@ -13,20 +13,20 @@ export function resolveApiBaseUrl(): string {
   try {
     parsed = new URL(configuredUrl);
   } catch {
-    throw new Error('QR kiosk API URL must be an absolute URL.');
+    throw new Error('QR kiosk tətbiqinin API ünvanı tam URL olmalıdır.');
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('QR kiosk API URL must use HTTP or HTTPS.');
+    throw new Error('QR kiosk tətbiqinin API ünvanı HTTP və ya HTTPS istifadə etməlidir.');
   }
   if (import.meta.env.PROD && parsed.protocol !== 'https:') {
-    throw new Error('Production QR kiosk API URL must use HTTPS.');
+    throw new Error('Canlı mühitdə QR kiosk tətbiqinin API ünvanı HTTPS istifadə etməlidir.');
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('QR kiosk API URL must not contain credentials, a query string, or a fragment.');
+    throw new Error('QR kiosk tətbiqinin API ünvanında giriş məlumatları, sorğu sətri və ya fraqment olmamalıdır.');
   }
   if (import.meta.env.PROD && isPrivateOrLocalHostname(parsed.hostname)) {
-    throw new Error('Production QR kiosk API URL must use a public hostname.');
+    throw new Error('Canlı mühitdə QR kiosk tətbiqinin API ünvanı açıq host adından istifadə etməlidir.');
   }
 
   return appendApiVersion(parsed.toString());

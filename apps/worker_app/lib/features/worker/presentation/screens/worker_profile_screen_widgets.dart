@@ -33,12 +33,12 @@ class _EmailVerificationBlock extends StatelessWidget {
         hasEmail && (changed || hasPending || !verifiedCurrent);
 
     if (!hasEmail) {
-      return const InlineMessage(message: 'Email daxil edilməyib.');
+      return const InlineMessage(message: 'E-poçt ünvanı daxil edilməyib.');
     }
 
     if (verifiedCurrent && !hasPending) {
       return const PremiumChip(
-        label: 'Email təsdiqlənib',
+        label: 'E-poçt təsdiqlənib',
         icon: Icons.verified_outlined,
       );
     }
@@ -48,8 +48,8 @@ class _EmailVerificationBlock extends StatelessWidget {
       children: [
         InlineMessage(
           message: hasPending
-              ? 'Email təsdiqlənməyib: ${pendingEmail!.trim()}'
-              : 'Email təsdiqlənməyib.',
+              ? 'E-poçt təsdiqlənməyib: ${pendingEmail!.trim()}'
+              : 'E-poçt təsdiqlənməyib.',
         ),
         if (needsVerification) ...[
           const SizedBox(height: 10),
@@ -66,14 +66,14 @@ class _EmailVerificationBlock extends StatelessWidget {
               keyboardType: TextInputType.number,
               maxLength: 6,
               decoration: const InputDecoration(
-                labelText: 'Email təsdiq kodu',
+                labelText: 'E-poçt təsdiq kodu',
                 counterText: '',
                 prefixIcon: Icon(Icons.pin_outlined),
               ),
             ),
             const SizedBox(height: 10),
             LoadingButton(
-              label: 'Emaili təsdiqlə',
+              label: 'E-poçtu təsdiqlə',
               icon: Icons.verified_outlined,
               loading: loading && otpSent,
               onPressed: loading ? null : onConfirm,
@@ -198,7 +198,7 @@ class _ProfileOverview extends StatelessWidget {
           ),
           _ProfileMenuRow(
             title: 'Əlaqə',
-            summary: 'Düzəltmək üçün açın',
+            summary: 'Redaktə etmək üçün açın',
             icon: Icons.phone_outlined,
             onTap: onEditContact,
           ),

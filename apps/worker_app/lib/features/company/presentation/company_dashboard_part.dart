@@ -79,7 +79,7 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
             PremiumEntrance(
               child: PremiumHeroPanel(
                 title: data.company.name,
-                subtitle: 'Restoran Meneceri',
+                subtitle: 'Müəssisə idarə paneli',
                 trailing: StatusPill(status: data.company.status),
                 children: [
                   Column(

@@ -185,7 +185,7 @@ class _CreateAssignmentScreenState extends State<_CreateAssignmentScreen> {
                   _AdminSelectorTile(
                     label: AppStrings.selectOrder,
                     value: selectedOrder?.title,
-                    placeholder: 'Sifarişi seç',
+                    placeholder: 'Sifariş seçin',
                     onTap: data.orders.isEmpty
                         ? null
                         : () async {
@@ -490,7 +490,7 @@ class _AdminWorkerAssignmentPickerItem extends StatelessWidget {
               ),
               if (worker.isFocTraining) ...[
                 const SizedBox(width: 8),
-                const PremiumChip(label: 'F.O.C. Təlim'),
+                const PremiumChip(label: 'F.O.C. təlim'),
               ],
             ],
           ),
@@ -676,7 +676,7 @@ class _AssignmentCard extends StatelessWidget {
       builder: (_) => const AlertDialog(
         title: Text('QR kiosk idarəetməsi'),
         content: Text(
-          'Venue kiosk linkləri admin panelində sifariş/növbə əsasında aktiv edilir. Mobil admin kartı işçi təyinatını idarə etmək üçün saxlanılıb.',
+          'Məkan üçün kiosk linkləri admin panelində sifarişə və ya növbəyə əsasən aktiv edilir. Mobil admin kartı işçi təyinatını idarə etmək üçün saxlanılıb.',
         ),
       ),
     );
@@ -717,11 +717,11 @@ class _AssignmentCard extends StatelessWidget {
                 await Clipboard.setData(ClipboardData(text: kiosk.kioskUrl));
                 if (!dialogContext.mounted) return;
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  const SnackBar(content: Text('QR linki kopyalandı.')),
+                  const SnackBar(content: Text('QR linki köçürüldü.')),
                 );
               },
               icon: const Icon(Icons.copy_outlined),
-              label: const Text('QR linkini kopyala'),
+              label: const Text('QR linkini köçür'),
             ),
             TextButton.icon(
               onPressed: () async {

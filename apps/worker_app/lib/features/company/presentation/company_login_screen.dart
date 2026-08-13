@@ -53,7 +53,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Mail vasitəsilə şirkət hesabınıza daxil olun.',
+                AppStrings.companyLoginSubtitle,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: BrandColors.darkText,
@@ -241,7 +241,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                           ),
                           ButtonSegment(
                             value: 'email',
-                            label: Text('Email ilə'),
+                            label: Text('E-poçt ilə'),
                           ),
                         ],
                         selected: {method},

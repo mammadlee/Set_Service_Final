@@ -11,12 +11,22 @@ class AppStrings {
   static const refresh = 'Yenilə';
   static const logout = 'Çıxış et';
   static const cancel = 'Ləğv et';
+  static const accountAndPrivacy = 'Hesab və məxfilik';
+  static const deleteAccount = 'Hesabı sil';
+  static const deleteAccountTitle = 'Hesab həmişəlik silinsin?';
+  static const deleteAccountDescription =
+      'Hesabın silinməsi şəxsi profil məlumatlarını anonimləşdirir, aktiv sessiyaları bağlayır və sənədlərin silinməsi prosesini başladır.';
+  static const deleteAccountWarning =
+      'Bu əməliyyat geri qaytarılmır. Profiliniz deaktiv ediləcək, şəxsi məlumatlarınız anonimləşdiriləcək və yenidən daxil ola bilməyəcəksiniz.';
+  static const deleteAccountFailed =
+      'Hesab silinmədi. İnternet bağlantısını yoxlayıb yenidən cəhd edin.';
   static const backToLogin = 'Giriş səhifəsinə qayıt';
   static const notFound = 'Ekran tapılmadı';
   static const noData = 'Məlumat tapılmadı';
   static const unknownError =
       'Xəta baş verdi. Zəhmət olmasa yenidən cəhd edin.';
-  static const networkError = 'Şəbəkə bağlantısı alınmadı. İnterneti yoxlayın.';
+  static const networkError =
+      'Şəbəkəyə qoşulmaq mümkün olmadı. İnternet bağlantısını yoxlayın.';
   static const validationError = 'Məlumatları yoxlayın və yenidən cəhd edin.';
   static const tooManyRequests =
       'Çox sayda sorğu göndərilib. Bir az sonra yenidən cəhd edin.';
@@ -47,7 +57,7 @@ class AppStrings {
   static const continueAsCompany = 'Müəssisə kimi davam et';
   static const adminLogin = 'Admin girişi';
   static const internalUseOnly = 'Yalnız daxili istifadə üçün';
-  static const workerRoleBody = 'Günəmuzd işlər səni gözləyir. İndi başlayın!';
+  static const workerRoleBody = 'Günəmuzd işlər sizi gözləyir. İndi başlayın!';
   static const companyRoleBody = 'Sifarişləri və işçi davamiyyətini izləyin.';
   static const adminRoleBody =
       'Gündəlik təsdiq və təyinat əməliyyatlarını idarə edin.';
@@ -65,7 +75,7 @@ class AppStrings {
   static const orderTitle = 'Başlıq';
   static const description = 'Təsvir';
   static const requiredWorkers = 'Tələb olunan işçi sayı';
-  static const payRate = 'Ödəniş';
+  static const payRate = 'Ödəniş məbləği';
   static const save = 'Yadda saxla';
   static const cancelOrder = 'Sifarişi ləğv et';
   static const activeOrders = 'Aktiv sifarişlər';
@@ -76,17 +86,17 @@ class AppStrings {
   static const assignedWorkers = 'Təyin olunmuş işçilər';
   static const shiftStaff = 'Növbə heyəti';
   static const workerList = 'İşçi siyahısı';
-  static const qrTokens = 'QR token';
-  static const generateQrToken = 'QR token yarat';
+  static const qrTokens = 'QR tokenləri';
+  static const generateQrToken = 'QR tokeni yarat';
   static const tokenCopied = 'Token hazırdır. İşçiyə göstərin və ya paylaşın.';
   static const rateWorker = 'İşçini qiymətləndir';
-  static const checkoutIncomplete = 'Checkout tamamlanmayıb';
+  static const checkoutIncomplete = 'Çıxış qeydə alınmayıb';
   static const rating = 'Reytinq';
   static const ratingFeedback = 'Rəy';
   static const ratingFeedbackHint = 'İstəyə bağlı qısa rəy yazın';
   static const ratingSent = 'Reytinq göndərildi.';
   static const ratingAvailableAfterCheckout =
-      'Reytinq yalnız checkout tamamlandıqdan sonra qəbul edilir.';
+      'Reytinq yalnız çıxış qeydə alındıqdan sonra qəbul edilir.';
   static const companyLoginSubtitle =
       'Müəssisə hesabınıza e-poçt və şifrə ilə daxil olun.';
   static const companyPendingApprovalMessage =
@@ -128,7 +138,7 @@ class AppStrings {
   static const todayAttendance = 'Bugünkü davamiyyət';
   static const allAttendance = 'Bütün davamiyyət';
   static const assignmentHistory = 'Təyinat tarixçəsi';
-  static const details = 'Detallar';
+  static const details = 'Ətraflı məlumat';
   static const status = 'Status';
   static const id = 'ID';
   static const order = 'Sifariş';
@@ -147,13 +157,13 @@ class AppStrings {
   static const openAttendance = 'Açıq girişlər';
   static const todayActiveOrders = 'Bugünkü aktiv sifarişlər';
   static const pendingOrders = 'Gözləyən sifarişlər';
-  static const checkedInWorkersToday = 'Bugün giriş edən işçilər';
+  static const checkedInWorkersToday = 'Bu gün giriş edən işçilər';
   static const rejectedAssignments = 'Rədd edilən təyinatlar';
   static const activeStaffToday = 'Bugünkü aktiv heyət';
   static const activeWorkers = 'Aktiv işçilər';
   static const pendingApprovals = 'Gözləyən təsdiqlər';
-  static const todayCheckIns = 'Bugünkü check-in';
-  static const averageRating = 'Ortalama reytinq';
+  static const todayCheckIns = 'Bugünkü girişlər';
+  static const averageRating = 'Orta reytinq';
   static const operationsSummary = 'Əməliyyat xülasəsi';
   static const elegantEmptyTitle = 'Hələ məlumat yoxdur';
   static const noAssignmentsPremium =
@@ -173,7 +183,7 @@ class AppStrings {
   static const dateRequired =
       'Tarixi ISO formatında daxil edin və ya tarix seçin.';
   static const loadFailed = 'Məlumatlar yüklənmədi.';
-  static const actionFailed = 'Əməliyyat alınmadı.';
+  static const actionFailed = 'Əməliyyat yerinə yetirilmədi.';
   static const requiredField = 'Bu xana mütləqdir.';
   static const positiveNumberRequired = 'Müsbət rəqəm daxil edin.';
   static const startDateFuture = 'Başlama vaxtı gələcəkdə olmalıdır.';
@@ -205,7 +215,7 @@ class AppStrings {
   static const createNewPassword = 'Yeni şifrə yaradın';
   static const saveNewPassword = 'Yeni şifrəni yadda saxla';
   static const passwordValidation =
-      'Şifrə ən azı 8 simvol olmalı, hərf və rəqəm içerməlidir.';
+      'Şifrə ən azı 8 simvoldan ibarət olmalı, həm hərf, həm də rəqəm ehtiva etməlidir.';
   static const passwordsDoNotMatch = 'Şifrələr uyğun gəlmir.';
   static const passwordResetSuccess =
       'Şifrə yeniləndi. Yeni şifrə ilə daxil olun.';
@@ -221,10 +231,10 @@ class AppStrings {
       'Telefon təsdiqindən sonra şifrə yaradın və profiliniz admin təsdiqinə göndəriləcək.';
   static const createWorkerProfile = 'İşçi profilinizi yaradın';
   static const fullName = 'Ad və soyad';
-  static const fullNameRequired = 'Ad və soyad mütləqdir';
+  static const fullNameRequired = 'Ad və soyad mütləqdir.';
   static const position = 'Vəzifə';
   static const positionHint = 'Ofisiant, tədbir işçisi';
-  static const positionRequired = 'Vəzifə mütləqdir';
+  static const positionRequired = 'Vəzifə mütləqdir.';
   static const skills = 'Bacarıqlar';
   static const skillsHint = 'Bacarıq seçin və ya əlavə edin';
   static const languages = 'Dil bilikləri';
@@ -236,17 +246,17 @@ class AppStrings {
   static const enterOtpTitle = 'OTP kodu daxil edin';
   static const otpCode = 'OTP kodu';
   static const verifyOtp = 'OTP-ni təsdiqlə';
-  static const otpValidation = '6 rəqəmli OTP kodu daxil edin';
+  static const otpValidation = '6 rəqəmli OTP kodu daxil edin.';
   static const otpSessionExpired =
       'OTP sessiyası bitib. Zəhmət olmasa yenidən başlayın.';
   static String otpSentTo(String? phone) =>
-      'OTP kodu ${phone?.isNotEmpty == true ? phone : 'telefon nömrənizə'} göndərildi.';
+      'OTP kodu ${phone?.isNotEmpty == true ? '$phone nömrəsinə' : 'telefon nömrənizə'} göndərildi.';
   static String otpSentToCompanyAccount(String? email) =>
-      'OTP kodu ${email?.isNotEmpty == true ? email : 'müəssisə hesabınıza'} bağlı telefon nömrəsinə göndərildi.';
+      'OTP kodu ${email?.isNotEmpty == true ? '$email e-poçt ünvanına bağlı telefon nömrəsinə' : 'müəssisə hesabınıza bağlı telefon nömrəsinə'} göndərildi.';
 
   static const pendingApprovalTitle = 'Təsdiq gözlənilir';
   static const pendingApprovalBody =
-      'İşçi profiliniz təsdiqlənib və super admin təsdiqini gözləyir. Təsdiqdən sonra tətbiqə daxil ola biləcəksiniz.';
+      'İşçi profiliniz yaradılıb və super admin təsdiqini gözləyir. Təsdiqdən sonra tətbiqə daxil ola biləcəksiniz.';
   static const pendingApprovalMessage = 'Profiliniz admin təsdiqini gözləyir.';
 
   static const accountUnavailableTitle = 'Hesab əlçatan deyil';
@@ -271,8 +281,8 @@ class AppStrings {
   static const documents = 'Sənədlər';
   static const profilePhoto = 'Profil şəkli';
   static const uploadProfilePhoto = 'Profil şəkli yüklə';
-  static const healthCertificate = 'Sağlamlıq sənədi';
-  static const uploadHealthCertificate = 'Sağlamlıq sənədi yüklə';
+  static const healthCertificate = 'Sağlamlıq arayışı';
+  static const uploadHealthCertificate = 'Sağlamlıq arayışı yüklə';
   static const criminalRecord = 'Məhkumluq arayışı';
   static const uploadCriminalRecord = 'Məhkumluq arayışı yüklə';
   static const workHistory = 'İş tarixçəsi';
@@ -302,9 +312,10 @@ class AppStrings {
   static const noDocumentsUploaded = 'Hələ sənəd yüklənməyib.';
   static const uploadFileTooLarge = 'Fayl ölçüsü 5 MB-dan böyük olmamalıdır.';
   static const profilePrivateNote =
-      'Əlaqə məlumatlarınız yalnız adminə görünür. Müəssisələr profilinizin icazəli hissələrini görə bilir.';
+      'Əlaqə məlumatlarınız yalnız admin tərəfindən görünür. Müəssisələr profilinizin icazəli hissələrini görə bilər.';
   static const csvHint = 'Vergüllə ayırın';
-  static const available = 'Siz işlər üçün əlçatan kimi qeyd olunmusunuz.';
+  static const available =
+      'Siz iş təklifləri üçün əlçatan kimi qeyd olunmusunuz.';
   static const unavailable = 'Hazırda əlçatan deyilsiniz.';
   static const newAssignments = 'Yeni işlər';
   static const acceptedAssignments = 'Qəbul edilən işlər';
@@ -314,7 +325,7 @@ class AppStrings {
   static const dashboardLoadFailed = 'İdarə paneli yüklənmədi.';
   static String greeting(String firstName) => 'Salam, $firstName';
 
-  static const assignmentDetail = 'İş detalı';
+  static const assignmentDetail = 'İş haqqında ətraflı məlumat';
   static const noAssignments = 'Hələ iş yoxdur';
   static const upcomingJobs = 'Gələcək işlər';
   static const pastJobs = 'Keçmiş işlər';
@@ -322,11 +333,11 @@ class AppStrings {
   static const noUpcomingJobs = 'Gələcək iş tapılmadı.';
   static const noPastJobs = 'Keçmiş iş tapılmadı.';
   static const assignmentsLoadFailed = 'İşlər yüklənmədi.';
-  static const assignmentLoadFailed = 'İş detalı yüklənmədi.';
+  static const assignmentLoadFailed = 'İş məlumatları yüklənmədi.';
   static const assignmentUpdateFailed = 'İş statusu yenilənmədi.';
   static const acceptAssignment = 'Qəbul et';
   static const rejectAssignment = 'Rədd et';
-  static const company = 'Şirkət';
+  static const company = 'Müəssisə';
   static const category = 'Kateqoriya';
   static const location = 'Məkan';
   static const starts = 'Başlama';
@@ -335,7 +346,7 @@ class AppStrings {
   static const attendanceOnlyAccepted =
       'Giriş-çıxış yalnız aktiv sifariş üzrə qəbul edilmiş işlər üçün mümkündür.';
   static const assignmentAcceptedActive =
-      'İş qəbul edilib. İş yerində QR token ilə giriş edə bilərsiniz.';
+      'İş qəbul edilib. İş yerində QR tokeni ilə giriş edə bilərsiniz.';
   static const assignedStatusHelp =
       'Admin sizi bu işə təyin edib. Cavabınız gözlənilir.';
   static const acceptedStatusHelp = 'İşçi bu işi qəbul edib.';
@@ -359,13 +370,13 @@ class AppStrings {
   static const noAttendanceSession = 'Hələ giriş-çıxış qeydi yoxdur.';
   static const noOpenAttendanceSession = 'Açıq giriş sessiyası yoxdur.';
   static const qrHelp =
-      'QR kodu oxudaraq giriş və ya çıxış edə bilərsiniz. Kamera skanı əlçatan deyilsə, iş yerində yaradılan QR tokeni bura daxil edin.';
+      'QR kodu oxudaraq giriş və ya çıxış edə bilərsiniz. Kamera ilə oxutmaq mümkün deyilsə, iş yerində yaradılan QR tokenini bura daxil edin.';
   static const scanQr = 'QR oxut';
   static const scanQrTitle = 'QR kodu oxut';
   static const scanQrHelp =
       'Kameranı iş yerində göstərilən QR koda yönəldin. Kod oxunan kimi token avtomatik doldurulacaq.';
   static const qrScanned =
-      'QR kod oxundu. Giriş-çıxış əməliyyatını davam etdirə bilərsiniz.';
+      'QR kodu oxundu. Giriş-çıxış əməliyyatını davam etdirə bilərsiniz.';
   static const useManualQrToken = 'Tokeni əl ilə daxil et';
   static const cameraPermissionDenied =
       'Kamera icazəsi verilməyib. İcazəni telefon ayarlarından aktiv edin və ya tokeni əl ilə daxil edin.';
@@ -373,8 +384,8 @@ class AppStrings {
       'Bu cihazda QR oxutma əlçatan deyil. Tokeni əl ilə daxil edə bilərsiniz.';
   static const qrScannerError =
       'QR oxutma zamanı xəta baş verdi. Yenidən cəhd edin və ya tokeni əl ilə daxil edin.';
-  static const qrToken = 'QR token';
-  static const qrTokenHint = 'İş yerindəki QR tokeni daxil edin';
+  static const qrToken = 'QR tokeni';
+  static const qrTokenHint = 'İş yerindəki QR tokenini daxil edin';
   static const notes = 'Qeyd';
   static const optional = 'İstəyə bağlı';
   static const checkIn = 'Giriş et';
@@ -383,20 +394,22 @@ class AppStrings {
   static const checkoutConfirmMessage =
       'Aktiv girişiniz mövcuddur. Çıxış etmək istəyirsiniz?';
   static const checkoutConfirmAction = 'Bəli, çıxış et';
-  static const qrTokenRequired = 'QR token mütləqdir.';
-  static const checkInRecorded = 'Giriş edildi.';
-  static const checkOutRecorded = 'Çıxış edildi.';
+  static const qrTokenRequired = 'QR tokeni mütləqdir.';
+  static const checkInRecorded = 'Giriş qeydə alındı.';
+  static const checkOutRecorded = 'Çıxış qeydə alındı.';
   static const scanQrForCheckout =
       'Çıxış üçün iş yerindəki QR kodu yenidən oxudun.';
-  static const attendanceRequestFailed = 'Giriş-çıxış əməliyyatı alınmadı.';
+  static const attendanceRequestFailed =
+      'Giriş-çıxış əməliyyatı yerinə yetirilmədi.';
   static const attendanceLoadFailed = 'Giriş-çıxış məlumatları yüklənmədi.';
   static const assignmentMustBeAccepted =
       'Giriş-çıxış üçün iş qəbul edilmiş və aktiv olmalıdır.';
   static const alreadyCheckedIn = 'Bu iş üçün artıq giriş etmisiniz.';
   static const attendanceCompleted =
       'Bu iş üzrə giriş-çıxış sessiyası artıq tamamlanıb.';
-  static const qrInvalid = 'QR token bu iş üçün yanlışdır.';
-  static const qrExpired = 'QR tokenin vaxtı bitib. Yeni QR token istəyin.';
+  static const qrInvalid = 'QR tokeni bu iş üçün etibarlı deyil.';
+  static const qrExpired =
+      'QR tokeninin vaxtı bitib. Yenilənmiş QR kodunu oxudun.';
   static const attendanceNotCheckedIn = 'Çıxış üçün əvvəlcə giriş etməlisiniz.';
   static const attendanceNotFound = 'Giriş-çıxış qeydi tapılmadı.';
   static String attendanceCompletedSummary(
@@ -409,15 +422,16 @@ class AppStrings {
   }
 
   static String checkedInAt(String time) =>
-      '$time vaxtında giriş edildi. Çıxış etmək mümkündür.';
+      'Giriş $time vaxtında qeydə alınıb. İndi çıxış edə bilərsiniz.';
 
   static const notificationsLoadFailed = 'Bildirişlər yüklənmədi.';
-  static const noNotifications = 'Hələ bildiriş yoxdur';
-  static const markAllRead = 'Hamısını oxunmuş et';
+  static const noNotifications = 'Hələ bildiriş yoxdur.';
+  static const markAllRead = 'Hamısını oxunmuş kimi qeyd et';
   static const notificationAutoSendHelp =
       'Bildirişlər sistem hadisələrinə əsasən avtomatik göndərilir.';
-  static const notificationReadFailed = 'Bildirişi oxunmuş etmək alınmadı.';
-  static const notificationDetail = 'Bildiriş detalı';
+  static const notificationReadFailed =
+      'Bildirişi oxunmuş kimi qeyd etmək mümkün olmadı.';
+  static const notificationDetail = 'Bildiriş haqqında ətraflı məlumat';
   static const notificationSentAt = 'Göndərilmə vaxtı';
   static const notificationType = 'Bildiriş növü';
   static const notificationUnread = 'Oxunmayıb';
@@ -430,7 +444,8 @@ class AppStrings {
   static const systemNotification = 'Sistem bildirişi';
   static const notificationForbidden =
       'Bu bildirişi yeniləmək üçün icazəniz yoxdur.';
-  static const jobAssignedBody = 'Sizə yeni iş təyin olunub. Detallara baxın.';
+  static const jobAssignedBody =
+      'Sizə yeni iş təyin olunub. Ətraflı məlumatlara baxın.';
   static const workerApprovedBody =
       'Profiliniz təsdiqlənib. Artıq tətbiqdən istifadə edə bilərsiniz.';
 
@@ -492,12 +507,13 @@ class AppStrings {
       'INVALID_EMAIL_VERIFICATION_CODE' =>
         'Təsdiq kodu yanlışdır və ya vaxtı bitib.',
       'EMAIL_VERIFICATION_COOLDOWN' =>
-        'Yeni email təsdiq kodu istəmək üçün bir az gözləyin.',
+        'Yeni e-poçt təsdiq kodu istəmək üçün bir az gözləyin.',
       'PHONE_ALREADY_REGISTERED' =>
         'Bu telefon nömrəsi ilə artıq hesab yaradılıb.',
       'EMAIL_ALREADY_REGISTERED' =>
         'Bu e-poçt ünvanı ilə artıq hesab yaradılıb.',
-      'INVALID_CREDENTIALS' => 'Telefon/e-poçt və ya şifrə yanlışdır.',
+      'INVALID_CREDENTIALS' =>
+        'Telefon nömrəsi, e-poçt ünvanı və ya şifrə yanlışdır.',
       'OTP_LOGIN_DEPRECATED' =>
         'OTP ilə giriş artıq aktiv deyil. Şifrə ilə daxil olun.',
       'WORKER_NOT_APPROVED' => pendingApprovalMessage,
@@ -538,7 +554,7 @@ class AppStrings {
       'INVALID_DOCUMENT_TYPE' => 'Sənəd növü düzgün deyil.',
       'DUPLICATE_RATING' => 'Bu iş üzrə reytinq artıq verilib.',
       'RATING_NOT_AVAILABLE' =>
-        'Reytinq yalnız checkout tamamlandıqdan sonra verilə bilər.',
+        'Reytinq yalnız çıxış qeydə alındıqdan sonra verilə bilər.',
       'INVALID_WORKER_CLASS' => 'İşçi sinfi düzgün deyil.',
       _ => null,
     };

@@ -24,7 +24,7 @@ class KioskSessionResult {
   factory KioskSessionResult.fromJson(Map<String, dynamic> json) {
     final kioskUrl = json['kiosk_url'] as String? ?? '';
     if (!isSecureKioskUrl(kioskUrl)) {
-      throw const FormatException('Kiosk URL must use HTTPS.');
+      throw const FormatException('Kiosk ünvanı HTTPS istifadə etməlidir.');
     }
 
     return KioskSessionResult(

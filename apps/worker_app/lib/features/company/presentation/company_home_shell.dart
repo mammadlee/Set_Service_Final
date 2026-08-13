@@ -223,7 +223,7 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
         children: const [
           _MoreTile(
             icon: Icons.swap_horiz_rounded,
-            title: 'Aktivlik',
+            title: 'Giriş-çıxış',
             action: _CompanyMoreAction.attendance,
           ),
           _MoreTile(
@@ -233,7 +233,7 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
           ),
           _MoreTile(
             icon: Icons.logout_rounded,
-            title: 'Çıxış',
+            title: 'Hesabdan çıx',
             action: _CompanyMoreAction.logout,
           ),
         ],

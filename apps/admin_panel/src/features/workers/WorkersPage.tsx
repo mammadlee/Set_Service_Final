@@ -149,7 +149,7 @@ export function WorkersPage() {
                       ) : null}
                       <td>
                         <strong>{worker.name}</strong>
-                        {worker.is_foc_training ? <span className="foc-badge">F.O.C. Təlim</span> : null}
+                        {worker.is_foc_training ? <span className="foc-badge">F.O.C. təlim</span> : null}
                       </td>
                       <td>{worker.phone}</td>
                       <td>{worker.position || appStrings.notAvailable}</td>

@@ -7,7 +7,7 @@ function resolveApiBaseUrl(): string {
 
   if (!configuredUrl) {
     if (import.meta.env.PROD) {
-      throw new Error('Şirkət paneli üçün VITE_API_BASE_URL canlı mühitdə mütləq verilməlidir.');
+      throw new Error('Müəssisə paneli üçün VITE_API_BASE_URL canlı mühitdə mütləq verilməlidir.');
     }
     return appendApiVersion(DEV_BASE_URL);
   }
@@ -17,21 +17,21 @@ function resolveApiBaseUrl(): string {
   try {
     parsed = new URL(normalized);
   } catch {
-    throw new Error('Şirkət paneli API ünvanı düzgün URL deyil.');
+    throw new Error('Müəssisə panelinin API ünvanı düzgün URL deyil.');
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Şirkət paneli API ünvanı http və ya https ilə başlamalıdır.');
+    throw new Error('Müəssisə panelinin API ünvanı HTTP və ya HTTPS ilə başlamalıdır.');
   }
 
   if (import.meta.env.PROD && parsed.protocol !== 'https:') {
-    throw new Error('Production company dashboard API URL must use HTTPS.');
+    throw new Error('Canlı mühitdə müəssisə panelinin API ünvanı HTTPS istifadə etməlidir.');
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error('Company dashboard API URL must not contain credentials, a query string, or a fragment.');
+    throw new Error('Müəssisə panelinin API ünvanında giriş məlumatları, sorğu sətri və ya fraqment olmamalıdır.');
   }
   if (import.meta.env.PROD && isPrivateOrLocalHostname(parsed.hostname)) {
-    throw new Error('Canlı mühitdə şirkət paneli localhost API ünvanı ilə işləyə bilməz.');
+    throw new Error('Canlı mühitdə müəssisə paneli localhost API ünvanı ilə işləyə bilməz.');
   }
 
   return appendApiVersion(normalized);

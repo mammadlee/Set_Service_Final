@@ -12,7 +12,7 @@ class AppConfig {
   static const _configuredBaseUrl = String.fromEnvironment('BASE_URL');
   static const pushNotificationsEnabled = bool.fromEnvironment(
     'ENABLE_PUSH_NOTIFICATIONS',
-    defaultValue: kReleaseMode,
+    defaultValue: false,
   );
 
   static String get rawBaseUrl => normalizeBaseUrl(_configuredBaseUrl);

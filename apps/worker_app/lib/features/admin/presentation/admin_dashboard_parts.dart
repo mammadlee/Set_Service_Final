@@ -142,7 +142,7 @@ class _AdminActivityCard extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(22, 22, 22, 10),
             child: _AdminCardTitle(
               icon: Icons.history_rounded,
-              title: 'Son aktivlik',
+              title: 'Son fəaliyyət',
             ),
           ),
           _FlatMetricRow(
@@ -204,7 +204,9 @@ class _PendingApprovalsCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  total == 0 ? 'Təsdiq gözləmir' : '$total təsdiq gözləyir',
+                  total == 0
+                      ? 'Təsdiq gözləyən sorğu yoxdur'
+                      : '$total təsdiq sorğusu gözlənilir',
                   style: const TextStyle(
                     color: BrandColors.primaryBurgundy,
                     fontWeight: FontWeight.w700,

@@ -112,6 +112,48 @@ void main() {
     );
   });
 
+  group('iOS release capabilities', () {
+    test('push is opt-in until Firebase and signing are configured', () {
+      final config = _read('lib/core/config/app_config.dart');
+      final infoPlist = _read('ios/Runner/Info.plist');
+      final entitlements = _read('ios/Runner/Runner.entitlements');
+      final project = _read('ios/Runner.xcodeproj/project.pbxproj');
+
+      expect(
+        config,
+        contains(
+          "static const pushNotificationsEnabled = bool.fromEnvironment(",
+        ),
+      );
+      expect(config, contains('defaultValue: false'));
+      expect(infoPlist, isNot(contains('UIBackgroundModes')));
+      expect(entitlements, isNot(contains('aps-environment')));
+      expect(project, isNot(contains('com.apple.Push')));
+    });
+
+    test('App Store icons have no alpha channel', () {
+      final iconDirectory = Directory(
+        'ios/Runner/Assets.xcassets/AppIcon.appiconset',
+      );
+      final icons = iconDirectory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.png'))
+          .toList();
+
+      expect(icons, isNotEmpty);
+      for (final icon in icons) {
+        final bytes = icon.readAsBytesSync();
+        expect(bytes.length, greaterThan(25), reason: icon.path);
+        expect(
+          bytes[25],
+          isNot(anyOf(4, 6)),
+          reason: '${icon.path} must not use a PNG color type with alpha',
+        );
+      }
+    });
+  });
+
   group('kiosk URL security', () {
     test('accepts only the whitelisted kiosk origin and capability path', () {
       expect(

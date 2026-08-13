@@ -91,7 +91,7 @@ export function WorkerDetailPage() {
             <div className="detail-title">
               <div>
                 <h2>{worker.data.name}</h2>
-                {worker.data.is_foc_training ? <span className="foc-badge">F.O.C. Təlim</span> : null}
+                {worker.data.is_foc_training ? <span className="foc-badge">F.O.C. təlim</span> : null}
               </div>
               <StatusBadge status={worker.data.status} />
             </div>

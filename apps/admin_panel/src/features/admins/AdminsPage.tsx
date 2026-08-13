@@ -12,7 +12,7 @@ import { useAsync } from '../../shared/hooks/useAsync';
 import { adminsService } from './admins.service';
 
 const permissionLabels: Record<AdminPermission, string> = {
-  view_dashboard: 'Dashboard baxışı',
+  view_dashboard: 'İdarə panelinə baxış',
   view_workers: 'İşçilərə baxış',
   manage_workers: 'İşçiləri idarə et',
   view_companies: 'Müəssisələrə baxış',
@@ -118,7 +118,7 @@ export function AdminsPage() {
       await admins.reload();
       startCreate();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Admin yadda saxlanılmadı.');
+      setError(submitError instanceof Error ? submitError.message : 'Admin məlumatları yadda saxlanılmadı.');
     } finally {
       setSaving(false);
     }
@@ -128,7 +128,7 @@ export function AdminsPage() {
     <>
       <PageHeader
         title="Adminlər"
-        description="Super Admin burada məhdud admin hesabları yaradır və icazələri təyin edir."
+        description="Super admin burada məhdud admin hesabları yaradır və icazələri təyin edir."
         actions={(
           <button className="btn primary" type="button" onClick={startCreate}>
             <Plus size={16} />
@@ -142,7 +142,7 @@ export function AdminsPage() {
           <div className="panel-heading">
             <div>
               <h2>Admin siyahısı</h2>
-              <p>Məhdud adminlər yalnız verilən icazələr üzrə bölmələri görür.</p>
+              <p>Məhdud adminlər yalnız verilmiş icazələrə uyğun bölmələri görə bilərlər.</p>
             </div>
           </div>
 
@@ -168,7 +168,7 @@ export function AdminsPage() {
                       <tr key={admin.id}>
                         <td>
                           <strong>{admin.name}</strong>
-                          <span className="table-subtext">Admin Panel</span>
+                          <span className="table-subtext">Admin paneli</span>
                         </td>
                         <td>{admin.email}</td>
                         <td>

@@ -38,7 +38,7 @@ String? _photoUrl(String? value) {
 
 String _documentLabel(String type) {
   return switch (type) {
-    'health_certificate' => 'Sağlamlıq sənədi',
+    'health_certificate' => 'Sağlamlıq arayışı',
     'criminal_record' => 'Məhkumluq arayışı',
     _ => type,
   };

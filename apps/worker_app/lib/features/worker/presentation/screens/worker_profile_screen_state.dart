@@ -29,6 +29,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   bool _phoneChanging = false;
   bool _emailChanging = false;
   bool _uploading = false;
+  bool _deletingAccount = false;
   CancelToken? _uploadCancelToken;
   String? _error;
   String? _success;
@@ -140,7 +141,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                 const SizedBox(height: 14),
                 const InlineMessage(
                   message:
-                      'Əlaqə məlumatlarınız yalnız adminə görünür. Müəssisələr profilinizin icazəli hissələrini görə bilir.',
+                      'Əlaqə məlumatlarınız yalnız admin tərəfindən görünür. Müəssisələr profilinizin icazəli hissələrini görə bilər.',
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 14),
@@ -163,12 +164,93 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                     kind: InlineMessageKind.error,
                   ),
                 ],
+                const SizedBox(height: 14),
+                PremiumCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        AppStrings.accountAndPrivacy,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(AppStrings.deleteAccountDescription),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _deletingAccount
+                              ? null
+                              : _confirmAccountDeletion,
+                          icon: _deletingAccount
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.delete_forever_outlined),
+                          label: const Text(AppStrings.deleteAccount),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: BrandColors.primaryBurgundy,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           );
         },
       ),
     );
+  }
+
+  Future<void> _confirmAccountDeletion() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text(AppStrings.deleteAccountTitle),
+        content: const Text(AppStrings.deleteAccountWarning),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text(AppStrings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text(AppStrings.deleteAccount),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final repository = context.read<WorkerRepository>();
+    final auth = context.read<AuthController>();
+    final roleSession = context.read<RoleSessionController>();
+    setState(() {
+      _deletingAccount = true;
+      _error = null;
+      _success = null;
+    });
+
+    try {
+      await repository.deleteMyAccount();
+      await auth.logout();
+      await roleSession.clearRole();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = _message(error, AppStrings.deleteAccountFailed);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _deletingAccount = false);
+      }
+    }
   }
 
   void _hydrate(WorkerMe worker) {
@@ -242,7 +324,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       setState(() => _error = error.message);
     } catch (_) {
       if (!mounted) return false;
-      setState(() => _error = 'Əməliyyat alınmadı.');
+      setState(() => _error = 'Əməliyyat yerinə yetirilmədi.');
     } finally {
       if (mounted) setState(() => _phoneChanging = false);
     }
@@ -286,7 +368,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       setState(() => _error = error.message);
     } catch (_) {
       if (!mounted) return false;
-      setState(() => _error = 'Əməliyyat alınmadı.');
+      setState(() => _error = 'Əməliyyat yerinə yetirilmədi.');
     } finally {
       if (mounted) setState(() => _phoneChanging = false);
     }
@@ -319,7 +401,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       setState(() => _error = error.message);
     } catch (_) {
       if (!mounted) return false;
-      setState(() => _error = 'Email təsdiq kodu göndərilmədi.');
+      setState(() => _error = 'E-poçt təsdiq kodu göndərilmədi.');
     } finally {
       if (mounted) setState(() => _emailChanging = false);
     }
@@ -342,7 +424,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     try {
       await context.read<WorkerRepository>().confirmEmailVerification(otp);
       if (!mounted) return false;
-      _success = 'Email təsdiqləndi.';
+      _success = 'E-poçt təsdiqləndi.';
       await _refresh();
       return mounted;
     } on ApiException catch (error) {
@@ -350,7 +432,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       setState(() => _error = error.message);
     } catch (_) {
       if (!mounted) return false;
-      setState(() => _error = 'Email təsdiqlənmədi.');
+      setState(() => _error = 'E-poçt təsdiqlənmədi.');
     } finally {
       if (mounted) setState(() => _emailChanging = false);
     }
@@ -628,14 +710,14 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                 value: draftWhatsapp,
                 onChanged: (value) =>
                     setSheetState(() => draftWhatsapp = value ?? false),
-                title: const Text('Bu nömrədə WhatsApp mövcuddur'),
+                title: const Text('Bu nömrə ilə WhatsApp hesabı mövcuddur'),
                 controlAffinity: ListTileControlAffinity.leading,
               ),
               if (phoneChanged) ...[
                 const SizedBox(height: 8),
                 const InlineMessage(
                   message:
-                      'Telefon yalnız OTP təsdiqindən sonra giriş nömrəniz kimi yenilənəcək.',
+                      'Telefon nömrəsi yalnız OTP təsdiqindən sonra giriş üçün istifadə olunan nömrə kimi yenilənəcək.',
                 ),
                 const SizedBox(height: 10),
                 LoadingButton(

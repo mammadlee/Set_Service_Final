@@ -276,7 +276,7 @@ export function AssignmentsPage() {
                     <span className="assignment-worker-card-content">
                       <span className="assignment-worker-title">
                         <strong>{worker.name}</strong>
-                        {worker.is_foc_training ? <span className="foc-badge compact">F.O.C. Təlim</span> : null}
+                        {worker.is_foc_training ? <span className="foc-badge compact">F.O.C. təlim</span> : null}
                       </span>
                       <span className="assignment-worker-meta">
                         <small>Vəzifə: {workerPositionLabel(worker)}</small>

@@ -7,11 +7,11 @@ const _skillOptions = [
   'Vaxtın idarə olunması',
   'Stress altında işləmə bacarığı',
   'Rezervasiya proseslərinin idarə olunması',
-  'Housekeeping və otaq yoxlaması standartları',
+  'Təsərrüfat xidməti və otaq yoxlaması standartları',
   'Təhlükəsizlik və gigiyena standartları (HACCP, ISO)',
   'Kassa və POS sistemi ilə işləmək',
   'Səliqə, etik davranış və təqdimat bacarığı',
-  'F&B xidmətləri haqqında bilik',
+  'Qida və içki (F&B) xidmətləri haqqında bilik',
   'Növbəli iş rejiminə uyğunlaşma',
 ];
 
@@ -335,7 +335,7 @@ class _ExperienceEditorSection extends StatelessWidget {
                 color: BrandColors.primaryBurgundy,
               ),
               title: Text(
-                company.isEmpty ? 'Təcrübə $index' : company,
+                company.isEmpty ? 'İş təcrübəsi $index' : company,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -413,7 +413,7 @@ class _DocumentsEditorSection extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: uploading ? null : onUploadHealthCertificate,
               icon: const Icon(Icons.upload_file_outlined),
-              label: const Text('Sağlamlıq sənədi'),
+              label: const Text('Sağlamlıq arayışı'),
             ),
             OutlinedButton.icon(
               onPressed: uploading ? null : onUploadCriminalRecord,

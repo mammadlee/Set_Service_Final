@@ -100,7 +100,7 @@ export function AssignmentDetailPage() {
               <div>
                 <h2>QR kiosk idarəetməsi</h2>
                 <p>
-                  QR ekranı artıq sifariş/növbə əsasında aktiv edilir. İşçi seçmək tələb olunmur.
+                  QR ekranı sifarişə və ya növbəyə əsasən aktiv edilir. İşçi seçmək tələb olunmur.
                 </p>
               </div>
               <QrCode size={22} />
@@ -113,7 +113,7 @@ export function AssignmentDetailPage() {
             ) : (
               <Link className="btn primary full" to="/attendance/qr-display">
                 <QrCode size={16} />
-                Venue QR kiosklarına keç
+                Məkan QR kiosklarına keç
               </Link>
             )}
           </div> : null}

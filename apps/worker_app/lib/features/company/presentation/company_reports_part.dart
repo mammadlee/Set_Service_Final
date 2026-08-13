@@ -66,7 +66,8 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                   children: [
                     const PremiumHeroPanel(
                       title: AppStrings.reports,
-                      subtitle: 'Yalnız öz müəssisənizin sifarişləri üzrə.',
+                      subtitle:
+                          'Hesabat yalnız müəssisənizin sifarişlərini əhatə edir.',
                       compact: true,
                       children: [
                         PremiumChip(
@@ -174,11 +175,11 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                           data.report.dashboard.activeAssignments,
                         ),
                         _SummaryItem(
-                          'Check-in edən',
+                          'Giriş edən işçilər',
                           data.report.reports.attendance.totalCount,
                         ),
                         _SummaryItem(
-                          'Checkout tamamlayan',
+                          'Çıxış edən işçilər',
                           data.report.reports.attendance.completedCount,
                         ),
                         _SummaryItem(

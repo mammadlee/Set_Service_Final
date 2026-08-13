@@ -113,7 +113,7 @@ export function QrDisplayPage() {
   async function copyKioskLink() {
     if (!kioskUrl) return;
     await navigator.clipboard.writeText(kioskUrl);
-    setMessage('QR ekranı linki kopyalandı.');
+    setMessage('QR ekranı linki köçürüldü.');
   }
 
   function openKioskLink() {
@@ -137,7 +137,7 @@ export function QrDisplayPage() {
   return (
     <>
       <PageHeader
-        title="Venue QR kioskları"
+        title="Məkan QR kioskları"
         description="Hər tablet üçün sabit kiosk linki yaradın. Admin yalnız həmin kioskda hansı aktiv sifarişin göstəriləcəyini dəyişir."
       />
 
@@ -146,7 +146,7 @@ export function QrDisplayPage() {
           <div className="panel-heading">
             <div>
               <h2>Kiosk yarat</h2>
-              <p>Tablet və ya brauzer üçün bir dəfəlik sabit link yaradılır.</p>
+              <p>Tablet və ya brauzer üçün dəyişməyən sabit link yaradılır.</p>
             </div>
             <TabletSmartphone size={20} />
           </div>
@@ -179,7 +179,7 @@ export function QrDisplayPage() {
               <input
                 value={locationLabel}
                 onChange={(event) => setLocationLabel(event.target.value)}
-                placeholder="Lobby / əsas giriş"
+                placeholder="Lobbi / əsas giriş"
               />
             </label>
 
@@ -192,7 +192,7 @@ export function QrDisplayPage() {
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <h2>QR-ı aktiv et</h2>
+              <h2>QR ekranını aktiv et</h2>
               <p>Bu QR ekranı seçilmiş sifariş üzrə təyin olunmuş və işi qəbul etmiş işçilər üçün aktiv olacaq.</p>
             </div>
             <QrCode size={20} />
@@ -227,7 +227,7 @@ export function QrDisplayPage() {
             </label>
 
             <label className="field">
-              <span>Aktiv sifariş / növbə</span>
+              <span>Aktiv sifariş və ya növbə</span>
               <select value={orderId} onChange={(event) => setOrderId(event.target.value)} disabled={!companyId}>
                 <option value="">Sifariş seçin</option>
                 {companyOrders.map((order) => (
@@ -248,7 +248,7 @@ export function QrDisplayPage() {
             {message ? <div className="form-success">{message}</div> : null}
 
             <button className="btn primary full" type="button" disabled={loading || !kioskId || !orderId} onClick={() => void activateKiosk()}>
-              Bu kioskda QR-ı aktiv et
+              Bu kioskda QR ekranını aktiv et
             </button>
           </div>
         </div>
@@ -275,7 +275,7 @@ export function QrDisplayPage() {
             <div className="action-row wrap">
               <button className="btn secondary" type="button" disabled={!kioskUrl} onClick={() => void copyKioskLink()}>
                 <Copy size={16} />
-                Linki kopyala
+                Linki köçür
               </button>
               <button className="btn primary" type="button" disabled={!kioskUrl} onClick={openKioskLink}>
                 <ExternalLink size={16} />

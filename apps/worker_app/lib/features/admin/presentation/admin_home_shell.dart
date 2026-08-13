@@ -67,7 +67,7 @@ class _AdminHomeShellState extends State<AdminHomeShell> {
   late final List<Widget?> _tabs;
 
   static const _titles = [
-    'Kontrol paneli',
+    'İdarə paneli',
     'Təsdiqlər',
     AppStrings.orders,
     'Təyinatlar',
@@ -221,7 +221,7 @@ class _AdminDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const items = [
-      _DrawerItem('Kontrol paneli', Icons.grid_view_rounded),
+      _DrawerItem('İdarə paneli', Icons.grid_view_rounded),
       _DrawerItem('Təsdiqlər', Icons.verified_outlined),
       _DrawerItem('Sifarişlər', Icons.receipt_long_outlined),
       _DrawerItem('Təyinatlar', Icons.assignment_turned_in_outlined),

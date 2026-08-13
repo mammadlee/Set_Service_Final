@@ -234,7 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                           ButtonSegment(
                             value: 'email',
-                            label: Text('Email ilə'),
+                            label: Text('E-poçt ilə'),
                           ),
                         ],
                         selected: {method},

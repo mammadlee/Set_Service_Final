@@ -226,7 +226,7 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
     final positionIds = <String>{};
     for (final category in _categories) {
       if (category.positionId == null) {
-        setState(() => _error = 'Şöbə, Departament və Vəzifə seçilməlidir.');
+        setState(() => _error = 'Şöbə, departament və vəzifə seçilməlidir.');
         return;
       }
       if (positionIds.contains(category.positionId)) {
@@ -556,13 +556,13 @@ class _DepartmentStep extends StatelessWidget {
     return _OrderSelectorTile(
       label: 'Şöbə',
       value: selected?.nameAz,
-      placeholder: taxonomy.isEmpty ? 'Şöbə tapılmadı' : 'Şöbə seç',
+      placeholder: taxonomy.isEmpty ? 'Şöbə tapılmadı' : 'Şöbə seçin',
       onTap: taxonomy.isEmpty
           ? null
           : () async {
               final value = await _showOrderOptionSheet<TaxonomyDepartment>(
                 context: context,
-                title: 'Şöbə seç',
+                title: 'Şöbə seçin',
                 items: taxonomy,
                 label: (item) => item.nameAz,
               );
@@ -603,7 +603,7 @@ class _SubdepartmentStep extends StatelessWidget {
           : () async {
               final value = await _showOrderOptionSheet<TaxonomySubdepartment>(
                 context: context,
-                title: 'Departament seç',
+                title: 'Departament seçin',
                 items: items,
                 label: (item) => item.nameAz,
               );
@@ -647,7 +647,7 @@ class _PositionStep extends StatelessWidget {
           : () async {
               final value = await _showOrderOptionSheet<TaxonomyPosition>(
                 context: context,
-                title: 'Vəzifə seç',
+                title: 'Vəzifə seçin',
                 items: items,
                 label: (item) => item.nameAz,
               );

@@ -105,6 +105,17 @@ class WorkerRepository {
     }
   }
 
+  Future<void> deleteMyAccount() async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/workers/me/account-deletion-request',
+        data: const {'confirm': true},
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<WorkerMe> uploadProfilePhoto({
     required String fileName,
     String? path,

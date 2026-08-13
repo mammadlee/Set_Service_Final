@@ -41,7 +41,7 @@ export function AdminLayout() {
   const [open, setOpen] = useState(false);
   const visibleNavItems = navItems.filter((item) => hasPermission(user, item.permission));
   const canSeeSettings = user?.role === 'super_admin';
-  const panelTitle = user?.role === 'super_admin' ? appStrings.adminPanel : 'Admin Panel';
+  const panelTitle = user?.role === 'super_admin' ? appStrings.adminPanel : 'Admin paneli';
   const roleLabel = user?.role === 'super_admin' ? appStrings.superAdmin : 'Admin';
 
   return (
@@ -76,11 +76,11 @@ export function AdminLayout() {
               <div className="sidebar-subnav">
                 <NavLink to="/settings/taxonomy" onClick={() => setOpen(false)}>
                   <Workflow size={16} />
-                  <span>Vəzifə Strukturu</span>
+                  <span>Vəzifə strukturu</span>
                 </NavLink>
                 <NavLink to="/settings/system" onClick={() => setOpen(false)}>
                   <SlidersHorizontal size={16} />
-                  <span>Sistem Parametrləri</span>
+                  <span>Sistem parametrləri</span>
                 </NavLink>
               </div>
             </div>

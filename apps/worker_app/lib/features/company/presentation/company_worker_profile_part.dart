@@ -142,7 +142,7 @@ class _AssignmentCardState extends State<_AssignmentCard> {
       builder: (_) => const AlertDialog(
         title: Text('QR ekranı'),
         content: Text(
-          'Venue kiosk linkləri admin panelindən yaradılır və sifariş/növbə əsasında aktiv edilir. Bu ekrandan yalnız birdəfəlik QR token göstərilir.',
+          'Məkan üçün kiosk linkləri admin panelindən yaradılır və sifarişə və ya növbəyə əsasən aktiv edilir. Bu ekranda yalnız birdəfəlik QR tokeni göstərilir.',
         ),
       ),
     );
@@ -183,11 +183,11 @@ class _AssignmentCardState extends State<_AssignmentCard> {
                 await Clipboard.setData(ClipboardData(text: kiosk.kioskUrl));
                 if (!dialogContext.mounted) return;
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
-                  const SnackBar(content: Text('QR linki kopyalandı.')),
+                  const SnackBar(content: Text('QR linki köçürüldü.')),
                 );
               },
               icon: const Icon(Icons.copy_outlined),
-              label: const Text('QR linkini kopyala'),
+              label: const Text('QR linkini köçür'),
             ),
             TextButton.icon(
               onPressed: () async {
