@@ -207,8 +207,8 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /needs: \[release-inputs, backend\]/);
   assert.doesNotMatch(workflowText, /image:\s+postgres:16(?:\s|$)/);
   assert.doesNotMatch(workflowText, /image:\s+redis:7-alpine(?:\s|$)/);
-  assert.equal((workflowText.match(/node-version: 20\.19\.4/g) ?? []).length, 6);
-  assert.doesNotMatch(workflowText, /node-version:\s+20\s*$/m);
+  assert.equal((workflowText.match(/node-version: 24\.17\.0/g) ?? []).length, 6);
+  assert.doesNotMatch(workflowText, /node-version:\s+(?:20|22|24)\s*$/m);
   assert.equal(
     (workflowText.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
     3,
@@ -235,6 +235,8 @@ function testContainerPolicy(): void {
   assert.match(migrationStage, /--from=build \/app\/node_modules\/prisma/);
   assert.match(dockerfile, /FROM runtime-common AS outbox-worker[\s\S]*HEALTHCHECK[\s\S]*\/health/);
   assert.match(dockerfile, /CMD \["npm", "run", "start:outbox"\]/);
+  assert.match(dockerfile, /postgresql-client/);
+  assert.match(dockerfile, /preflight-attendance-deploy\.sql/);
 }
 
 function testRunbooks(): void {

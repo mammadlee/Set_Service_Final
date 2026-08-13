@@ -103,6 +103,22 @@ function maskContactField(key: string, value: unknown): unknown {
 
 function sanitizeString(value: string): string {
   return value
+    .replace(
+      /(\/(?:kiosk-sessions|venue-kiosks|kiosk|qr-kiosk|private-worker-documents)\/)[^/?#\s]+/gi,
+      '$1[redacted]',
+    )
+    .replace(
+      /([?&](?:token|capability|code|signature)=)[^&#\s]+/gi,
+      '$1[redacted]',
+    )
+    .replace(
+      /([a-z][a-z0-9+.-]*:\/\/)([^\s\/:@]+):([^\s\/@]+)@/gi,
+      '$1[redacted]:[redacted]@',
+    )
+    .replace(
+      /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
+      '[redacted-private-key]',
+    )
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted-jwt]')
     .replace(

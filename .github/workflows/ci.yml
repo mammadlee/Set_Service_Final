@@ -40,8 +40,8 @@ jobs:
             exit 1
           fi
 
-          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:20\.19\.4-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
-            echo "::error::NODE_BASE_IMAGE must be the official Node 20.19.4 bookworm-slim image pinned to a full sha256 digest."
+          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:24\.17\.0-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::NODE_BASE_IMAGE must be the official Node 24.17.0 bookworm-slim image pinned to a full sha256 digest."
             exit 1
           fi
           if [[ ! "$POSTGRES_CI_IMAGE" =~ ^postgres:16(\.[0-9]+){1,2}-bookworm@sha256:[a-f0-9]{64}$ ]]; then
@@ -118,7 +118,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
           cache: npm
 
       - name: Secret scan
@@ -165,6 +165,7 @@ jobs:
           npm run test:release-runbooks
           npm run test:dependency-policy
           npm run test:release-security
+          npm run test:production-deployment
           npm run swagger:security
 
       - name: Production env validation
@@ -311,7 +312,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
           cache: npm
           cache-dependency-path: apps/admin_panel/package-lock.json
 
@@ -366,7 +367,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
           cache: npm
           cache-dependency-path: apps/company_dashboard/package-lock.json
 
@@ -421,7 +422,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
           cache: npm
           cache-dependency-path: apps/qr_kiosk/package-lock.json
 
@@ -484,8 +485,8 @@ jobs:
             echo "::error::Repository variable NODE_BASE_IMAGE is required."
             exit 1
           fi
-          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:20\.19\.4-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
-            echo "::error::NODE_BASE_IMAGE must be node:20.19.4-bookworm-slim pinned to a full sha256 digest."
+          if [[ ! "$NODE_BASE_IMAGE" =~ ^node:24\.17\.0-bookworm-slim@sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::NODE_BASE_IMAGE must be node:24.17.0-bookworm-slim pinned to a full sha256 digest."
             exit 1
           fi
 
@@ -596,7 +597,7 @@ jobs:
       - name: Setup Node.js for release configuration validation
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
@@ -752,7 +753,7 @@ jobs:
       - name: Setup Node.js for release configuration validation
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20.19.4
+          node-version: 24.17.0
 
       - name: Setup Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0

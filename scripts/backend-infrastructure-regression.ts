@@ -153,6 +153,13 @@ function testStructuredLogRedaction(): void {
       email: 'alice@example.com',
       phone: '+994501234567',
       note: 'otp=123456 password=hunter2',
+      database_error: 'postgresql://db-user:database-password@db.example.com/service',
+      url_error: '/v1/attendance/kiosk-sessions/raw-kiosk-capability?token=raw-query-token',
+      private_key_error: [
+        ['-----BEGIN PRIVATE', 'KEY-----'].join(' '),
+        'private-key-material',
+        ['-----END PRIVATE', 'KEY-----'].join(' '),
+      ].join('\n'),
     });
   } finally {
     console.log = previousLog;
@@ -166,6 +173,10 @@ function testStructuredLogRedaction(): void {
   assert.ok(!line.includes('+994501234567'));
   assert.ok(!line.includes('123456'));
   assert.ok(!line.includes('hunter2'));
+  assert.ok(!line.includes('database-password'));
+  assert.ok(!line.includes('raw-kiosk-capability'));
+  assert.ok(!line.includes('raw-query-token'));
+  assert.ok(!line.includes('private-key-material'));
   assert.ok(line.includes('[redacted]'));
 }
 

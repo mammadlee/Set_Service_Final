@@ -2,6 +2,11 @@
 
 This runbook covers only the exposed JWT, PG365, and Cloudflare R2 credentials. It does not change the authentication model or database schema.
 
+> **Production stop:** historical R2/S3-compatible credentials in reachable Git
+> commits must be treated as compromised and manually revoked in Cloudflare
+> before production use. Current placeholders do not revoke an already copied
+> credential, and this repository cannot perform that external action.
+
 ## Preconditions
 
 - Open an incident/change record and set `JWT_ROTATION_CHANGE_ID` to that identifier.

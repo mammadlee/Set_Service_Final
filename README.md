@@ -396,3 +396,4 @@ Reports include dashboard counts, worker work counts, attendance totals, company
 - [ENV_SETUP.md](./ENV_SETUP.md)
 - [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)
 - [CONTAINER_DEPLOYMENT.md](./CONTAINER_DEPLOYMENT.md)
+- [PRODUCTION_DEPLOYMENT.md](./PRODUCTION_DEPLOYMENT.md)

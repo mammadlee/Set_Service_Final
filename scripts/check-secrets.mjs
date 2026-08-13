@@ -41,6 +41,7 @@ if (process.argv.includes('--self-test')) {
 }
 
 function scanRepository() {
+  const currentOnly = process.argv.includes('--current-only');
   const trackedFiles = execFileSync('git', ['ls-files', '-co', '--exclude-standard'], {
     encoding: 'utf8',
   })
@@ -52,8 +53,7 @@ function scanRepository() {
 
   for (const file of trackedFiles) {
     const normalized = file.replaceAll('\\', '/');
-    const isExampleEnv = normalized === '.env.example' || normalized.endsWith('/.env.example');
-    if (!isExampleEnv && forbiddenFilePatterns.some((pattern) => pattern.test(normalized))) {
+    if (!isSafeEnvTemplate(normalized) && forbiddenFilePatterns.some((pattern) => pattern.test(normalized))) {
       findings.push({ file: normalized, line: 1, rule: 'forbidden-secret-file' });
       continue;
     }
@@ -80,7 +80,7 @@ function scanRepository() {
     });
   }
 
-  const historyCommitCount = scanGitHistory(findings);
+  const historyCommitCount = currentOnly ? 0 : scanGitHistory(findings);
 
   if (findings.length > 0) {
     console.error('Potential secret material detected:');
@@ -91,9 +91,9 @@ function scanRepository() {
     process.exit(1);
   }
 
-  console.log(
-    `Secret scan passed (${trackedFiles.length} current files and ${historyCommitCount} reachable commits checked).`,
-  );
+  console.log(currentOnly
+    ? `Secret scan passed (${trackedFiles.length} current files checked; history intentionally skipped).`
+    : `Secret scan passed (${trackedFiles.length} current files and ${historyCommitCount} reachable commits checked).`);
 }
 
 function literalSecretAssignment(line, sourcePath = '') {
@@ -123,6 +123,12 @@ function isSensitiveAssignmentKey(key) {
 }
 
 function runSelfTest() {
+  if (!isSafeEnvTemplate('.env.example') || !isSafeEnvTemplate('.env.production.example')) {
+    throw new Error('secret scanner self-test failed to recognize safe env template names');
+  }
+  if (isSafeEnvTemplate('.env.production')) {
+    throw new Error('secret scanner self-test allowed a real production env file');
+  }
   const detected = [
     'KIOSK_TOKEN_ENCRYPTION_SECRET="literal-value"',
     'PROVIDER_OUTBOX_ENCRYPTION_SECRET=literal-value',
@@ -209,8 +215,7 @@ function scanGitHistory(findings) {
 
     for (const file of treeFiles) {
       const normalized = file.replaceAll('\\', '/');
-      const isExampleEnv = normalized === '.env.example' || normalized.endsWith('/.env.example');
-      if (!isExampleEnv && forbiddenFilePatterns.some((pattern) => pattern.test(normalized))) {
+      if (!isSafeEnvTemplate(normalized) && forbiddenFilePatterns.some((pattern) => pattern.test(normalized))) {
         findings.push({
           commit: shortCommit,
           file: normalized,
@@ -266,8 +271,13 @@ function isLocalCredentialUrl(key, value) {
   if (!['DATABASE_URL', 'DIRECT_URL', 'REDIS_URL'].includes(key)) return false;
   try {
     const parsed = new URL(value);
+    if (!parsed.username && !parsed.password) return true;
     return ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
   } catch {
     return false;
   }
+}
+
+function isSafeEnvTemplate(normalizedPath) {
+  return /(^|\/)\.env(?:\.[a-z0-9_-]+)?\.example$/i.test(normalizedPath);
 }

@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "SET Service workforce operations API",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=24.17.0 <25"
+  },
   "scripts": {
     "dev": "nodemon --watch src --watch scripts --ext ts --exec ts-node src/index.ts",
     "build": "tsc",
@@ -41,6 +44,7 @@
     "test:lifecycle-concurrency": "ts-node scripts/lifecycle-concurrency-regression.ts",
     "test:release-runbooks": "ts-node scripts/release-runbook-regression.ts",
     "test:release-security": "ts-node scripts/release-security-regression.ts",
+    "test:production-deployment": "node scripts/production-deployment-regression.mjs",
     "test:dependency-policy": "node scripts/dependency-policy-regression.mjs",
     "documents:backfill": "ts-node scripts/private-document-backfill.ts",
     "security:jwt-rotation": "ts-node scripts/invalidate-auth-sessions.ts",
@@ -71,7 +75,7 @@
   "overrides": {
     "@grpc/grpc-js": "1.14.4",
     "body-parser": "1.20.6",
-    "brace-expansion": "5.0.7",
+    "brace-expansion": "5.0.9",
     "form-data": "2.5.6",
     "protobufjs": "7.6.5",
     "uuid": "11.1.1",
@@ -83,7 +87,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/multer": "^2.1.0",
-    "@types/node": "^20.14.2",
+    "@types/node": "^24.13.3",
     "@types/swagger-ui-express": "^4.1.6",
     "nodemon": "^3.1.3",
     "prisma": "^5.14.0",

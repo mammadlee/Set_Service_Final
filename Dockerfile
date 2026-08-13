@@ -41,6 +41,9 @@ USER node
 ENTRYPOINT ["dumb-init", "--"]
 
 FROM runtime-base AS migration
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 COPY --chown=node:node --from=production-dependencies /app/package.json /app/package-lock.json ./
 COPY --chown=node:node --from=production-dependencies /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/node_modules/prisma ./node_modules/prisma
@@ -51,6 +54,7 @@ COPY --chown=node:node --from=build /app/node_modules/@prisma/fetch-engine ./nod
 COPY --chown=node:node --from=build /app/node_modules/@prisma/get-platform ./node_modules/@prisma/get-platform
 COPY --chown=node:node --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY --chown=node:node --from=build /app/prisma ./prisma
+COPY --chown=node:node scripts/preflight-attendance-deploy.sql ./scripts/preflight-attendance-deploy.sql
 USER node
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["npm", "run", "db:migrate:deploy"]

@@ -8,3 +8,4 @@
 !src/**
 !prisma
 !prisma/**
+!scripts/preflight-attendance-deploy.sql
