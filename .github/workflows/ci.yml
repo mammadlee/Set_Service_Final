@@ -165,7 +165,9 @@ jobs:
           npm run test:release-runbooks
           npm run test:dependency-policy
           npm run test:release-security
+          npm run test:malware-scanner
           npm run test:production-deployment
+          npm run test:production-env
           npm run swagger:security
 
       - name: Production env validation
@@ -208,7 +210,8 @@ jobs:
           STORAGE_SIGNED_URL_TTL_SECONDS: "300"
           MALWARE_SCANNER_PROVIDER: http
           MALWARE_SCAN_REQUIRED: "true"
-          MALWARE_SCANNER_URL: https://scanner.example.test/scan
+          MALWARE_SCANNER_URL: http://malware-scanner:8080/scan
+          MALWARE_SCANNER_API_KEY: ci-scanner-Ax7mQ2vL9pR4tW8yK3nD6sF1hJ5cB0uZ
         run: npx ts-node -e "import { checkEnv } from './src/lib/check-env'; checkEnv();"
 
       - name: Build
@@ -495,13 +498,15 @@ jobs:
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target api --tag setservice-api:${{ github.sha }} .
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target outbox-worker --tag setservice-outbox:${{ github.sha }} .
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target migration --tag setservice-migration:${{ github.sha }} .
+          docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --target malware-scanner --tag setservice-malware-scanner:${{ github.sha }} .
 
       - name: Verify non-root runtime metadata
         run: |
           for image in \
             setservice-api:${{ github.sha }} \
             setservice-outbox:${{ github.sha }} \
-            setservice-migration:${{ github.sha }}
+            setservice-migration:${{ github.sha }} \
+            setservice-malware-scanner:${{ github.sha }}
           do
             test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "node"
             docker image inspect --format '{{json .Config.Entrypoint}}' "$image" | grep -q "dumb-init"
@@ -510,6 +515,8 @@ jobs:
             setservice-api:${{ github.sha }} | grep -q "/health"
           docker image inspect --format '{{json .Config.Healthcheck.Test}}' \
             setservice-outbox:${{ github.sha }} | grep -q "/health"
+          docker image inspect --format '{{json .Config.Healthcheck.Test}}' \
+            setservice-malware-scanner:${{ github.sha }} | grep -q "/health"
           docker run --rm --entrypoint node setservice-migration:${{ github.sha }} -e "
             require.resolve('prisma');
             for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
@@ -546,6 +553,14 @@ jobs:
           output-file: setservice-migration.spdx.json
           upload-artifact: false
 
+      - name: Generate malware scanner SPDX SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.6
+        with:
+          image: setservice-malware-scanner:${{ github.sha }}
+          format: spdx-json
+          output-file: setservice-malware-scanner.spdx.json
+          upload-artifact: false
+
       - name: Scan API image
         uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.28.0
         with:
@@ -573,6 +588,15 @@ jobs:
           ignore-unfixed: false
           exit-code: "1"
 
+      - name: Scan malware scanner image
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.28.0
+        with:
+          image-ref: setservice-malware-scanner:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: "1"
+
       - name: Upload SBOMs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -581,6 +605,7 @@ jobs:
             setservice-api.spdx.json
             setservice-outbox.spdx.json
             setservice-migration.spdx.json
+            setservice-malware-scanner.spdx.json
           if-no-files-found: error
           retention-days: 30
 

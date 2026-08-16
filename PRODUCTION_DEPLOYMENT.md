@@ -1,7 +1,7 @@
 # SET Service production deployment
 
 This runbook deploys the SET Service backend to a single Ubuntu 24.04 VPS with
-Docker Compose, Caddy, and Redis. Neon remains the PostgreSQL system of record
+Docker Compose, Caddy, Redis, and the official Cisco/Talos ClamAV image. Neon remains the PostgreSQL system of record
 and Cloudflare R2 remains the object store. It does not containerize or deploy
 the Vite frontends or Flutter mobile application.
 
@@ -21,6 +21,7 @@ already provides:
 - structured logging with credential/contact redaction;
 - optional Sentry initialization and graceful SIGTERM/SIGINT shutdown;
 - a separate API, outbox-worker, and migration Docker target.
+- a first-party internal HTTP malware adapter backed by ClamAV `clamd`.
 
 The VPS topology is:
 
@@ -32,8 +33,15 @@ Internet
        -> Neon PostgreSQL
        -> Redis (Docker backend network, port 6379 not published)
        -> Cloudflare R2 / Sentry / SMS / email / Firebase
+       -> malware-scanner (internal scanner network, port 8080 not published)
+            -> ClamAV clamd (internal scanner network, port 3310 not published)
   -> outbox-worker (backend + outbound networks, port 3001 not published)
 ```
+
+Only ClamAV also joins the dedicated `scanner-updates` bridge so FreshClam can
+download signature updates. No application container joins that network. The
+`scanner` network is internal, neither scanner port is published, and
+`clamav_data` persists `/var/lib/clamav` across image replacement.
 
 Compose also defines a one-off `migrate` service. There is no PostgreSQL
 container, PM2, Prisma Studio, Docker socket mount, privileged container, or
@@ -73,6 +81,7 @@ arguments, or image layers. At minimum these must be distinct:
 - `KIOSK_TOKEN_ENCRYPTION_SECRET`
 - `OTP_PEPPER`
 - `PROVIDER_OUTBOX_ENCRYPTION_SECRET`
+- `MALWARE_SCANNER_API_KEY`
 
 The app rejects missing, weak, repeated, or placeholder production secrets.
 Keep `.env` owned by `deploy`, mode `600`, and back it up only to the approved
@@ -108,8 +117,9 @@ bucket and review the exact R2 policy.
 
 - PG365 production public/private credentials and sender/originator.
 - A non-console email HTTP provider and sender address.
-- A malware-scanning HTTP service for sensitive uploads. Current production
-  validation deliberately blocks deployment without it.
+- The repository-provided malware adapter and official ClamAV service. Production
+  validation accepts only `http://malware-scanner:8080/scan`, requires a real
+  adapter bearer credential, and blocks deployment when scanning is optional.
 - Optional Sentry DSN.
 - Optional Firebase project ID, service-account email, and private key only when
   `PUSH_NOTIFICATIONS_ENABLED=true`.
@@ -176,7 +186,17 @@ Mirror the same 22/TCP, 80/TCP, 443/TCP, and 443/UDP policy in the VPS
 provider firewall/security group. Docker-published ports can interact directly
 with the host firewall, so re-run `sudo ss -lntup` after every Compose change.
 This Compose file publishes only Caddy's 80/443 ports; API, worker, migration,
-and Redis remain Docker-internal.
+Redis, malware-scanner, and ClamAV remain Docker-internal. Confirm that neither
+3310 nor 8080 appears in `sudo ss -lntup`.
+
+The dedicated `SCANNER_UPDATES_SUBNET` exists only for FreshClam. In the VPS
+outbound firewall/`DOCKER-USER` policy, allow established traffic plus DNS and
+HTTP(S) required to reach the official ClamAV signature mirrors from that
+subnet, then deny its other outbound ports. Mirror addresses are CDN-backed and
+can change, so validate this rule against the current Cisco/Talos mirror
+documentation rather than hard-coding stale IP addresses. This host firewall
+rule is a mandatory production step because Compose networks do not express
+destination/port egress ACLs.
 
 Run the privileged directory setup once:
 
@@ -225,8 +245,26 @@ so it does not need to be added to the browser allowlist.
 
 `PROXY_SUBNET` and `TRUST_PROXY_CIDRS` must describe the same fixed proxy
 network. If the default subnet conflicts with another VPS Docker network, change
-both values together before first startup. The backend and egress subnets must
-also not overlap existing VPS/VPN networks.
+both values together before first startup. The backend, egress, scanner, and
+scanner-updates subnets must also not overlap existing VPS/VPN networks.
+
+Generate the adapter credential directly into the production secret manager, or
+use `openssl rand -base64 48` in a private operator shell and place the result in
+the mode-600 `.env` file. Never reuse another application secret. Required values:
+
+```dotenv
+MALWARE_SCANNER_PROVIDER="http"
+MALWARE_SCAN_REQUIRED="true"
+MALWARE_SCANNER_URL="http://malware-scanner:8080/scan"
+MALWARE_SCANNER_API_KEY="<injected-random-value>"
+MALWARE_SCANNER_TIMEOUT_MS="10000"
+MALWARE_SCANNER_MAX_ATTEMPTS="2"
+```
+
+`CLAMAV_IMAGE` is a non-secret official image reference pinned to an immutable
+digest. Review the [Cisco/Talos ClamAV Docker repository](https://github.com/Cisco-Talos/clamav-docker)
+and the [official image listing](https://hub.docker.com/r/clamav/clamav), then
+verify the digest before changing it.
 
 The pinned image references in the template are non-secret release inputs. When
 upgrading them, review the upstream release, resolve its multi-platform digest,
@@ -248,8 +286,8 @@ and performs this sequence:
 
 1. verify Docker, Compose, `.env`, and mode `600`;
 2. validate the Compose model without printing it;
-3. pull pinned Caddy/Redis images;
-4. build the API, outbox, and migration images;
+3. pull pinned Caddy, Redis, and official ClamAV images;
+4. build the API, malware-scanner, outbox, and migration images;
 5. run application production-environment validation;
 6. run `prisma validate`;
 7. run the read-only attendance duplicate guard;
@@ -273,10 +311,11 @@ export RELEASE_SHA="$(git rev-parse HEAD)"
 export RELEASE_TAG="${RELEASE_SHA:0:12}"
 
 docker compose -f docker-compose.prod.yml --env-file .env config -q
-docker compose -f docker-compose.prod.yml --env-file .env build --pull api outbox-worker migrate
+docker compose -f docker-compose.prod.yml --env-file .env pull redis caddy clamav
+docker compose -f docker-compose.prod.yml --env-file .env build --pull api malware-scanner outbox-worker migrate
 docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate npx prisma validate
 docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate npm run db:migrate:deploy
-docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans redis outbox-worker api caddy
+docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans redis clamav malware-scanner outbox-worker api caddy
 ```
 
 The deployment helper additionally runs the required attendance preflight before
@@ -293,7 +332,55 @@ docker compose -f docker-compose.prod.yml --env-file .env exec -T api \
   node -e 'fetch("http://127.0.0.1:3000/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
 docker compose -f docker-compose.prod.yml --env-file .env exec -T api \
   node -e 'fetch("http://127.0.0.1:3000/ready").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
+docker compose -f docker-compose.prod.yml --env-file .env exec -T clamav clamdcheck.sh
+docker compose -f docker-compose.prod.yml --env-file .env exec -T malware-scanner \
+  node -e 'fetch("http://127.0.0.1:8080/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
 ```
+
+The first ClamAV start can take several minutes while FreshClam initializes the
+signature database. `malware-scanner` does not become healthy until `clamd`
+answers `PING`, and the API has a healthy dependency on the adapter.
+
+### Malware scanner canaries
+
+Run a clean in-memory canary from the API container; it should print
+`200 {"status":"clean","scanner":"clamav"}`:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env exec -T api node -e '
+const crypto=require("node:crypto");
+const body=Buffer.from("SET Service scanner deployment canary");
+fetch(process.env.MALWARE_SCANNER_URL,{method:"POST",headers:{
+  "Content-Type":"text/plain",
+  "X-Content-SHA256":crypto.createHash("sha256").update(body).digest("hex"),
+  "Authorization":"Bearer "+process.env.MALWARE_SCANNER_API_KEY
+},body}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)});
+'
+```
+
+During an approved security test window, use the harmless industry-standard
+EICAR anti-malware test file directly in memory. It is intentionally detected by
+security products, so notify the VPS/network monitoring owner first. The expected
+adapter result is `200 {"status":"infected","scanner":"clamav"}`; the file is
+never uploaded to R2:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env exec -T api node -e '
+const crypto=require("node:crypto");
+fetch("https://secure.eicar.org/eicar.com.txt").then(r=>{if(!r.ok)throw Error("EICAR download failed");return r.arrayBuffer()}).then(raw=>{
+  const body=Buffer.from(raw);
+  return fetch(process.env.MALWARE_SCANNER_URL,{method:"POST",headers:{
+    "Content-Type":"application/octet-stream",
+    "X-Content-SHA256":crypto.createHash("sha256").update(body).digest("hex"),
+    "Authorization":"Bearer "+process.env.MALWARE_SCANNER_API_KEY
+  },body});
+}).then(async r=>{const text=await r.text();console.log(r.status,text);process.exit(r.status===200&&text.includes("infected")?0:1)}).catch(()=>process.exit(1));
+'
+```
+
+The adapter returns non-2xx for authentication, integrity, size, timeout,
+protocol, and availability failures. The API therefore fails closed when the
+scanner cannot prove a file is clean.
 
 ### Public checks
 
@@ -310,12 +397,15 @@ Confirm HTTPS, HSTS, content-type, frame, referrer, and permissions headers.
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env logs --tail=200 api
+docker compose -f docker-compose.prod.yml --env-file .env logs --tail=200 malware-scanner clamav
 docker compose -f docker-compose.prod.yml --env-file .env logs --tail=200 outbox-worker
 docker compose -f docker-compose.prod.yml --env-file .env logs --tail=200 caddy
 docker compose -f docker-compose.prod.yml --env-file .env logs -f --since=10m api outbox-worker
 ```
 
-Docker log rotation is set to five 10 MB files per service. API logs redact
+Docker log rotation is set to five 10 MB files per service. The malware adapter
+logs no request bodies, file data, SHA values, Authorization headers, or API
+keys; do not add HTTP request/debug logging around it. API logs redact
 tokens, OTP/password text, private-key blocks, credentialed URLs, email, and
 phone values. Caddy access logging is deliberately disabled because legacy
 kiosk/document routes can contain short-lived capabilities in the URL; Caddy
@@ -325,7 +415,7 @@ request-body or raw URL access logging.
 ### Restart
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env restart api outbox-worker
+docker compose -f docker-compose.prod.yml --env-file .env restart clamav malware-scanner api outbox-worker
 docker compose -f docker-compose.prod.yml --env-file .env restart caddy
 ```
 

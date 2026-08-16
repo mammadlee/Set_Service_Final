@@ -59,11 +59,11 @@ compose=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 info "Validating Compose configuration"
 "${compose[@]}" config -q
 
-info "Pulling pinned Redis and Caddy images"
-"${compose[@]}" pull redis caddy
+info "Pulling pinned Redis, Caddy, and official ClamAV images"
+"${compose[@]}" pull redis caddy clamav
 
-info "Building API, outbox worker, and migration images"
-"${compose[@]}" build --pull api outbox-worker migrate
+info "Building API, malware scanner, outbox worker, and migration images"
+"${compose[@]}" build --pull api malware-scanner outbox-worker migrate
 
 info "Validating production environment without connecting to providers"
 "${compose[@]}" run --rm --no-deps --entrypoint node api \
@@ -80,7 +80,7 @@ info "Applying approved Prisma migrations"
 "${compose[@]}" --profile tools run --rm --no-deps migrate npm run db:migrate:deploy
 
 info "Starting or updating production services"
-"${compose[@]}" up -d --remove-orphans redis outbox-worker api caddy
+"${compose[@]}" up -d --remove-orphans redis clamav malware-scanner outbox-worker api caddy
 
 info "Waiting for API dependency readiness"
 ready=false
@@ -97,7 +97,7 @@ for _ in $(seq 1 30); do
 done
 [[ "$ready" == true ]] || {
   "${compose[@]}" ps
-  "${compose[@]}" logs --tail=100 api outbox-worker redis
+  "${compose[@]}" logs --tail=100 api malware-scanner clamav outbox-worker redis
   fail "API readiness did not become healthy"
 }
 

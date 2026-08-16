@@ -66,6 +66,15 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "const http=require('node:http');const port=process.env.OUTBOX_HEALTH_PORT||'3001';const req=http.get({host:'127.0.0.1',port,path:'/health'},res=>process.exit(res.statusCode===200?0:1));req.setTimeout(4000,()=>{req.destroy();process.exit(1)});req.on('error',()=>process.exit(1));"]
 CMD ["npm", "run", "start:outbox"]
 
+FROM runtime-base AS malware-scanner
+ENV PORT=8080
+COPY --chown=node:node --from=build /app/dist/malware-scanner ./dist/malware-scanner
+USER node
+ENTRYPOINT ["dumb-init", "--"]
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["node", "-e", "const http=require('node:http');const req=http.get({host:'127.0.0.1',port:8080,path:'/health'},res=>process.exit(res.statusCode===200?0:1));req.setTimeout(4000,()=>{req.destroy();process.exit(1)});req.on('error',()=>process.exit(1));"]
+CMD ["node", "dist/malware-scanner/index.js"]
+
 FROM runtime-common AS api
 ENV OUTBOX_WORKER_ENABLED=false
 EXPOSE 3000

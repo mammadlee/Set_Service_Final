@@ -77,7 +77,7 @@ const ENV_VARS: EnvVar[] = [
   { key: 'MALWARE_SCANNER_PROVIDER', required: false, hint: 'disabled | http' },
   { key: 'MALWARE_SCAN_REQUIRED', required: false, hint: 'true | false; production must be true' },
   { key: 'MALWARE_SCANNER_URL', required: false, hint: 'required for MALWARE_SCANNER_PROVIDER=http' },
-  { key: 'MALWARE_SCANNER_API_KEY', required: false, hint: 'optional bearer credential for the scanner' },
+  { key: 'MALWARE_SCANNER_API_KEY', required: false, minLength: 32, hint: 'required injected bearer credential in production' },
   { key: 'MALWARE_SCANNER_TIMEOUT_MS', required: false, positiveInt: true, hint: '1000-60000, default: 10000' },
   { key: 'MALWARE_SCANNER_MAX_ATTEMPTS', required: false, positiveInt: true, hint: '1-3, default: 2' },
   { key: 'PUSH_NOTIFICATIONS_ENABLED', required: false, hint: 'true | false, default false' },
@@ -332,6 +332,8 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
 
   if (!isProduction) return;
 
+  errors.push(...productionMalwareScannerIssues());
+
   if (process.env.JWT_SECRET) {
     errors.push('- JWT_SECRET is legacy and forbidden; configure distinct JWT_ACCESS_SECRET and JWT_REFRESH_SECRET');
   }
@@ -350,10 +352,6 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   if (process.env.S3_ENDPOINT?.startsWith('http:')) {
     errors.push('- S3_ENDPOINT must use https in production');
   }
-  if (process.env.MALWARE_SCANNER_URL?.startsWith('http:')) {
-    errors.push('- MALWARE_SCANNER_URL must use https in production');
-  }
-
   if (process.env.OTP_TEST_MODE !== 'false') {
     errors.push('- OTP_TEST_MODE must be false in production');
   }
@@ -369,12 +367,53 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   if (storageProvider === 'local') {
     errors.push('- STORAGE_PROVIDER=local is not allowed in production; use s3 or r2 for document uploads');
   }
-  if (malwareProvider !== 'http') {
+}
+
+export function productionMalwareScannerIssues(
+  environment: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const errors: string[] = [];
+  if (environment.MALWARE_SCANNER_PROVIDER !== 'http') {
     errors.push('- MALWARE_SCANNER_PROVIDER=http is required in production for sensitive document uploads');
   }
-  if (process.env.MALWARE_SCAN_REQUIRED !== 'true') {
+  if (environment.MALWARE_SCAN_REQUIRED !== 'true') {
     errors.push('- MALWARE_SCAN_REQUIRED must be true in production');
   }
+
+  const scannerUrl = environment.MALWARE_SCANNER_URL?.trim();
+  if (!scannerUrl) {
+    errors.push('- MALWARE_SCANNER_URL is required in production');
+  } else {
+    try {
+      const parsed = new URL(scannerUrl);
+      if (
+        parsed.protocol !== 'http:'
+        || parsed.hostname !== 'malware-scanner'
+        || parsed.port !== '8080'
+        || parsed.pathname !== '/scan'
+        || parsed.username
+        || parsed.password
+        || parsed.search
+        || parsed.hash
+      ) {
+        errors.push('- MALWARE_SCANNER_URL must be the internal http://malware-scanner:8080/scan endpoint in production');
+      }
+    } catch {
+      errors.push('- MALWARE_SCANNER_URL must be a valid internal scanner URL in production');
+    }
+  }
+
+  const apiKey = environment.MALWARE_SCANNER_API_KEY?.trim();
+  if (!apiKey) {
+    errors.push('- MALWARE_SCANNER_API_KEY is required in production');
+  } else {
+    if (apiKey.length < 32) {
+      errors.push('- MALWARE_SCANNER_API_KEY must be at least 32 characters in production');
+    }
+    const issue = credentialReferenceIssue(apiKey);
+    if (issue) errors.push(`- MALWARE_SCANNER_API_KEY ${issue}`);
+  }
+  return errors;
 }
 
 function validateCorsOrigins(errors: string[], isProduction: boolean): void {

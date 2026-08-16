@@ -7,6 +7,7 @@ import {
   credentialReferenceIssue,
   corsOriginIssue,
   corsOriginListIssue,
+  productionMalwareScannerIssues,
   secretStrengthIssue,
 } from '../src/lib/check-env';
 import {
@@ -81,6 +82,37 @@ function testCorsOriginPolicy(): void {
       corsOriginIssue(origin, true),
       null,
       `expected unsafe production CORS origin rejection: ${origin}`,
+    );
+  }
+}
+
+function testProductionMalwareScannerPolicy(): void {
+  const scannerCredential = [
+    'scanner-regression',
+    'Ax7mQ2vL9pR4tW8yK3nD6sF1hJ5cB0uZ',
+  ].join('-');
+  const valid: NodeJS.ProcessEnv = {
+    MALWARE_SCANNER_PROVIDER: 'http',
+    MALWARE_SCAN_REQUIRED: 'true',
+    MALWARE_SCANNER_URL: 'http://malware-scanner:8080/scan',
+    MALWARE_SCANNER_API_KEY: scannerCredential,
+  };
+  assert.deepEqual(productionMalwareScannerIssues(valid), []);
+
+  for (const environment of [
+    { ...valid, MALWARE_SCANNER_PROVIDER: 'disabled' },
+    { ...valid, MALWARE_SCAN_REQUIRED: 'false' },
+    { ...valid, MALWARE_SCANNER_URL: '' },
+    { ...valid, MALWARE_SCANNER_URL: 'https://scanner.example.test/scan' },
+    { ...valid, MALWARE_SCANNER_URL: 'http://malware-scanner:8080/health' },
+    { ...valid, MALWARE_SCANNER_API_KEY: '' },
+    { ...valid, MALWARE_SCANNER_API_KEY: '<secret-reference>' },
+    { ...valid, MALWARE_SCANNER_API_KEY: 'short' },
+  ]) {
+    assert.notDeepEqual(
+      productionMalwareScannerIssues(environment),
+      [],
+      `expected unsafe malware scanner environment rejection: ${JSON.stringify(environment)}`,
     );
   }
 }
@@ -171,6 +203,8 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /LIFECYCLE_CONCURRENCY_TEST_CONFIRM: "1"/);
   assert.match(workflowText, /npm run test:lifecycle-concurrency/);
   assert.match(workflowText, /npm run test:release-security/);
+  assert.match(workflowText, /npm run test:malware-scanner/);
+  assert.match(workflowText, /npm run test:production-env/);
   assert.match(workflowText, /name: Secret scan[\s\S]*fetch-depth: 0|fetch-depth: 0[\s\S]*name: Secret scan/);
   assert.match(workflowText, /vars\.PRODUCTION_API_BASE_URL/);
   assert.match(workflowText, /vars\.PRODUCTION_KIOSK_BASE_URL/);
@@ -211,10 +245,10 @@ function testCiWorkflow(): void {
   assert.doesNotMatch(workflowText, /node-version:\s+(?:20|22|24)\s*$/m);
   assert.equal(
     (workflowText.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
-    3,
+    4,
   );
-  assert.equal((workflowText.match(/uses: anchore\/sbom-action@/g) ?? []).length, 3);
-  assert.equal((workflowText.match(/uses: aquasecurity\/trivy-action@/g) ?? []).length, 3);
+  assert.equal((workflowText.match(/uses: anchore\/sbom-action@/g) ?? []).length, 4);
+  assert.equal((workflowText.match(/uses: aquasecurity\/trivy-action@/g) ?? []).length, 4);
 }
 
 function testContainerPolicy(): void {
@@ -235,6 +269,8 @@ function testContainerPolicy(): void {
   assert.match(migrationStage, /--from=build \/app\/node_modules\/prisma/);
   assert.match(dockerfile, /FROM runtime-common AS outbox-worker[\s\S]*HEALTHCHECK[\s\S]*\/health/);
   assert.match(dockerfile, /CMD \["npm", "run", "start:outbox"\]/);
+  assert.match(dockerfile, /FROM runtime-base AS malware-scanner[\s\S]*USER node[\s\S]*HEALTHCHECK[\s\S]*\/health/);
+  assert.match(dockerfile, /CMD \["node", "dist\/malware-scanner\/index\.js"\]/);
   assert.match(dockerfile, /postgresql-client/);
   assert.match(dockerfile, /preflight-attendance-deploy\.sql/);
 }
@@ -344,6 +380,7 @@ function main(): void {
   });
   testSecretStrengthPolicy();
   testCorsOriginPolicy();
+  testProductionMalwareScannerPolicy();
   testOutboxHealthContract();
   testCiWorkflow();
   testContainerPolicy();

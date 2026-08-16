@@ -39,6 +39,72 @@ services:
     networks:
       - backend
 
+  clamav:
+    image: ${CLAMAV_IMAGE:?Set CLAMAV_IMAGE to the approved pinned official ClamAV image in .env}
+    restart: unless-stopped
+    cpus: 1.25
+    mem_limit: 3g
+    pids_limit: 300
+    expose:
+      - "3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 6m
+    security_opt:
+      - no-new-privileges:true
+    logging: *json-logging
+    networks:
+      - scanner
+      - scanner-updates
+
+  malware-scanner:
+    image: setservice-malware-scanner:${RELEASE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: malware-scanner
+      args:
+        NODE_BASE_IMAGE: ${NODE_BASE_IMAGE:?Set NODE_BASE_IMAGE to the approved pinned Node image in .env}
+    restart: unless-stopped
+    cpus: 0.50
+    mem_limit: 256m
+    pids_limit: 100
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      MALWARE_SCANNER_API_KEY: ${MALWARE_SCANNER_API_KEY:?Set MALWARE_SCANNER_API_KEY in .env}
+      CLAMD_HOST: clamav
+      CLAMD_PORT: "3310"
+      CLAMD_TIMEOUT_MS: "8000"
+    expose:
+      - "8080"
+    depends_on:
+      clamav:
+        condition: service_healthy
+        restart: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('node:http');const req=http.get({host:'127.0.0.1',port:8080,path:'/health'},res=>process.exit(res.statusCode===200?0:1));req.setTimeout(4000,()=>{req.destroy();process.exit(1)});req.on('error',()=>process.exit(1));"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 15s
+    logging: *json-logging
+    networks:
+      - scanner
+
   api:
     image: setservice-api:${RELEASE_TAG:-local}
     build:
@@ -58,11 +124,17 @@ services:
       PORT: "3000"
       REDIS_URL: redis://redis:6379
       OUTBOX_WORKER_ENABLED: "false"
+      MALWARE_SCANNER_PROVIDER: http
+      MALWARE_SCAN_REQUIRED: "true"
+      MALWARE_SCANNER_URL: http://malware-scanner:8080/scan
       RELEASE_SHA: ${RELEASE_SHA:-unknown}
     expose:
       - "3000"
     depends_on:
       redis:
+        condition: service_healthy
+        restart: true
+      malware-scanner:
         condition: service_healthy
         restart: true
     read_only: true
@@ -78,6 +150,7 @@ services:
       - proxy
       - backend
       - egress
+      - scanner
 
   outbox-worker:
     image: setservice-outbox:${RELEASE_TAG:-local}
@@ -187,6 +260,7 @@ services:
 
 volumes:
   redis_data:
+  clamav_data:
   caddy_data:
   caddy_config:
 
@@ -207,3 +281,14 @@ networks:
     ipam:
       config:
         - subnet: ${EGRESS_SUBNET:-172.32.0.0/24}
+  scanner:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${SCANNER_SUBNET:-172.33.0.0/24}
+  scanner-updates:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${SCANNER_UPDATES_SUBNET:-172.34.0.0/24}
