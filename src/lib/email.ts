@@ -1,5 +1,11 @@
+import { Resend } from 'resend';
+import type {
+  CreateEmailOptions,
+  CreateEmailRequestOptions,
+  CreateEmailResponse,
+} from 'resend';
 import { logger } from './logger';
-import { requestProvider } from './provider-http';
+import { ProviderDeliveryError, requestProvider } from './provider-http';
 
 export interface EmailMessage {
   to: string;
@@ -10,6 +16,15 @@ export interface EmailMessage {
 
 export interface EmailProvider {
   send(message: EmailMessage, idempotencyKey: string): Promise<void>;
+}
+
+export interface ResendEmailClient {
+  emails: {
+    send(
+      payload: CreateEmailOptions,
+      options?: CreateEmailRequestOptions
+    ): Promise<CreateEmailResponse>;
+  };
 }
 
 class ConsoleEmailProvider implements EmailProvider {
@@ -64,9 +79,53 @@ class GenericHttpEmailProvider implements EmailProvider {
   }
 }
 
-function createEmailProvider(): EmailProvider {
-  const provider = process.env.EMAIL_PROVIDER ?? 'console';
+export class ResendEmailProvider implements EmailProvider {
+  constructor(
+    private readonly from: string,
+    private readonly client: ResendEmailClient
+  ) {}
+
+  async send(message: EmailMessage, idempotencyKey: string): Promise<void> {
+    let result: CreateEmailResponse;
+    try {
+      result = await this.client.emails.send(
+        {
+          from: this.from,
+          to: message.to,
+          subject: message.subject,
+          text: message.body,
+        },
+        { idempotencyKey }
+      );
+    } catch {
+      // The SDK may surface transport failures as exceptions. Replace the
+      // original error so request data and credentials can never reach outbox
+      // error storage or logs.
+      throw new ProviderDeliveryError('Resend email request failed.', true);
+    }
+
+    if (result.error) {
+      const statusCode = result.error.statusCode ?? undefined;
+      throw new ProviderDeliveryError(
+        resendFailureMessage(result.error.name, statusCode),
+        isRetryableResendStatus(statusCode),
+        statusCode
+      );
+    }
+  }
+}
+
+export function createEmailProvider(
+  environment: NodeJS.ProcessEnv = process.env,
+  resendClient?: ResendEmailClient
+): EmailProvider {
+  const provider = environment.EMAIL_PROVIDER ?? 'console';
   if (provider === 'generic_http') return new GenericHttpEmailProvider();
+  if (provider === 'resend') {
+    const apiKey = requiredEnvironmentValue(environment, 'RESEND_API_KEY', 'resend');
+    const from = requiredEnvironmentValue(environment, 'EMAIL_FROM', 'resend');
+    return new ResendEmailProvider(from, resendClient ?? new Resend(apiKey));
+  }
   if (provider === 'console') return new ConsoleEmailProvider();
   throw new Error(`Unsupported EMAIL_PROVIDER: ${provider}`);
 }
@@ -76,4 +135,29 @@ export async function deliverEmailMessage(
   idempotencyKey: string
 ): Promise<void> {
   await createEmailProvider().send(message, idempotencyKey);
+}
+
+function requiredEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  key: 'RESEND_API_KEY' | 'EMAIL_FROM',
+  provider: string
+): string {
+  const value = environment[key]?.trim();
+  if (!value) throw new Error(`${key} is required for ${provider} email provider.`);
+  return value;
+}
+
+function isRetryableResendStatus(statusCode: number | undefined): boolean {
+  return statusCode === undefined
+    || statusCode === 408
+    || statusCode === 409
+    || statusCode === 425
+    || statusCode === 429
+    || statusCode >= 500;
+}
+
+function resendFailureMessage(name: string, statusCode: number | undefined): string {
+  const safeName = /^[a-z_]+$/.test(name) ? name : 'provider_error';
+  const status = statusCode === undefined ? '' : `; HTTP ${statusCode}`;
+  return `Resend email delivery failed (${safeName}${status}).`;
 }

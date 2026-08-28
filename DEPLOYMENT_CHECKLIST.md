@@ -74,6 +74,10 @@ Production safety:
 - [ ] `OTP_LOG_CODES=false`
 - [ ] `SMS_PROVIDER=pg365`
 - [ ] `PG365_API_URL`, `PG365_PUBLIC_KEY`, `PG365_PRIVATE_KEY`, `PG365_ORIGINATOR`, and `PG365_TIMEOUT_MS` are configured; the private key is sourced from the secret manager.
+- [ ] `EMAIL_PROVIDER` is `resend` or `generic_http`; `console` is not used in production.
+- [ ] For Resend, `RESEND_API_KEY` is injected from the secret manager and `EMAIL_FROM` uses a verified sender domain.
+- [ ] For generic HTTP email, `EMAIL_API_URL`, `EMAIL_API_KEY`, and `EMAIL_FROM` are configured.
+- [ ] Email delivery is exercised through the outbox, and retry/dead-letter monitoring is enabled without logging recipients or message bodies.
 - [ ] `PUSH_NOTIFICATIONS_ENABLED` is explicitly set.
 - [ ] Firebase service account env vars are configured if push is enabled.
 - [ ] `JWT_ACCESS_SECRET` is 32+ random characters.

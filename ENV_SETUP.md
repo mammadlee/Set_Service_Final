@@ -93,6 +93,7 @@ PG365_TIMEOUT_MS="10000"
 EMAIL_PROVIDER="console"
 EMAIL_API_URL=""
 EMAIL_API_KEY=""
+RESEND_API_KEY=""
 EMAIL_FROM="SET Service <no-reply@setservice.az>"
 
 STORAGE_PROVIDER="local"
@@ -186,10 +187,11 @@ npm run build
 | `PG365_PRIVATE_KEY` | Provider-specific | Empty | Required when `SMS_PROVIDER=pg365`; store only in the deployment secret manager. |
 | `PG365_ORIGINATOR` | Provider-specific | `SET` | Required when `SMS_PROVIDER=pg365`. |
 | `PG365_TIMEOUT_MS` | Provider-specific | `10000` | Required when `SMS_PROVIDER=pg365`; OTP requests are never retried automatically. |
-| `EMAIL_PROVIDER` | No | `console` | Production must use `generic_http`; `console` is development only. |
+| `EMAIL_PROVIDER` | No | `console` | Allowed: `console`, `generic_http`, or `resend`. Production must use `generic_http` or `resend`; `console` is development only. |
 | `EMAIL_API_URL` | Provider-specific | Empty | Required when `EMAIL_PROVIDER=generic_http`. |
 | `EMAIL_API_KEY` | Provider-specific | Empty | Required when `EMAIL_PROVIDER=generic_http`. Store securely. |
-| `EMAIL_FROM` | Provider-specific | `SET Service <no-reply@setservice.az>` | Required when `EMAIL_PROVIDER=generic_http`. |
+| `RESEND_API_KEY` | Provider-specific | Empty | Required when `EMAIL_PROVIDER=resend`. Inject from the deployment secret manager and never log it. |
+| `EMAIL_FROM` | Provider-specific | `SET Service <no-reply@setservice.az>` | Required when `EMAIL_PROVIDER=generic_http` or `EMAIL_PROVIDER=resend`. For Resend, the sender domain must be verified. |
 | `PROVIDER_OUTBOX_ENCRYPTION_SECRET` | Production | 32+ char placeholder | Dedicated random key for encrypted provider outbox payloads; never reuse JWT, QR, kiosk, OTP, or download secrets. |
 | `STORAGE_PROVIDER` | No | `local` | `local`, `s3`, or `r2`. Production must use `s3` or `r2`; local storage is blocked in production. |
 | `LOCAL_UPLOAD_DIR` | No | `uploads` | Development-only local storage directory. |
@@ -297,13 +299,21 @@ EMAIL_FROM="SET Service <no-reply@setservice.az>"
 Production:
 
 ```env
+EMAIL_PROVIDER="resend"
+RESEND_API_KEY="<secret-reference>"
+EMAIL_FROM="SET Service <no-reply@setservice.az>"
+```
+
+The existing generic HTTP integration remains available as an alternative:
+
+```env
 EMAIL_PROVIDER="generic_http"
 EMAIL_API_URL="https://email-provider.example/send"
 EMAIL_API_KEY="<secret-reference>"
 EMAIL_FROM="SET Service <no-reply@setservice.az>"
 ```
 
-`EMAIL_PROVIDER=console` is intentionally blocked when `NODE_ENV=production`, and OTP/email verification codes must not be logged in production.
+`EMAIL_PROVIDER=console` is intentionally blocked when `NODE_ENV=production`. Resend API keys, recipient addresses, OTP/email verification codes, and raw email bodies must not be logged in production. Resend delivery uses the durable outbox event ID as its idempotency key.
 
 ## Storage Provider
 
@@ -418,8 +428,7 @@ OTP:         123456
 - Set `OTP_LOG_CODES=false`.
 - Set `SMS_PROVIDER=pg365`.
 - Configure `PG365_API_URL`, `PG365_PUBLIC_KEY`, `PG365_PRIVATE_KEY`, `PG365_ORIGINATOR`, and `PG365_TIMEOUT_MS`.
-- Set `EMAIL_PROVIDER=generic_http`.
-- Configure `EMAIL_API_URL`, `EMAIL_API_KEY`, and `EMAIL_FROM`.
+- Set `EMAIL_PROVIDER=resend` and configure `RESEND_API_KEY` plus a verified `EMAIL_FROM`; or use `generic_http` with `EMAIL_API_URL`, `EMAIL_API_KEY`, and `EMAIL_FROM`.
 - Set `CORS_ORIGINS` to trusted frontend origins only.
 - Set `AUTH_COOKIE_SAME_SITE=lax` or `strict` when the API and web apps are same-site. For an intentional cross-site deployment, use `none`, HTTPS on every origin, and exact trusted `CORS_ORIGINS`; the refresh cookie is then always `Secure`. Each production CORS entry must be a canonical HTTPS origin such as `https://admin.example.com`, without a trailing slash, path, query, fragment, credentials, wildcard, or `null`.
 - Use long random, non-reused values for `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `QR_HMAC_SECRET`, `KIOSK_TOKEN_ENCRYPTION_SECRET`, and `OTP_PEPPER`.

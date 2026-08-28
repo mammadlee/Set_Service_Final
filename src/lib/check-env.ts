@@ -54,10 +54,11 @@ const ENV_VARS: EnvVar[] = [
   { key: 'PG365_PRIVATE_KEY', required: false, hint: 'required for pg365' },
   { key: 'PG365_ORIGINATOR', required: false, hint: 'required for pg365; default deployment value: SET' },
   { key: 'PG365_TIMEOUT_MS', required: false, positiveInt: true, hint: 'required for pg365; 1-120000' },
-  { key: 'EMAIL_PROVIDER', required: false, hint: 'console | generic_http' },
+  { key: 'EMAIL_PROVIDER', required: false, hint: 'console | generic_http | resend' },
   { key: 'EMAIL_API_URL', required: false, hint: 'required for generic_http' },
   { key: 'EMAIL_API_KEY', required: false, hint: 'required for generic_http' },
-  { key: 'EMAIL_FROM', required: false, hint: 'required for generic_http' },
+  { key: 'RESEND_API_KEY', required: false, hint: 'required for resend' },
+  { key: 'EMAIL_FROM', required: false, hint: 'required for generic_http or resend' },
   { key: 'PROVIDER_OUTBOX_ENCRYPTION_SECRET', required: 'production', minLength: 32, hint: '32+ chars, dedicated to encrypted provider outbox payloads' },
   { key: 'PROVIDER_HTTP_TIMEOUT_MS', required: false, positiveInt: true, hint: '100-120000, default: 8000' },
   { key: 'PROVIDER_HTTP_MAX_ATTEMPTS', required: false, positiveInt: true, hint: '1-5, default: 2' },
@@ -263,14 +264,19 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   }
 
   const emailProvider = process.env.EMAIL_PROVIDER ?? 'console';
-  if (emailProvider !== 'console' && emailProvider !== 'generic_http') {
-    errors.push('- EMAIL_PROVIDER must be one of: console, generic_http');
+  if (!['console', 'generic_http', 'resend'].includes(emailProvider)) {
+    errors.push('- EMAIL_PROVIDER must be one of: console, generic_http, resend');
   }
 
   if (emailProvider === 'generic_http') {
     requireWhen(errors, 'EMAIL_API_URL', 'EMAIL_PROVIDER=generic_http');
     requireWhen(errors, 'EMAIL_API_KEY', 'EMAIL_PROVIDER=generic_http');
     requireWhen(errors, 'EMAIL_FROM', 'EMAIL_PROVIDER=generic_http');
+  }
+  if (emailProvider === 'resend') {
+    requireWhen(errors, 'RESEND_API_KEY', 'EMAIL_PROVIDER=resend');
+    requireWhen(errors, 'EMAIL_FROM', 'EMAIL_PROVIDER=resend');
+    validateRuntimeCredential(errors, 'RESEND_API_KEY');
   }
   validateIntegerRange(errors, 'PROVIDER_HTTP_TIMEOUT_MS', 100, 120_000);
   validateIntegerRange(errors, 'PG365_TIMEOUT_MS', 1, 120_000);

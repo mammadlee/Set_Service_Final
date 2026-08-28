@@ -50,6 +50,7 @@ const sensitiveKeys = new Set([
   'otp',
   'otpcode',
   'code',
+  'body',
   'qrtoken',
   'apikey',
   'secret',
@@ -81,7 +82,10 @@ function redactSensitive(value: unknown, seen = new WeakSet<object>()): unknown 
 
 function isSensitiveKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[-_\s]/g, '');
-  return sensitiveKeys.has(normalized) || normalized.endsWith('token') || normalized.includes('secret');
+  return sensitiveKeys.has(normalized)
+    || normalized.endsWith('apikey')
+    || normalized.endsWith('token')
+    || normalized.includes('secret');
 }
 
 function maskContactField(key: string, value: unknown): unknown {

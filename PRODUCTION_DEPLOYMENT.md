@@ -116,7 +116,9 @@ bucket and review the exact R2 policy.
 ### Other providers
 
 - PG365 production public/private credentials and sender/originator.
-- A non-console email HTTP provider and sender address.
+- A Resend API key plus verified sender address (`EMAIL_PROVIDER=resend`,
+  `RESEND_API_KEY`, and `EMAIL_FROM`), or the existing generic HTTP email
+  provider variables. Console email delivery remains forbidden in production.
 - The repository-provided malware adapter and official ClamAV service. Production
   validation accepts only `http://malware-scanner:8080/scan`, requires a real
   adapter bearer credential, and blocks deployment when scanning is optional.
