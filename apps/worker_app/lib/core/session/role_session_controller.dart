@@ -32,7 +32,9 @@ class RoleSessionController extends ChangeNotifier {
     final operation = ++_operation;
     final rawRole = await _storage.read(key: _activeRoleKey);
     if (_disposed || operation != _operation) return;
-    activeRole = _roleFromValue(rawRole);
+    // This package is the worker mobile app. On a fresh install, enter the
+    // worker flow directly instead of showing the multi-role chooser.
+    activeRole = _roleFromValue(rawRole) ?? AppRole.worker;
     loading = false;
     notifyListeners();
   }
