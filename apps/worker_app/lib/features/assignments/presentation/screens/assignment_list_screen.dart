@@ -90,28 +90,44 @@ class _AssignmentListScreenState extends State<AssignmentListScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<_AssignmentFilter>(
-                          expandedInsets: EdgeInsets.zero,
-                          segments: const [
-                            ButtonSegment(
-                              value: _AssignmentFilter.upcoming,
-                              label: Text(AppStrings.upcomingJobs),
-                            ),
-                            ButtonSegment(
-                              value: _AssignmentFilter.past,
-                              label: Text(AppStrings.pastJobs),
-                            ),
-                            ButtonSegment(
-                              value: _AssignmentFilter.all,
-                              label: Text(AppStrings.allJobs),
-                            ),
-                          ],
-                          selected: {_filter},
-                          onSelectionChanged: (value) =>
-                              setState(() => _filter = value.first),
-                        ),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 390;
+                          return SegmentedButton<_AssignmentFilter>(
+                            expandedInsets: EdgeInsets.zero,
+                            showSelectedIcon: !compact,
+                            segments: [
+                              ButtonSegment(
+                                value: _AssignmentFilter.upcoming,
+                                icon: compact
+                                    ? const Icon(Icons.schedule_rounded)
+                                    : null,
+                                label: Text(
+                                  compact ? 'Gələcək' : AppStrings.upcomingJobs,
+                                ),
+                              ),
+                              ButtonSegment(
+                                value: _AssignmentFilter.past,
+                                icon: compact
+                                    ? const Icon(Icons.history_rounded)
+                                    : null,
+                                label: Text(
+                                  compact ? 'Keçmiş' : AppStrings.pastJobs,
+                                ),
+                              ),
+                              ButtonSegment(
+                                value: _AssignmentFilter.all,
+                                icon: compact
+                                    ? const Icon(Icons.view_list_rounded)
+                                    : null,
+                                label: Text(compact ? 'Hamısı' : AppStrings.allJobs),
+                              ),
+                            ],
+                            selected: {_filter},
+                            onSelectionChanged: (value) =>
+                                setState(() => _filter = value.first),
+                          );
+                        },
                       ),
                       const SizedBox(height: 12),
                       if (visibleAssignments.isEmpty)
