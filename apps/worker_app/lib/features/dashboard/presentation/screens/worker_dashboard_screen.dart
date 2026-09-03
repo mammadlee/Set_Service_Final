@@ -79,6 +79,7 @@ class _WorkerDashboardScreenState extends State<WorkerDashboardScreen> {
           return RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               children: [
                 PremiumEntrance(child: _GreetingCard(worker: data.worker)),
                 const SizedBox(height: 16),
@@ -111,95 +112,118 @@ class _GreetingCard extends StatelessWidget {
     final firstName = cleanName.isEmpty
         ? AppStrings.worker
         : cleanName.split(RegExp(r'\s+')).first;
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: BrandColors.primaryBurgundy,
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: Center(
-              child: Text(
-                'SET',
-                style: TextStyle(
-                  color: BrandColors.accentGold.withValues(alpha: 0.18),
-                  fontFamily: 'serif',
-                  fontSize: 112,
-                  height: 0.8,
-                ),
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 340;
+        final avatarRadius = compact ? 34.0 : 42.0;
+
+        final identity = Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: avatarRadius,
+              backgroundColor: BrandColors.white.withValues(alpha: 0.2),
+              backgroundImage: worker.profilePhotoUrl == null
+                  ? null
+                  : NetworkImage(worker.profilePhotoUrl!),
+              child: worker.profilePhotoUrl == null
+                  ? Icon(
+                      Icons.person_outline,
+                      color: BrandColors.white,
+                      size: compact ? 34 : 42,
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Align(
+                alignment: Alignment.topRight,
+                child: StatusPill(status: worker.status),
               ),
             ),
+          ],
+        );
+
+        return Container(
+          padding: EdgeInsets.all(compact ? 17 : 22),
+          decoration: BoxDecoration(
+            color: BrandColors.primaryBurgundy,
+            borderRadius: BorderRadius.circular(28),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
             children: [
-              Row(
+              Positioned.fill(
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'SET',
+                      style: TextStyle(
+                        color: BrandColors.accentGold.withValues(alpha: 0.18),
+                        fontFamily: 'serif',
+                        fontSize: compact ? 88 : 112,
+                        height: 0.8,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    radius: 42,
-                    backgroundColor: BrandColors.white.withValues(alpha: 0.2),
-                    backgroundImage: worker.profilePhotoUrl == null
-                        ? null
-                        : NetworkImage(worker.profilePhotoUrl!),
-                    child: worker.profilePhotoUrl == null
-                        ? const Icon(
-                            Icons.person_outline,
-                            color: BrandColors.white,
-                            size: 42,
-                          )
-                        : null,
-                  ),
-                  const Spacer(),
-                  StatusPill(status: worker.status),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Salam, $firstName 👋',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: BrandColors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                worker.position?.isNotEmpty == true
-                    ? worker.position!
-                    : AppStrings.worker,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: BrandColors.accentGold,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.verified_outlined,
-                      value: worker.availability ? 'Əlçatan' : 'Məşğul',
+                  identity,
+                  const SizedBox(height: 20),
+                  Text(
+                    'Salam, $firstName 👋',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: BrandColors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.book_outlined,
-                      value: _workerClassLabel(worker.workerClass),
+                  const SizedBox(height: 6),
+                  Text(
+                    worker.position?.isNotEmpty == true
+                        ? worker.position!
+                        : AppStrings.worker,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: BrandColors.accentGold,
                     ),
                   ),
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.star_outline_rounded,
-                      value: worker.ratingAverage.toStringAsFixed(1),
-                    ),
+                  const SizedBox(height: 24),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _WorkerHeroStat(
+                          icon: Icons.verified_outlined,
+                          value: worker.availability ? 'Əlçatan' : 'Məşğul',
+                        ),
+                      ),
+                      Expanded(
+                        child: _WorkerHeroStat(
+                          icon: Icons.book_outlined,
+                          value: _workerClassLabel(worker.workerClass),
+                        ),
+                      ),
+                      Expanded(
+                        child: _WorkerHeroStat(
+                          icon: Icons.star_outline_rounded,
+                          value: worker.ratingAverage.toStringAsFixed(1),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -217,22 +241,26 @@ class _WorkerHeroStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(icon, color: BrandColors.white, size: 24),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: BrandColors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 12,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Column(
+        children: [
+          Icon(icon, color: BrandColors.white, size: 24),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: BrandColors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+              height: 1.2,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -274,24 +302,34 @@ class _CompactStatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 380;
     return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 18 : 24,
+        vertical: compact ? 18 : 22,
+      ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 color: Colors.black,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Colors.black,
-              fontWeight: FontWeight.w800,
+          const SizedBox(width: 12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: Colors.black,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -334,23 +372,40 @@ class _NextJobCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Gələcək iş',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w600,
-                  ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 300;
+              final title = Text(
+                'Gələcək iş',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w600,
                 ),
-              ),
-              StatusPill(status: next.status),
-            ],
+              );
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    title,
+                    const SizedBox(height: 8),
+                    StatusPill(status: next.status),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: title),
+                  const SizedBox(width: 10),
+                  Flexible(child: StatusPill(status: next.status)),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 12),
           Text(
             next.order.company.name,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
               color: BrandColors.darkText,
               fontWeight: FontWeight.w800,
@@ -358,10 +413,14 @@ class _NextJobCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.room_service_outlined,
-                color: BrandColors.primaryBurgundy,
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.room_service_outlined,
+                  color: BrandColors.primaryBurgundy,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -369,6 +428,7 @@ class _NextJobCard extends StatelessWidget {
                   next.category.isNotEmpty
                       ? next.category
                       : next.order.category,
+                  softWrap: true,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: BrandColors.primaryBurgundy,
                     fontWeight: FontWeight.w600,
