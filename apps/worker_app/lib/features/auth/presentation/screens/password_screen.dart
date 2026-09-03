@@ -32,8 +32,11 @@ class _PasswordScreenState extends State<PasswordScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
     final isReset = auth.pendingPurpose == OtpPurpose.workerPasswordReset;
+    final height = MediaQuery.sizeOf(context).height;
+    final topSpace = height < 700 ? 28.0 : height < 820 ? 56.0 : 92.0;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -43,6 +46,8 @@ class _PasswordScreenState extends State<PasswordScreen> {
         ),
         title: Text(
           isReset ? AppStrings.resetPassword : AppStrings.createPassword,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
       body: ConstrainedPage(
@@ -50,13 +55,27 @@ class _PasswordScreenState extends State<PasswordScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              const SizedBox(height: 150),
+              SizedBox(height: topSpace),
               Text(
                 AppStrings.createNewPassword,
+                textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                AppStrings.passwordValidation,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: BrandColors.mutedBrown,
+                  height: 1.35,
                 ),
               ),
               const SizedBox(height: 24),
