@@ -47,8 +47,8 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
     final auth = context.watch<AuthController>();
     final media = MediaQuery.of(context);
     final compact = media.size.width < 380;
-    final titleFontSize = compact ? 23.0 : 27.0;
-    final navHeight = compact ? 78.0 : 88.0;
+    final titleFontSize = compact ? 21.0 : 24.0;
+    final navHeight = compact ? 70.0 : 78.0;
 
     return PopScope(
       canPop: _index == 0,
@@ -60,8 +60,8 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
       child: Scaffold(
         resizeToAvoidBottomInset: true,
         appBar: AppBar(
-          toolbarHeight: compact ? 68 : 76,
-          titleSpacing: compact ? 14 : 20,
+          toolbarHeight: compact ? 58 : 64,
+          titleSpacing: compact ? 14 : 18,
           backgroundColor: BrandColors.creamBackground,
           surfaceTintColor: BrandColors.transparent,
           title: Text(
@@ -72,7 +72,7 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
               color: BrandColors.darkText,
               fontSize: titleFontSize,
               fontWeight: FontWeight.w800,
-              letterSpacing: -0.4,
+              letterSpacing: -0.2,
             ),
           ),
           actions: [
@@ -89,9 +89,9 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
                               .clearRole();
                         }
                       },
-                icon: Icon(Icons.logout_rounded, size: compact ? 26 : 28),
+                icon: Icon(Icons.logout_rounded, size: compact ? 24 : 26),
               ),
-            SizedBox(width: compact ? 2 : 8),
+            SizedBox(width: compact ? 2 : 6),
           ],
         ),
         body: IndexedStack(
