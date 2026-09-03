@@ -65,6 +65,7 @@ class _EmailVerificationBlock extends StatelessWidget {
               controller: otpController,
               keyboardType: TextInputType.number,
               maxLength: 6,
+              textInputAction: TextInputAction.done,
               decoration: const InputDecoration(
                 labelText: 'E-poçt təsdiq kodu',
                 counterText: '',
@@ -140,39 +141,42 @@ class _ProfileOverview extends StatelessWidget {
                   ),
                 ),
                 Center(
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFFFF9C9C)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 44),
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: const Color(0xFFFF9C9C)),
+                          ),
+                          child: CircleAvatar(
+                            radius: 40,
+                            backgroundColor: const Color(0xFFFFE5E2),
+                            backgroundImage: photoUrl == null
+                                ? null
+                                : NetworkImage(photoUrl),
+                            child: photoUrl == null
+                                ? const Icon(
+                                    Icons.person_outline,
+                                    color: BrandColors.primaryBurgundy,
+                                    size: 44,
+                                  )
+                                : null,
+                          ),
                         ),
-                        child: CircleAvatar(
-                          radius: 40,
-                          backgroundColor: const Color(0xFFFFE5E2),
-                          backgroundImage: photoUrl == null
-                              ? null
-                              : NetworkImage(photoUrl),
-                          child: photoUrl == null
-                              ? const Icon(
-                                  Icons.person_outline,
-                                  color: BrandColors.primaryBurgundy,
-                                  size: 44,
-                                )
-                              : null,
+                        const SizedBox(height: 12),
+                        Text(
+                          worker.name,
+                          textAlign: TextAlign.center,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        worker.name,
-                        textAlign: TextAlign.center,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.headlineSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -274,8 +278,8 @@ class _ProfileMenuRow extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 58),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          constraints: const BoxConstraints(minHeight: 64),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
@@ -286,24 +290,41 @@ class _ProfileMenuRow extends StatelessWidget {
             ),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Icon(icon, color: BrandColors.primaryBurgundy, size: 22),
               const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.black,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      summary,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: BrandColors.mutedBrown,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               const Icon(
                 Icons.edit_rounded,
                 color: BrandColors.primaryBurgundy,
+                size: 21,
               ),
             ],
           ),
@@ -374,7 +395,7 @@ class _PremiumEditSheet extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title,
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(fontWeight: FontWeight.w700),
@@ -391,6 +412,8 @@ class _PremiumEditSheet extends StatelessWidget {
                   ),
                   Flexible(
                     child: SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
                       padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                       child: child,
                     ),
@@ -405,24 +428,39 @@ class _PremiumEditSheet extends StatelessWidget {
                         ),
                       ),
                     ),
-                    child: Row(
-                      children: [
-                        Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 350;
+                        final cancelButton = SizedBox(
+                          width: double.infinity,
                           child: OutlinedButton(
                             onPressed: saving ? null : onCancel,
                             child: const Text('Ləğv et'),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: LoadingButton(
-                            label: saveLabel,
-                            icon: Icons.check_rounded,
-                            loading: saving,
-                            onPressed: onSave,
-                          ),
-                        ),
-                      ],
+                        );
+                        final saveButton = LoadingButton(
+                          label: saveLabel,
+                          icon: Icons.check_rounded,
+                          loading: saving,
+                          onPressed: onSave,
+                        );
+                        if (compact) {
+                          return Column(
+                            children: [
+                              saveButton,
+                              const SizedBox(height: 10),
+                              cancelButton,
+                            ],
+                          );
+                        }
+                        return Row(
+                          children: [
+                            Expanded(child: cancelButton),
+                            const SizedBox(width: 10),
+                            Expanded(child: saveButton),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
