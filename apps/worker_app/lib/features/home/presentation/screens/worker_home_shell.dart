@@ -45,6 +45,10 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final media = MediaQuery.of(context);
+    final compact = media.size.width < 380;
+    final titleFontSize = compact ? 23.0 : 27.0;
+    final navHeight = compact ? 78.0 : 88.0;
 
     return PopScope(
       canPop: _index == 0,
@@ -54,18 +58,21 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
         }
       },
       child: Scaffold(
+        resizeToAvoidBottomInset: true,
         appBar: AppBar(
-          toolbarHeight: 82,
-          titleSpacing: 20,
+          toolbarHeight: compact ? 68 : 76,
+          titleSpacing: compact ? 14 : 20,
           backgroundColor: BrandColors.creamBackground,
           surfaceTintColor: BrandColors.transparent,
           title: Text(
             _titles[_index],
-            style: const TextStyle(
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
               color: BrandColors.darkText,
-              fontSize: 29,
+              fontSize: titleFontSize,
               fontWeight: FontWeight.w800,
-              letterSpacing: -0.8,
+              letterSpacing: -0.4,
             ),
           ),
           actions: [
@@ -82,9 +89,9 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
                               .clearRole();
                         }
                       },
-                icon: const Icon(Icons.logout_rounded, size: 30),
+                icon: Icon(Icons.logout_rounded, size: compact ? 26 : 28),
               ),
-            const SizedBox(width: 8),
+            SizedBox(width: compact ? 2 : 8),
           ],
         ),
         body: IndexedStack(
@@ -97,36 +104,41 @@ class _WorkerHomeShellState extends State<WorkerHomeShell> {
             );
           }),
         ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: _selectTab,
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: 'Ana səhifə',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.work_outline_rounded),
-              selectedIcon: Icon(Icons.work_rounded),
-              label: 'İşlərim',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.qr_code_scanner_outlined),
-              selectedIcon: Icon(Icons.qr_code_scanner),
-              label: 'QR oxut',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.notifications_outlined),
-              selectedIcon: Icon(Icons.notifications),
-              label: 'Bildirişlər',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.person_outline),
-              selectedIcon: Icon(Icons.person),
-              label: 'Profil',
-            ),
-          ],
+        bottomNavigationBar: SafeArea(
+          top: false,
+          child: NavigationBar(
+            height: navHeight,
+            labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+            selectedIndex: _index,
+            onDestinationSelected: _selectTab,
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: 'Ana səhifə',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.work_outline_rounded),
+                selectedIcon: Icon(Icons.work_rounded),
+                label: 'İşlərim',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.qr_code_scanner_outlined),
+                selectedIcon: Icon(Icons.qr_code_scanner),
+                label: 'QR oxut',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.notifications_outlined),
+                selectedIcon: Icon(Icons.notifications),
+                label: 'Bildirişlər',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline),
+                selectedIcon: Icon(Icons.person),
+                label: 'Profil',
+              ),
+            ],
+          ),
         ),
       ),
     );
