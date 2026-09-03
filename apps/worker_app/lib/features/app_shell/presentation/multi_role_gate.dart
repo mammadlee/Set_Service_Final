@@ -8,7 +8,6 @@ import '../../admin/presentation/admin_auth_gate.dart';
 import '../../auth/presentation/screens/auth_gate.dart';
 import '../../auth/presentation/screens/splash_screen.dart';
 import '../../company/presentation/company_auth_gate.dart';
-import '../../role_selection/presentation/role_selection_screen.dart';
 
 class MultiRoleGate extends StatelessWidget {
   const MultiRoleGate({super.key});
@@ -20,21 +19,20 @@ class MultiRoleGate extends StatelessWidget {
     final child = roleSession.loading
         ? const SplashScreen()
         : switch (roleSession.activeRole) {
-            AppRole.worker => const AuthGate(),
             AppRole.company => const CompanyAuthGate(),
             AppRole.admin => const AdminAuthGate(),
-            null => const RoleSelectionScreen(),
+            AppRole.worker || null => const AuthGate(),
           };
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
+      duration: const Duration(milliseconds: 180),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
       child: KeyedSubtree(
         key: ValueKey(
           roleSession.loading
               ? 'loading'
-              : roleSession.activeRole?.name ?? 'roles',
+              : roleSession.activeRole?.name ?? 'worker',
         ),
         child: child,
       ),
