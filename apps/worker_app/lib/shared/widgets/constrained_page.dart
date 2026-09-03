@@ -17,19 +17,37 @@ class ConstrainedPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Stack(
-        children: [
-          if (showBackdrop)
-            const Positioned.fill(
-              child: IgnorePointer(child: LuxuryHotelBackdrop()),
-            ),
-          Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
-              child: Padding(padding: padding, child: child),
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final compact = width < 380;
+          final resolvedPadding = padding.resolve(Directionality.of(context));
+          final adaptivePadding = EdgeInsets.fromLTRB(
+            compact ? resolvedPadding.left.clamp(12.0, 16.0) : resolvedPadding.left,
+            resolvedPadding.top,
+            compact ? resolvedPadding.right.clamp(12.0, 16.0) : resolvedPadding.right,
+            resolvedPadding.bottom,
+          );
+
+          return Stack(
+            children: [
+              if (showBackdrop)
+                const Positioned.fill(
+                  child: IgnorePointer(child: LuxuryHotelBackdrop()),
+                ),
+              Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Padding(
+                    padding: adaptivePadding,
+                    child: SizedBox(width: double.infinity, child: child),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
