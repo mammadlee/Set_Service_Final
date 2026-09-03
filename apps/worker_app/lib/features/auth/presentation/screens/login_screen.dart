@@ -34,17 +34,20 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final compact = MediaQuery.sizeOf(context).height < 720;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
-              const SizedBox(height: 36),
+              SizedBox(height: compact ? 18 : 36),
               const Center(child: AppLogo(size: 72)),
-              const SizedBox(height: 78),
+              SizedBox(height: compact ? 40 : 78),
               Text(
                 AppStrings.loginTitle,
                 textAlign: TextAlign.center,
@@ -186,6 +189,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return await showModalBottomSheet<_ForgotPasswordResult>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         showDragHandle: false,
         backgroundColor: BrandColors.creamBackground,
         shape: const RoundedRectangleBorder(
@@ -198,90 +202,92 @@ class _LoginScreenState extends State<LoginScreen> {
             padding: EdgeInsets.only(
               bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
             ),
-            child: SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 24),
-                        decoration: BoxDecoration(
-                          color: BrandColors.darkText,
-                          borderRadius: BorderRadius.circular(99),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 24),
+                      decoration: BoxDecoration(
+                        color: BrandColors.darkText,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    AppStrings.forgotPassword,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      expandedInsets: EdgeInsets.zero,
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(
+                          value: 'phone',
+                          icon: Icon(Icons.phone_outlined),
+                          label: Text('Telefon'),
                         ),
-                      ),
-                    ),
-                    Text(
-                      AppStrings.forgotPassword,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: SegmentedButton<String>(
-                        expandedInsets: EdgeInsets.zero,
-                        segments: const [
-                          ButtonSegment(
-                            value: 'phone',
-                            label: Text('Telefon nömrəsi ilə'),
-                          ),
-                          ButtonSegment(
-                            value: 'email',
-                            label: Text('E-poçt ilə'),
-                          ),
-                        ],
-                        selected: {method},
-                        onSelectionChanged: (value) =>
-                            setSheetState(() => method = value.first),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: method == 'phone'
-                          ? phoneController
-                          : emailController,
-                      keyboardType: method == 'phone'
-                          ? TextInputType.phone
-                          : TextInputType.emailAddress,
-                      decoration: InputDecoration(
-                        labelText: method == 'phone'
-                            ? AppStrings.phoneNumber
-                            : AppStrings.email,
-                        hintText: method == 'phone'
-                            ? AppStrings.phoneHint
-                            : AppStrings.emailHint,
-                        prefixIcon: Icon(
-                          method == 'phone'
-                              ? Icons.phone_outlined
-                              : Icons.email_outlined,
+                        ButtonSegment(
+                          value: 'email',
+                          icon: Icon(Icons.email_outlined),
+                          label: Text('E-poçt'),
                         ),
+                      ],
+                      selected: {method},
+                      onSelectionChanged: (value) =>
+                          setSheetState(() => method = value.first),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: method == 'phone'
+                        ? phoneController
+                        : emailController,
+                    keyboardType: method == 'phone'
+                        ? TextInputType.phone
+                        : TextInputType.emailAddress,
+                    decoration: InputDecoration(
+                      labelText: method == 'phone'
+                          ? AppStrings.phoneNumber
+                          : AppStrings.email,
+                      hintText: method == 'phone'
+                          ? AppStrings.phoneHint
+                          : AppStrings.emailHint,
+                      prefixIcon: Icon(
+                        method == 'phone'
+                            ? Icons.phone_outlined
+                            : Icons.email_outlined,
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    LoadingButton(
-                      label: AppStrings.sendOtp,
-                      icon: Icons.password_outlined,
-                      loading: false,
-                      onPressed: () => Navigator.of(sheetContext).pop(
-                        _ForgotPasswordResult(
-                          method: method,
-                          value:
-                              (method == 'phone'
-                                      ? phoneController.text
-                                      : emailController.text)
-                                  .trim(),
-                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  LoadingButton(
+                    label: AppStrings.sendOtp,
+                    icon: Icons.password_outlined,
+                    loading: false,
+                    onPressed: () => Navigator.of(sheetContext).pop(
+                      _ForgotPasswordResult(
+                        method: method,
+                        value:
+                            (method == 'phone'
+                                    ? phoneController.text
+                                    : emailController.text)
+                                .trim(),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
