@@ -23,9 +23,13 @@ class ConstrainedPage extends StatelessWidget {
           final compact = width < 380;
           final resolvedPadding = padding.resolve(Directionality.of(context));
           final adaptivePadding = EdgeInsets.fromLTRB(
-            compact ? resolvedPadding.left.clamp(12.0, 16.0) : resolvedPadding.left,
+            compact
+                ? resolvedPadding.left.clamp(12.0, 16.0).toDouble()
+                : resolvedPadding.left,
             resolvedPadding.top,
-            compact ? resolvedPadding.right.clamp(12.0, 16.0) : resolvedPadding.right,
+            compact
+                ? resolvedPadding.right.clamp(12.0, 16.0).toDouble()
+                : resolvedPadding.right,
             resolvedPadding.bottom,
           );
 
