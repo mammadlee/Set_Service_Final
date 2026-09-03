@@ -23,9 +23,11 @@ class NotificationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('dd.MM, HH:mm');
+    final compact = MediaQuery.sizeOf(context).width < 380;
+
     return Premium3DCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(compact ? 16 : 20),
       radius: 28,
       depth: notification.isUnread ? 1.05 : 0.82,
       child: Row(
@@ -39,6 +41,8 @@ class NotificationCard extends StatelessWidget {
               children: [
                 Text(
                   title,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: Colors.black,
                     fontWeight: FontWeight.w700,
@@ -47,7 +51,7 @@ class NotificationCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   body,
-                  maxLines: 4,
+                  maxLines: compact ? 5 : 4,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: BrandColors.mutedBrown,
@@ -55,7 +59,10 @@ class NotificationCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 10),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       notification.isUnread
@@ -66,8 +73,7 @@ class NotificationCard extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-                    if (notification.createdAt != null) ...[
-                      const SizedBox(width: 10),
+                    if (notification.createdAt != null)
                       Text(
                         dateFormat.format(notification.createdAt!),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -75,7 +81,6 @@ class NotificationCard extends StatelessWidget {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -179,16 +184,14 @@ Future<void> showNotificationDetailSheet({
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            const Spacer(),
-            PremiumChip(
-              label: notification.isUnread
-                  ? AppStrings.notificationUnread
-                  : AppStrings.notificationRead,
-              icon: Icons.notifications_outlined,
-            ),
-          ],
+        Align(
+          alignment: Alignment.centerRight,
+          child: PremiumChip(
+            label: notification.isUnread
+                ? AppStrings.notificationUnread
+                : AppStrings.notificationRead,
+            icon: Icons.notifications_outlined,
+          ),
         ),
         const SizedBox(height: 14),
         PremiumCard(
@@ -197,6 +200,7 @@ Future<void> showNotificationDetailSheet({
             children: [
               Text(
                 title,
+                softWrap: true,
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
@@ -204,6 +208,7 @@ Future<void> showNotificationDetailSheet({
               const SizedBox(height: 8),
               Text(
                 body,
+                softWrap: true,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: BrandColors.mutedBrown,
                   height: 1.4,
@@ -241,26 +246,42 @@ class _DetailLine extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 122,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: BrandColors.mutedBrown,
-                fontWeight: FontWeight.w700,
-              ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stacked = constraints.maxWidth < 300;
+          final labelWidget = Text(
+            label,
+            style: const TextStyle(
+              color: BrandColors.mutedBrown,
+              fontWeight: FontWeight.w700,
             ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
+          );
+          final valueWidget = Text(
+            value,
+            softWrap: true,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          );
+
+          if (stacked) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                labelWidget,
+                const SizedBox(height: 3),
+                valueWidget,
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 112, child: labelWidget),
+              const SizedBox(width: 8),
+              Expanded(child: valueWidget),
+            ],
+          );
+        },
       ),
     );
   }
