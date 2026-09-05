@@ -82,28 +82,32 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
                 subtitle: 'Müəssisə idarə paneli',
                 trailing: StatusPill(status: data.company.status),
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 220,
-                        child: PremiumActionButton(
-                          secondary: true,
-                          icon: Icons.add_rounded,
-                          label: AppStrings.createOrder,
-                          onPressed: _openCreateOrder,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 360;
+                      final createButton = PremiumActionButton(
+                        secondary: true,
+                        icon: Icons.add_rounded,
+                        label: AppStrings.createOrder,
+                        onPressed: _openCreateOrder,
+                      );
+                      if (compact) {
+                        return SizedBox(
+                          width: double.infinity,
+                          child: createButton,
+                        );
+                      }
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 280),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: createButton,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      const SizedBox(
-                        width: 220,
-                        child: PremiumActionButton(
-                          secondary: true,
-                          label: AppStrings.operationsSummary,
-                          onPressed: null,
-                        ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
                 ],
               ),
