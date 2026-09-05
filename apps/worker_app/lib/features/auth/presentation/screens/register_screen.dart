@@ -33,6 +33,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AuthController>().clearTransientMessages();
+    });
     _loadTaxonomy();
   }
 
@@ -295,7 +298,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       title: title,
       child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.48,
+        height: (MediaQuery.sizeOf(context).height * 0.44).clamp(250.0, 430.0),
         child: items.isEmpty
             ? const InlineMessage(message: 'Seçim tapılmadı.')
             : ListView.separated(
@@ -352,12 +355,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ...options,
               ...draft.where((item) => !options.contains(item)),
             }.toList();
+            final optionsHeight = (MediaQuery.sizeOf(context).height * 0.29)
+                .clamp(190.0, 300.0);
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
-                  height: MediaQuery.sizeOf(context).height * 0.38,
+                  height: optionsHeight,
                   child: SingleChildScrollView(
                     child: Wrap(
                       spacing: 8,
@@ -365,6 +371,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       children: allOptions
                           .map(
                             (item) => FilterChip(
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              visualDensity: VisualDensity.compact,
+                              labelPadding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                              ),
                               label: Text(
                                 item,
                                 maxLines: 2,
@@ -381,12 +393,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 ),
                 if (allowCustom) ...[
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: customController,
-                    decoration: const InputDecoration(
+                    textInputAction: TextInputAction.done,
+                    decoration: InputDecoration(
                       labelText: 'Yeni bacarıq əlavə et',
-                      prefixIcon: Icon(Icons.add_circle_outline),
+                      prefixIcon: const Icon(Icons.add_circle_outline),
+                      suffixIcon: IconButton(
+                        tooltip: 'Əlavə et',
+                        onPressed: () => _addCustomSkill(
+                          setSheetState,
+                          customController,
+                          (value) => draft = value,
+                          draft,
+                        ),
+                        icon: const Icon(Icons.add_rounded),
+                      ),
                     ),
                     onSubmitted: (_) => _addCustomSkill(
                       setSheetState,
@@ -395,25 +418,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       draft,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _addCustomSkill(
-                        setSheetState,
-                        customController,
-                        (value) => draft = value,
-                        draft,
-                      ),
-                      icon: const Icon(Icons.add),
-                      label: const Text('Əlavə et'),
-                    ),
-                  ),
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final narrow = constraints.maxWidth < 340;
+                    final narrow = constraints.maxWidth < 300;
                     if (narrow) {
                       return Column(
                         children: [
