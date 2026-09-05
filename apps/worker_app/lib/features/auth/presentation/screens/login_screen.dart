@@ -34,7 +34,11 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
-    final compact = MediaQuery.sizeOf(context).height < 720;
+    final height = MediaQuery.sizeOf(context).height;
+    final compact = height < 720;
+    final logoSize = compact ? 52.0 : 58.0;
+    final topGap = compact ? 8.0 : 16.0;
+    final logoGap = compact ? 18.0 : 28.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -44,19 +48,25 @@ class _LoginScreenState extends State<LoginScreen> {
           key: _formKey,
           child: ListView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              SizedBox(height: compact ? 18 : 36),
-              const Center(child: AppLogo(size: 72)),
-              SizedBox(height: compact ? 40 : 78),
+              SizedBox(height: topGap),
+              Center(child: AppLogo(size: logoSize)),
+              SizedBox(height: logoGap),
               Text(
                 AppStrings.loginTitle,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.displaySmall?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.08,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Text(
                 'Telefon nömrənizlə hesabınıza daxil olun.',
                 textAlign: TextAlign.center,
@@ -65,20 +75,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 28),
+              SizedBox(height: compact ? 20 : 24),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
                   kind: InlineMessageKind.error,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               if (auth.successMessage != null) ...[
                 InlineMessage(
                   message: auth.successMessage!,
                   kind: InlineMessageKind.success,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               TextFormField(
                 controller: _phoneController,
@@ -112,7 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -120,14 +130,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: const Text(AppStrings.forgotPassword),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               LoadingButton(
                 label: AppStrings.loginTitle,
                 icon: Icons.login_outlined,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -136,12 +146,17 @@ class _LoginScreenState extends State<LoginScreen> {
                       : () =>
                             Navigator.of(context).pushNamed(AppRoutes.register),
                   icon: const Icon(Icons.person_add_alt_1_outlined),
-                  label: const Text(AppStrings.createWorkerAccount),
+                  label: const Text(
+                    AppStrings.createWorkerAccount,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const RoleAwareBackButton(),
-              const SizedBox(height: 36),
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -222,6 +237,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   Text(
                     AppStrings.forgotPassword,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
