@@ -30,11 +30,13 @@ class RoleSessionController extends ChangeNotifier {
 
   Future<void> bootstrap() async {
     final operation = ++_operation;
-    final rawRole = await _storage.read(key: _activeRoleKey);
+
+    // The mobile app must always open on the worker/company role chooser.
+    // A role is remembered only for the current running session.
+    await _storage.delete(key: _activeRoleKey);
     if (_disposed || operation != _operation) return;
-    // This package is the worker mobile app. On a fresh install, enter the
-    // worker flow directly instead of showing the multi-role chooser.
-    activeRole = _roleFromValue(rawRole) ?? AppRole.worker;
+
+    activeRole = null;
     loading = false;
     notifyListeners();
   }
@@ -53,13 +55,5 @@ class RoleSessionController extends ChangeNotifier {
     if (_disposed || operation != _operation) return;
     activeRole = null;
     notifyListeners();
-  }
-
-  AppRole? _roleFromValue(String? value) {
-    if (value == null) return null;
-    for (final role in AppRole.values) {
-      if (role.name == value) return role;
-    }
-    return null;
   }
 }
