@@ -107,6 +107,13 @@ class CompanyAuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearTransientMessages() {
+    if (errorMessage == null && successMessage == null) return;
+    errorMessage = null;
+    successMessage = null;
+    notifyListeners();
+  }
+
   Future<void> registerCompany({
     required String name,
     required String contactName,
@@ -189,8 +196,8 @@ class CompanyAuthController extends ChangeNotifier {
         );
         pendingOtpCode = null;
         pendingOtpChallenge = null;
+        errorMessage = null;
         state = CompanyAuthState.pendingApproval;
-        errorMessage = AppStrings.companyPendingApprovalMessage;
         return;
       }
       if (email == null && phone == null) {
@@ -311,7 +318,9 @@ class CompanyAuthController extends ChangeNotifier {
     final status = details is Map ? details['status']?.toString() : null;
     blockedStatus = status ?? 'pending_approval';
     state = _blockedState(blockedStatus!);
-    errorMessage = _messageForStatus(blockedStatus!);
+    errorMessage = state == CompanyAuthState.pendingApproval
+        ? null
+        : _messageForStatus(blockedStatus!);
     return true;
   }
 
