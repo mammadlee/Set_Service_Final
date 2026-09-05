@@ -25,70 +25,49 @@ class RoleSelectionScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: BrandColors.creamBackground,
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final canvasWidth = constraints.maxWidth;
-              final scale = canvasWidth / _designSize.width;
-              final canvasHeight = _designSize.height * scale;
-              final physicalWidth =
-                  (canvasWidth * MediaQuery.devicePixelRatioOf(context)).ceil();
-              final cacheWidth = physicalWidth.clamp(1, 1080);
-
-              final designCanvas = SizedBox(
-                width: canvasWidth,
-                height: canvasHeight,
-                child: FittedBox(
-                  fit: BoxFit.fill,
-                  alignment: Alignment.topCenter,
-                  child: SizedBox(
-                    width: _designSize.width,
-                    height: _designSize.height,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Image.asset(
-                            _backgroundAsset,
-                            fit: BoxFit.fill,
-                            cacheWidth: cacheWidth,
-                            filterQuality: FilterQuality.high,
-                          ),
+          child: ClipRect(
+            child: SizedBox.expand(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                alignment: Alignment.center,
+                child: SizedBox(
+                  width: _designSize.width,
+                  height: _designSize.height,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: Image.asset(
+                          _backgroundAsset,
+                          fit: BoxFit.fill,
+                          filterQuality: FilterQuality.high,
                         ),
-                        _RoleHitTarget(
-                          rect: const Rect.fromLTWH(260, 135, 560, 385),
-                          label: AppStrings.adminLogin,
-                          onLongPress: () => context
-                              .read<RoleSessionController>()
-                              .selectRole(AppRole.admin),
-                        ),
-                        _RoleHitTarget(
-                          rect: const Rect.fromLTWH(124, 1099, 890, 132),
-                          label: AppStrings.continueAsWorker,
-                          onTap: () => context
-                              .read<RoleSessionController>()
-                              .selectRole(AppRole.worker),
-                        ),
-                        _RoleHitTarget(
-                          rect: const Rect.fromLTWH(124, 1381, 890, 132),
-                          label: AppStrings.continueAsCompany,
-                          onTap: () => context
-                              .read<RoleSessionController>()
-                              .selectRole(AppRole.company),
-                        ),
-                      ],
-                    ),
+                      ),
+                      _RoleHitTarget(
+                        rect: const Rect.fromLTWH(260, 135, 560, 385),
+                        label: AppStrings.adminLogin,
+                        onLongPress: () => context
+                            .read<RoleSessionController>()
+                            .selectRole(AppRole.admin),
+                      ),
+                      _RoleHitTarget(
+                        rect: const Rect.fromLTWH(124, 1099, 890, 132),
+                        label: AppStrings.continueAsWorker,
+                        onTap: () => context
+                            .read<RoleSessionController>()
+                            .selectRole(AppRole.worker),
+                      ),
+                      _RoleHitTarget(
+                        rect: const Rect.fromLTWH(124, 1381, 890, 132),
+                        label: AppStrings.continueAsCompany,
+                        onTap: () => context
+                            .read<RoleSessionController>()
+                            .selectRole(AppRole.company),
+                      ),
+                    ],
                   ),
                 ),
-              );
-
-              if (canvasHeight <= constraints.maxHeight) {
-                return Center(child: designCanvas);
-              }
-
-              return SingleChildScrollView(
-                physics: const ClampingScrollPhysics(),
-                child: designCanvas,
-              );
-            },
+              ),
+            ),
           ),
         ),
       ),
