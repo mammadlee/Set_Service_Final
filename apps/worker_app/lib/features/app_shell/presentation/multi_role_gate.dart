@@ -8,6 +8,7 @@ import '../../admin/presentation/admin_auth_gate.dart';
 import '../../auth/presentation/screens/auth_gate.dart';
 import '../../auth/presentation/screens/splash_screen.dart';
 import '../../company/presentation/company_auth_gate.dart';
+import '../../role_selection/presentation/role_selection_screen.dart';
 
 class MultiRoleGate extends StatelessWidget {
   const MultiRoleGate({super.key});
@@ -19,9 +20,10 @@ class MultiRoleGate extends StatelessWidget {
     final child = roleSession.loading
         ? const SplashScreen()
         : switch (roleSession.activeRole) {
+            AppRole.worker => const AuthGate(),
             AppRole.company => const CompanyAuthGate(),
             AppRole.admin => const AdminAuthGate(),
-            AppRole.worker || null => const AuthGate(),
+            null => const RoleSelectionScreen(),
           };
 
     return AnimatedSwitcher(
@@ -32,7 +34,7 @@ class MultiRoleGate extends StatelessWidget {
         key: ValueKey(
           roleSession.loading
               ? 'loading'
-              : roleSession.activeRole?.name ?? 'worker',
+              : roleSession.activeRole?.name ?? 'role-selection',
         ),
         child: child,
       ),
@@ -46,7 +48,9 @@ class RoleAwareBackButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
-      onPressed: () => context.read<RoleSessionController>().clearRole(),
+      onPressed: () async {
+        await context.read<RoleSessionController>().clearRole();
+      },
       icon: const Icon(Icons.swap_horiz),
       label: const Text(AppStrings.changeRole),
     );
