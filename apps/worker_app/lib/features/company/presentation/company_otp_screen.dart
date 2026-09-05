@@ -30,10 +30,16 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
     final auth = context.watch<CompanyAuthController>();
     final isReset =
         auth.pendingPurpose == CompanyPendingOtpPurpose.passwordReset;
+    final height = MediaQuery.sizeOf(context).height;
+    final topSpace = height < 700 ? 24.0 : height < 820 ? 42.0 : 64.0;
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         title: Text(
           isReset ? AppStrings.resetPassword : AppStrings.verifyRegistration,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -47,13 +53,21 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
+            ),
             children: [
-              const SizedBox(height: 150),
+              SizedBox(height: topSpace),
               Text(
                 AppStrings.enterOtpTitle,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.15,
                 ),
               ),
               const SizedBox(height: 8),
@@ -63,9 +77,12 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
                           ? 'Təsdiq kodu ${auth.pendingEmail} ünvanına göndərildi.'
                           : AppStrings.otpSentTo(auth.pendingPhone))
                     : AppStrings.otpSentTo(auth.pendingPhone),
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: BrandColors.mutedBrown),
+                textAlign: TextAlign.center,
+                softWrap: true,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: BrandColors.mutedBrown,
+                  height: 1.35,
+                ),
               ),
               const SizedBox(height: 24),
               if (auth.errorMessage != null) ...[
@@ -79,6 +96,13 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
                 controller: _otpController,
                 keyboardType: TextInputType.number,
                 maxLength: 6,
+                textInputAction: TextInputAction.done,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 6,
+                ),
                 decoration: const InputDecoration(
                   labelText: AppStrings.otpCode,
                   counterText: '',
@@ -95,6 +119,7 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
+              const SizedBox(height: 20),
             ],
           ),
         ),
