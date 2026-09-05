@@ -80,9 +80,6 @@ class AuthController extends ChangeNotifier {
         await _repository.clearLocalSession();
         state = AuthViewState.unauthenticated;
       } else {
-        // A timeout, offline startup, or temporary server failure must not
-        // destroy a valid local session. The protected screens can surface
-        // their own retry state until connectivity returns.
         state = AuthViewState.authenticated;
         errorMessage = error.message;
         _notifySessionState(SessionState.offlineAuthenticated);
@@ -109,6 +106,13 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearTransientMessages() {
+    if (errorMessage == null && successMessage == null) return;
+    errorMessage = null;
+    successMessage = null;
+    notifyListeners();
+  }
+
   Future<void> registerWorker({
     required String fullName,
     required String phone,
@@ -128,6 +132,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingPhone = phone;
       pendingPurpose = OtpPurpose.workerRegistration;
+      errorMessage = null;
       state = AuthViewState.otpRequired;
     });
   }
@@ -139,6 +144,7 @@ class AuthController extends ChangeNotifier {
     await _submit(() async {
       await _repository.loginWorker(phone: phone, password: password);
       worker = await _repository.getWorkerProfile();
+      errorMessage = null;
       state = _stateForWorkerStatus(worker?.status);
       _notifySessionState(
         state == AuthViewState.authenticated
@@ -171,6 +177,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingOtpCode = null;
       pendingOtpChallenge = null;
+      errorMessage = null;
       state = _stateForWorkerStatus(result.status);
     });
   }
@@ -254,6 +261,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingOtpCode = otpCode.trim();
       pendingOtpChallenge = result.otpChallenge;
+      errorMessage = null;
       state = AuthViewState.passwordRequired;
     });
   }
@@ -338,7 +346,7 @@ class AuthController extends ChangeNotifier {
 
     state = _stateForWorkerStatus(status);
     errorMessage = state == AuthViewState.pendingApproval
-        ? AppStrings.pendingApprovalMessage
+        ? null
         : AppStrings.accountMessageForStatus(status);
     return true;
   }
