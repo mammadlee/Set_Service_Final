@@ -8,7 +8,9 @@ enum AppConfigIssue {
 }
 
 class AppConfig {
-  static const _defaultBaseUrl = 'http://localhost:3000';
+  // Real-device/debug builds must work without an extra --dart-define.
+  // Local backend testing can still override this with BASE_URL.
+  static const _defaultBaseUrl = 'https://api.hireapp.az';
   static const _configuredBaseUrl = String.fromEnvironment('BASE_URL');
   static const pushNotificationsEnabled = bool.fromEnvironment(
     'ENABLE_PUSH_NOTIFICATIONS',
@@ -41,7 +43,7 @@ class AppConfig {
     if (!releaseMode) return null;
 
     final value = configured.trim();
-    if (value.isEmpty) return AppConfigIssue.missingBaseUrl;
+    if (value.isEmpty) return null;
 
     final normalized = value.replaceAll(RegExp(r'/+$'), '');
     final uri = Uri.tryParse(normalized);
