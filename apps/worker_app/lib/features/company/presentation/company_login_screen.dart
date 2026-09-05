@@ -33,25 +33,39 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<CompanyAuthController>();
+    final height = MediaQuery.sizeOf(context).height;
+    final compact = height < 720;
+    final logoSize = compact ? 52.0 : 58.0;
+    final topGap = compact ? 8.0 : 16.0;
+    final logoGap = compact ? 18.0 : 28.0;
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              const SizedBox(height: 36),
-              const Center(child: AppLogo(size: 72)),
-              const SizedBox(height: 78),
+              SizedBox(height: topGap),
+              Center(child: AppLogo(size: logoSize)),
+              SizedBox(height: logoGap),
               Text(
                 AppStrings.loginTitle,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.displaySmall?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.08,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Text(
                 AppStrings.companyLoginSubtitle,
                 textAlign: TextAlign.center,
@@ -60,20 +74,20 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 28),
+              SizedBox(height: compact ? 20 : 24),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
                   kind: InlineMessageKind.error,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               if (auth.successMessage != null) ...[
                 InlineMessage(
                   message: auth.successMessage!,
                   kind: InlineMessageKind.success,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               TextFormField(
                 controller: _emailController,
@@ -107,7 +121,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -115,14 +129,14 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                   child: const Text(AppStrings.forgotPassword),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               LoadingButton(
                 label: AppStrings.loginTitle,
                 icon: Icons.login_outlined,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -136,12 +150,17 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                           );
                         },
                   icon: const Icon(Icons.business_outlined),
-                  label: const Text(AppStrings.createCompanyAccount),
+                  label: const Text(
+                    AppStrings.createCompanyAccount,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const RoleAwareBackButton(),
-              const SizedBox(height: 36),
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -193,6 +212,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
       return await showModalBottomSheet<_CompanyForgotPasswordResult>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         showDragHandle: false,
         backgroundColor: BrandColors.creamBackground,
         shape: const RoundedRectangleBorder(
@@ -207,6 +227,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
             ),
             child: SafeArea(
               child: SingleChildScrollView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -225,6 +246,8 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                     ),
                     Text(
                       AppStrings.forgotPassword,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -234,14 +257,15 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                       width: double.infinity,
                       child: SegmentedButton<String>(
                         expandedInsets: EdgeInsets.zero,
+                        showSelectedIcon: false,
                         segments: const [
                           ButtonSegment(
                             value: 'phone',
-                            label: Text('Telefon nömrəsi ilə'),
+                            label: Text('Telefon'),
                           ),
                           ButtonSegment(
                             value: 'email',
-                            label: Text('E-poçt ilə'),
+                            label: Text('E-poçt'),
                           ),
                         ],
                         selected: {method},
@@ -355,12 +379,23 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<CompanyAuthController>();
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.companyRegisterTitle)),
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: const Text(
+          AppStrings.companyRegisterTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
               if (auth.errorMessage != null) ...[
                 InlineMessage(
@@ -369,7 +404,7 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
               TextFormField(
                 controller: _contactController,
                 textInputAction: TextInputAction.next,
@@ -424,6 +459,7 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
+              const SizedBox(height: 12),
             ],
           ),
         ),
