@@ -121,50 +121,81 @@ class _SummaryGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth > 520 ? 2 : 1;
+        final columns = constraints.maxWidth > 620 ? 2 : 1;
+        if (columns == 1) {
+          return Column(
+            children: List<Widget>.generate(items.length, (index) {
+              final item = items[index];
+              return Padding(
+                padding: EdgeInsets.only(bottom: index == items.length - 1 ? 0 : 10),
+                child: PremiumEntrance(
+                  delay: Duration(milliseconds: 70 * index),
+                  offset: const Offset(0, 10),
+                  child: _SummaryCard(item: item),
+                ),
+              );
+            }),
+          );
+        }
+
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            mainAxisExtent: 112,
+            mainAxisExtent: 118,
           ),
           itemBuilder: (context, index) {
             final item = items[index];
             return PremiumEntrance(
               delay: Duration(milliseconds: 70 * index),
               offset: const Offset(0, 10),
-              child: Premium3DCard(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 18,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.label,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Text(
-                      '${item.value}',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              child: _SummaryCard(item: item),
             );
           },
         );
       },
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.item});
+
+  final _SummaryItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Premium3DCard(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              item.label,
+              softWrap: true,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '${item.value}',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -262,8 +293,7 @@ class _CompanyAttendanceStatusCache {
   static const _allAssignmentsScope = 'all';
 
   final Map<String, Set<String>> _completedIdsByScope = <String, Set<String>>{};
-  final Map<String, Future<Set<String>>> _inFlight =
-      <String, Future<Set<String>>>{};
+  final Map<String, Future<Set<String>>> _inFlight = <String, Future<Set<String>>>{};
 
   Future<Set<String>> loadCompletedIds(
     CompanyRepository repo,
