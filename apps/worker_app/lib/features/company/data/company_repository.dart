@@ -36,7 +36,6 @@ class CompanyRepository {
           'contact_name': contactName,
           'email': email,
           'phone': phone,
-          'documents': <Object>[],
         },
       );
       return OtpStartResult.fromJson(response.data ?? const {});
