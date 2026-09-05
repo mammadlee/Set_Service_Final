@@ -3,7 +3,7 @@ import 'package:worker_app/core/config/app_config.dart';
 
 void main() {
   test('default API base URL includes v1 prefix', () {
-    expect(AppConfig.apiBaseUrl, 'http://localhost:3000/v1');
+    expect(AppConfig.apiBaseUrl, 'https://api.hireapp.az/v1');
   });
 
   test('normalizes whitespace and trailing slashes in configured URLs', () {
@@ -14,11 +14,8 @@ void main() {
   });
 
   group('release API base URL validation', () {
-    test('requires an explicit base URL', () {
-      expect(
-        AppConfig.validateBaseUrl('', releaseMode: true),
-        AppConfigIssue.missingBaseUrl,
-      );
+    test('uses the production default when no explicit base URL is provided', () {
+      expect(AppConfig.validateBaseUrl('', releaseMode: true), isNull);
     });
 
     test('rejects malformed, credentialed, and query URLs', () {
