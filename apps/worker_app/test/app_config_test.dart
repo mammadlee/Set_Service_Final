@@ -3,7 +3,7 @@ import 'package:worker_app/core/config/app_config.dart';
 
 void main() {
   test('default API base URL includes v1 prefix', () {
-    expect(AppConfig.apiBaseUrl, 'https://api.hireapp.az/v1');
+    expect(AppConfig.apiBaseUrl, 'https://api.setservice.az/v1');
   });
 
   test('normalizes whitespace and trailing slashes in configured URLs', () {
