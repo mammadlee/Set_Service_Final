@@ -46,21 +46,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final viewInsets = MediaQuery.viewInsetsOf(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.registerTitle)),
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: const Text(
+          AppStrings.registerTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(bottom: viewInsets.bottom + 28),
             children: [
               Text(
                 'Hesab yarat',
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.12,
                 ),
               ),
               const SizedBox(height: 8),
@@ -69,10 +82,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: BrandColors.darkText,
-                  height: 1.3,
+                  height: 1.35,
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 22),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
@@ -85,6 +98,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: AppStrings.fullName,
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
                   prefixIcon: Icon(Icons.badge_outlined),
                 ),
                 validator: (value) =>
@@ -94,10 +108,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
+                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(
                   labelText: AppStrings.phoneNumber,
                   hintText: AppStrings.phoneHint,
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
                   prefixIcon: Icon(Icons.phone_outlined),
                 ),
                 validator: _validatePhone,
@@ -165,6 +180,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -349,7 +365,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       children: allOptions
                           .map(
                             (item) => FilterChip(
-                              label: Text(item),
+                              label: Text(
+                                item,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                               selected: draft.contains(item),
                               onSelected: (_) => setSheetState(
                                 () => draft = _toggle(draft, item),
@@ -376,36 +396,64 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: () => _addCustomSkill(
-                      setSheetState,
-                      customController,
-                      (value) => draft = value,
-                      draft,
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _addCustomSkill(
+                        setSheetState,
+                        customController,
+                        (value) => draft = value,
+                        draft,
+                      ),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Əlavə et'),
                     ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Əlavə et'),
                   ),
                 ],
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text(AppStrings.cancel),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: LoadingButton(
-                        label: AppStrings.save,
-                        icon: Icons.check_rounded,
-                        loading: false,
-                        onPressed: () => Navigator.of(context).pop(draft),
-                      ),
-                    ),
-                  ],
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final narrow = constraints.maxWidth < 340;
+                    if (narrow) {
+                      return Column(
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text(AppStrings.cancel),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          LoadingButton(
+                            label: AppStrings.save,
+                            icon: Icons.check_rounded,
+                            loading: false,
+                            onPressed: () => Navigator.of(context).pop(draft),
+                          ),
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text(AppStrings.cancel),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: LoadingButton(
+                            label: AppStrings.save,
+                            icon: Icons.check_rounded,
+                            loading: false,
+                            onPressed: () => Navigator.of(context).pop(draft),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             );
@@ -502,6 +550,7 @@ class _SelectorField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final displayValue = value?.trim() ?? '';
+
     return FormField<String>(
       validator: (_) {
         if (requiredMessage != null && displayValue.isEmpty) {
@@ -511,47 +560,95 @@ class _SelectorField extends StatelessWidget {
       },
       builder: (field) {
         final enabled = onTap != null;
-        return InkWell(
-          borderRadius: BorderRadius.circular(32),
-          onTap: enabled ? onTap : null,
-          child: InputDecorator(
-            isEmpty: displayValue.isEmpty,
-            decoration: InputDecoration(
-              labelText: label,
-              errorText: field.errorText,
-              prefixIcon: Icon(icon),
-              contentPadding: const EdgeInsets.fromLTRB(20, 22, 16, 22),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.accentGold),
-              ),
-              disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.accentGold),
-              ),
-              errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.error),
-              ),
-              suffixIcon: Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: enabled
-                    ? BrandColors.primaryBurgundy
-                    : BrandColors.urbanGraphite,
+        final borderColor = field.hasError
+            ? BrandColors.error
+            : BrandColors.accentGold;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 18, bottom: 7),
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: field.hasError
+                      ? BrandColors.error
+                      : BrandColors.urbanGraphite,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
               ),
             ),
-            child: Text(
-              displayValue.isEmpty ? placeholder : displayValue,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: displayValue.isEmpty
-                    ? BrandColors.urbanGraphite
-                    : BrandColors.darkText,
-                fontWeight: FontWeight.w600,
+            Material(
+              color: BrandColors.white.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(28),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(28),
+                onTap: enabled ? onTap : null,
+                child: Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(minHeight: 64),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        icon,
+                        size: 25,
+                        color: enabled
+                            ? BrandColors.urbanGraphite
+                            : BrandColors.urbanGraphite.withValues(alpha: 0.55),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          displayValue.isEmpty ? placeholder : displayValue,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: displayValue.isEmpty
+                                ? BrandColors.urbanGraphite
+                                : BrandColors.darkText,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: enabled
+                            ? BrandColors.primaryBurgundy
+                            : BrandColors.urbanGraphite,
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
+            if (field.errorText != null) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Text(
+                  field.errorText!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: BrandColors.error,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ],
         );
       },
     );
