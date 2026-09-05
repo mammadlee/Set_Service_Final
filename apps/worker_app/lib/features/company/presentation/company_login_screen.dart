@@ -24,6 +24,14 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   bool _obscurePassword = true;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<CompanyAuthController>().clearTransientMessages();
+    });
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
@@ -143,11 +151,17 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                   onPressed: auth.isSubmitting
                       ? null
                       : () async {
+                          context.read<CompanyAuthController>().clearTransientMessages();
                           await Navigator.of(context).push<void>(
                             MaterialPageRoute(
                               builder: (_) => const CompanyRegisterScreen(),
                             ),
                           );
+                          if (context.mounted) {
+                            context
+                                .read<CompanyAuthController>()
+                                .clearTransientMessages();
+                          }
                         },
                   icon: const Icon(Icons.business_outlined),
                   label: const Text(
@@ -171,7 +185,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     await context.read<CompanyAuthController>().loginCompany(
-      email: _emailController.text.trim(),
+      email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
     );
   }
@@ -187,7 +201,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
         return;
       }
       await context.read<CompanyAuthController>().forgotPasswordByEmail(
-        result.value,
+        result.value.trim().toLowerCase(),
       );
       return;
     }
@@ -198,7 +212,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
       return;
     }
     await context.read<CompanyAuthController>().forgotPasswordByPhone(
-      result.value,
+      _normalizePhone(result.value),
     );
   }
 
@@ -338,7 +352,11 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   }
 
   bool _validPhone(String value) {
-    return RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(value.trim());
+    return RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(_normalizePhone(value));
+  }
+
+  String _normalizePhone(String value) {
+    return value.trim().replaceAll(RegExp(r'[\s().-]'), '');
   }
 }
 
@@ -365,6 +383,14 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   final _contactController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController(text: '+994');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<CompanyAuthController>().clearTransientMessages();
+    });
+  }
 
   @override
   void dispose() {
@@ -472,8 +498,8 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
     await context.read<CompanyAuthController>().registerCompany(
       name: _nameController.text.trim(),
       contactName: _contactController.text.trim(),
-      email: _emailController.text.trim(),
-      phone: _phoneController.text.trim(),
+      email: _emailController.text.trim().toLowerCase(),
+      phone: _normalizePhone(_phoneController.text),
     );
     if (!context.mounted) return;
     if (context.read<CompanyAuthController>().state ==
@@ -483,7 +509,7 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(value?.trim() ?? '')) {
+    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(_normalizePhone(value ?? ''))) {
       return AppStrings.phoneValidation;
     }
     return null;
@@ -494,5 +520,9 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
       return AppStrings.emailValidation;
     }
     return null;
+  }
+
+  String _normalizePhone(String value) {
+    return value.trim().replaceAll(RegExp(r'[\s().-]'), '');
   }
 }
