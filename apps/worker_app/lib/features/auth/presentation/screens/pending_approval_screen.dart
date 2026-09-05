@@ -17,64 +17,66 @@ class PendingApprovalScreen extends StatelessWidget {
     final auth = context.watch<AuthController>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Qeydiyyatı təsdiqlə')),
+      appBar: AppBar(
+        title: const Text(
+          'Qeydiyyatı təsdiqlə',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         showBackdrop: true,
-        child: CustomScrollView(
-          slivers: [
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Spacer(),
-                  const Icon(
-                    Icons.hourglass_top_outlined,
-                    size: 74,
-                    color: BrandColors.accentGold,
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Təsdiq gözlənilir...',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: BrandColors.darkText,
-                      fontWeight: FontWeight.w800,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight - 40),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Icon(
+                      Icons.hourglass_top_outlined,
+                      size: 64,
+                      color: BrandColors.accentGold,
                     ),
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () =>
-                          context.read<RoleSessionController>().clearRole(),
-                      icon: const Icon(Icons.swap_horiz_rounded),
-                      label: const Text(AppStrings.changeRole),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  LoadingButton(
-                    label: AppStrings.backToLogin,
-                    loading: auth.isSubmitting,
-                    onPressed: () =>
-                        context.read<AuthController>().backToLogin(),
-                  ),
-                  if (auth.errorMessage != null) ...[
                     const SizedBox(height: 18),
-                    InlineMessage(
-                      message: auth.errorMessage!,
+                    Text(
+                      'Təsdiq gözlənilir...',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: BrandColors.darkText,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const InlineMessage(
+                      message: 'İşçi hesabınız admin təsdiqini gözləyir.',
                       kind: InlineMessageKind.info,
                     ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            context.read<RoleSessionController>().clearRole(),
+                        icon: const Icon(Icons.swap_horiz_rounded),
+                        label: const Text(AppStrings.changeRole),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    LoadingButton(
+                      label: AppStrings.backToLogin,
+                      loading: auth.isSubmitting,
+                      onPressed: () =>
+                          context.read<AuthController>().backToLogin(),
+                    ),
                   ],
-                  const SizedBox(height: 18),
-                  const InlineMessage(
-                    message: 'İşçi hesabınız admin təsdiqini gözləyir.',
-                  ),
-                  const Spacer(),
-                ],
+                ),
               ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
