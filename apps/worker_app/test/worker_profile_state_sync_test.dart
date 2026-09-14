@@ -52,9 +52,11 @@ void main() {
       controller.errorMessage = 'Köhnə xəta';
       controller.updateWorkerProfile(
         WorkerMe.fromJson(_profileJson('/uploads/profile-v1.webp')),
+        profilePhotoChanged: true,
       );
 
       expect(controller.worker?.profilePhotoUrl, '/uploads/profile-v1.webp');
+      expect(controller.workerPhotoRevision, 1);
       expect(controller.errorMessage, isNull);
 
       serverProfile = _profileJson('/uploads/profile-v3.webp');
@@ -62,6 +64,7 @@ void main() {
 
       expect(refreshed.profilePhotoUrl, '/uploads/profile-v3.webp');
       expect(controller.worker, same(refreshed));
+      expect(controller.workerPhotoRevision, 1);
       expect(controller.errorMessage, isNull);
       expect(notifications, 2);
     },

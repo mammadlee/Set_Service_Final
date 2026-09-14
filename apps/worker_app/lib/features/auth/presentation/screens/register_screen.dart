@@ -396,8 +396,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
                       child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: 10,
+                        runSpacing: 10,
+                        alignment: WrapAlignment.start,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: allOptions
                             .map(
                               (item) => PremiumSelectableChip(

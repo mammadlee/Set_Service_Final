@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/config/app_config.dart';
@@ -41,6 +43,55 @@ String? resolvePublicAssetUrl(String? value, {String? baseUrl}) {
   return resolved.toString();
 }
 
+Future<String?> firstLoadablePublicAssetUrl(
+  String? value, {
+  required Future<bool> Function(String url) load,
+  String? baseUrl,
+}) async {
+  final resolved = resolvePublicAssetUrl(value, baseUrl: baseUrl);
+  if (resolved == null) return null;
+  return await load(resolved) ? resolved : null;
+}
+
+Future<bool> verifyWorkerAvatarImage(
+  BuildContext context,
+  String? value,
+) async {
+  final resolved = await firstLoadablePublicAssetUrl(
+    value,
+    load: (url) => _loadNetworkImage(context, url),
+  );
+  return resolved != null;
+}
+
+Future<bool> _loadNetworkImage(BuildContext context, String url) async {
+  final provider = NetworkImage(url);
+  PaintingBinding.instance.imageCache.evict(provider);
+  final stream = provider.resolve(createLocalImageConfiguration(context));
+  final completer = Completer<bool>();
+  late final ImageStreamListener listener;
+
+  void finish(bool loaded) {
+    if (!completer.isCompleted) completer.complete(loaded);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      stream.removeListener(listener);
+    });
+  }
+
+  listener = ImageStreamListener(
+    (_, __) => finish(true),
+    onError: (_, __) => finish(false),
+  );
+  stream.addListener(listener);
+  return completer.future.timeout(
+    const Duration(seconds: 15),
+    onTimeout: () {
+      stream.removeListener(listener);
+      return false;
+    },
+  );
+}
+
 class WorkerAvatar extends StatelessWidget {
   const WorkerAvatar({
     required this.name,
@@ -50,6 +101,7 @@ class WorkerAvatar extends StatelessWidget {
     this.foregroundColor,
     this.borderColor,
     this.showLoadingIndicator = true,
+    this.cacheRevision = 0,
     super.key,
   });
 
@@ -60,6 +112,7 @@ class WorkerAvatar extends StatelessWidget {
   final Color? foregroundColor;
   final Color? borderColor;
   final bool showLoadingIndicator;
+  final int cacheRevision;
 
   @override
   Widget build(BuildContext context) {
@@ -91,7 +144,7 @@ class WorkerAvatar extends StatelessWidget {
                 ? fallback
                 : Image.network(
                     resolvedUrl,
-                    key: ValueKey('worker-avatar-$resolvedUrl'),
+                    key: ValueKey('worker-avatar-$resolvedUrl-$cacheRevision'),
                     width: radius * 2,
                     height: radius * 2,
                     fit: BoxFit.cover,

@@ -28,6 +28,7 @@ class AuthController extends ChangeNotifier {
 
   AuthViewState state = AuthViewState.splash;
   WorkerMe? worker;
+  int workerPhotoRevision = 0;
   String? pendingPhone;
   String? pendingEmail;
   String? pendingOtpCode;
@@ -94,6 +95,7 @@ class AuthController extends ChangeNotifier {
 
   void _handleSessionInvalidation(SessionInvalidation event) {
     worker = null;
+    workerPhotoRevision = 0;
     pendingPhone = null;
     pendingEmail = null;
     pendingOtpCode = null;
@@ -280,8 +282,12 @@ class AuthController extends ChangeNotifier {
     return refreshed;
   }
 
-  void updateWorkerProfile(WorkerMe updatedWorker) {
+  void updateWorkerProfile(
+    WorkerMe updatedWorker, {
+    bool profilePhotoChanged = false,
+  }) {
     worker = updatedWorker;
+    if (profilePhotoChanged) workerPhotoRevision += 1;
     errorMessage = null;
     notifyListeners();
   }
@@ -294,6 +300,7 @@ class AuthController extends ChangeNotifier {
       await _repository.logout();
     } finally {
       worker = null;
+      workerPhotoRevision = 0;
       pendingPhone = null;
       pendingEmail = null;
       pendingOtpCode = null;

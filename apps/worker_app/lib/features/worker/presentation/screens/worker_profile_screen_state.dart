@@ -115,8 +115,8 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             );
           }
 
-          final worker =
-              context.watch<AuthController>().worker ?? snapshot.data!;
+          final auth = context.watch<AuthController>();
+          final worker = auth.worker ?? snapshot.data!;
           _hydrate(worker);
 
           return RefreshIndicator(
@@ -125,6 +125,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
               children: [
                 _ProfileOverview(
                   worker: worker,
+                  photoRevision: auth.workerPhotoRevision,
                   gender: _gender,
                   languages: _languages,
                   skills: _skills,
@@ -588,7 +589,10 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       if (invalidatePhotoCache && previousPhoto != null) {
         PaintingBinding.instance.imageCache.evict(NetworkImage(previousPhoto));
       }
-      auth.updateWorkerProfile(uploaded);
+      auth.updateWorkerProfile(
+        uploaded,
+        profilePhotoChanged: invalidatePhotoCache,
+      );
 
       var persisted = uploaded;
       try {
@@ -598,6 +602,25 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         // Keep it visible if the follow-up read is temporarily unavailable.
       }
       if (!mounted) return persisted;
+
+      if (invalidatePhotoCache) {
+        final photoUrl = persisted.profilePhotoUrl?.trim();
+        if (photoUrl == null || photoUrl.isEmpty) {
+          throw const ApiException(
+            message: 'Server profil şəklinin keçidini qaytarmadı.',
+            code: 'PROFILE_PHOTO_URL_MISSING',
+          );
+        }
+        final imageAvailable = await verifyWorkerAvatarImage(context, photoUrl);
+        if (!mounted) return persisted;
+        if (!imageAvailable) {
+          throw const ApiException(
+            message:
+                'Şəkil serverdə qeyd edildi, lakin açılmır. Server fayl keçidini yoxlayın.',
+            code: 'PROFILE_PHOTO_UNAVAILABLE',
+          );
+        }
+      }
 
       setState(() {
         _hydrated = false;
@@ -649,6 +672,9 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                   radius: 34,
                   name: sheetWorker.name,
                   photoUrl: sheetWorker.profilePhotoUrl,
+                  cacheRevision: context
+                      .read<AuthController>()
+                      .workerPhotoRevision,
                   backgroundColor: BrandColors.accentGold.withValues(
                     alpha: 0.18,
                   ),

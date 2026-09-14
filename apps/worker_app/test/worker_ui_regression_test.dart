@@ -25,6 +25,33 @@ void main() {
     );
   });
 
+  test(
+    'an uploaded photo is confirmed only when the public image loads',
+    () async {
+      var attemptedUrl = '';
+      final unavailable = await firstLoadablePublicAssetUrl(
+        '/uploads/workers/photo.jpg',
+        baseUrl: 'https://api.example.test/v1',
+        load: (url) async {
+          attemptedUrl = url;
+          return false;
+        },
+      );
+
+      expect(
+        attemptedUrl,
+        'https://api.example.test/uploads/workers/photo.jpg',
+      );
+      expect(unavailable, isNull);
+
+      final available = await firstLoadablePublicAssetUrl(
+        'https://media.example.test/photo.jpg',
+        load: (_) async => true,
+      );
+      expect(available, 'https://media.example.test/photo.jpg');
+    },
+  );
+
   test('worker document parsing preserves backend security metadata', () {
     final worker = WorkerMe.fromJson({
       ..._workerJson(),
@@ -106,7 +133,26 @@ void main() {
 
     expect(
       find.byKey(
-        const ValueKey('worker-avatar-https://example.test/avatar-v2.png'),
+        const ValueKey('worker-avatar-https://example.test/avatar-v2.png-0'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(
+      _testApp(
+        const WorkerAvatar(
+          name: 'Rəna Əliyeva',
+          photoUrl: 'https://example.test/avatar-v2.png',
+          cacheRevision: 1,
+          radius: 36,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(
+        const ValueKey('worker-avatar-https://example.test/avatar-v2.png-1'),
       ),
       findsOneWidget,
     );
@@ -213,6 +259,70 @@ void main() {
     expect(after, before);
     expect(after.width, lessThanOrEqualTo(220));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('skill chip borders never overlap across phone widths', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    for (final testCase in const [
+      (width: 320.0, scale: 1.5),
+      (width: 360.0, scale: 1.3),
+      (width: 390.0, scale: 1.0),
+      (width: 430.0, scale: 1.0),
+    ]) {
+      tester.view.physicalSize = Size(testCase.width, 800);
+      await tester.pumpWidget(
+        _testApp(
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              PremiumSelectableChip(
+                key: const ValueKey('skill-a'),
+                label: 'Qonaqlarla peşəkar ünsiyyət',
+                selected: false,
+                onSelected: (_) {},
+              ),
+              PremiumSelectableChip(
+                key: const ValueKey('skill-b'),
+                label: 'Təhlükəsizlik və gigiyena standartları (HACCP, ISO)',
+                selected: true,
+                onSelected: (_) {},
+              ),
+              PremiumSelectableChip(
+                key: const ValueKey('skill-c'),
+                label: 'Komanda ilə işləmək bacarığı',
+                selected: false,
+                onSelected: (_) {},
+              ),
+            ],
+          ),
+          textScaler: TextScaler.linear(testCase.scale),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final rects = [
+        tester.getRect(find.byKey(const ValueKey('skill-a'))),
+        tester.getRect(find.byKey(const ValueKey('skill-b'))),
+        tester.getRect(find.byKey(const ValueKey('skill-c'))),
+      ];
+      for (var left = 0; left < rects.length; left += 1) {
+        expect(rects[left].width, lessThanOrEqualTo(testCase.width - 32));
+        for (var right = left + 1; right < rects.length; right += 1) {
+          expect(
+            rects[left].overlaps(rects[right]),
+            isFalse,
+            reason: '${testCase.width}px at ${testCase.scale}x text',
+          );
+        }
+      }
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('dashboard and identity stay responsive on narrow phones', (

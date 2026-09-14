@@ -89,6 +89,7 @@ class _EmailVerificationBlock extends StatelessWidget {
 class _ProfileOverview extends StatelessWidget {
   const _ProfileOverview({
     required this.worker,
+    required this.photoRevision,
     required this.gender,
     required this.languages,
     required this.skills,
@@ -105,6 +106,7 @@ class _ProfileOverview extends StatelessWidget {
   });
 
   final WorkerMe worker;
+  final int photoRevision;
   final String? gender;
   final List<String> languages;
   final List<String> skills;
@@ -147,6 +149,7 @@ class _ProfileOverview extends StatelessWidget {
                           radius: 42,
                           name: worker.name,
                           photoUrl: worker.profilePhotoUrl,
+                          cacheRevision: photoRevision,
                           backgroundColor: BrandColors.accentGold.withValues(
                             alpha: 0.18,
                           ),

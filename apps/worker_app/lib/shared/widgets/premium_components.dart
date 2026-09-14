@@ -1112,66 +1112,73 @@ class PremiumSelectableChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const radius = BorderRadius.all(Radius.circular(18));
+    const radius = BorderRadius.all(Radius.circular(14));
     final foreground = selected
         ? BrandColors.primaryBurgundy
         : BrandColors.darkText;
 
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: semanticPrefix == null ? label : '$semanticPrefix: $label',
-      child: Material(
-        color: BrandColors.transparent,
-        borderRadius: radius,
-        child: InkWell(
+    return Padding(
+      padding: const EdgeInsets.all(1),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: semanticPrefix == null ? label : '$semanticPrefix: $label',
+        child: Material(
+          color: BrandColors.transparent,
           borderRadius: radius,
-          onTap: () => onSelected(!selected),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            constraints: const BoxConstraints(minHeight: 44, maxWidth: 320),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            decoration: BoxDecoration(
-              color: selected
-                  ? BrandColors.accentGold.withValues(alpha: 0.24)
-                  : BrandColors.white.withValues(alpha: 0.9),
-              borderRadius: radius,
-              border: Border.all(
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: () => onSelected(!selected),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              constraints: const BoxConstraints(minHeight: 46, maxWidth: 296),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+              decoration: BoxDecoration(
                 color: selected
-                    ? BrandColors.primaryBurgundy
-                    : BrandColors.accentGold.withValues(alpha: 0.72),
-                width: 1.25,
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedOpacity(
-                  opacity: selected ? 1 : 0,
-                  duration: const Duration(milliseconds: 120),
-                  child: Icon(
-                    Icons.check_rounded,
-                    key: ValueKey('selectable-chip-indicator-$label'),
-                    size: 17,
-                    color: BrandColors.primaryBurgundy,
-                  ),
+                    ? BrandColors.accentGold.withValues(alpha: 0.24)
+                    : BrandColors.white.withValues(alpha: 0.9),
+                borderRadius: radius,
+                border: Border.all(
+                  color: selected
+                      ? BrandColors.primaryBurgundy
+                      : BrandColors.accentGold.withValues(alpha: 0.72),
+                  width: 1.25,
                 ),
-                const SizedBox(width: 7),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 3,
-                    softWrap: true,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: foreground,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                      height: 1.2,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox.square(
+                    dimension: 18,
+                    child: AnimatedOpacity(
+                      opacity: selected ? 1 : 0,
+                      duration: const Duration(milliseconds: 120),
+                      child: Icon(
+                        Icons.check_rounded,
+                        key: ValueKey('selectable-chip-indicator-$label'),
+                        size: 17,
+                        color: BrandColors.primaryBurgundy,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 3,
+                      softWrap: true,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w600,
+                        height: 1.22,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

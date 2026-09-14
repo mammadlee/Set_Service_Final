@@ -76,9 +76,11 @@ class _WorkerDashboardScreenState extends State<WorkerDashboardScreen> {
           }
 
           final data = snapshot.data!;
-          final worker = context.watch<AuthController>().worker ?? data.worker;
+          final auth = context.watch<AuthController>();
+          final worker = auth.worker ?? data.worker;
           return WorkerDashboardContent(
             worker: worker,
+            photoRevision: auth.workerPhotoRevision,
             assignments: data.assignments,
             onRefresh: _refresh,
           );
@@ -93,12 +95,14 @@ class WorkerDashboardContent extends StatelessWidget {
     required this.worker,
     required this.assignments,
     required this.onRefresh,
+    this.photoRevision = 0,
     super.key,
   });
 
   final WorkerMe worker;
   final List<Assignment> assignments;
   final RefreshCallback onRefresh;
+  final int photoRevision;
 
   @override
   Widget build(BuildContext context) {
@@ -107,7 +111,12 @@ class WorkerDashboardContent extends StatelessWidget {
       child: ListView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          PremiumEntrance(child: WorkerIdentityCard(worker: worker)),
+          PremiumEntrance(
+            child: WorkerIdentityCard(
+              worker: worker,
+              photoRevision: photoRevision,
+            ),
+          ),
           const SizedBox(height: 16),
           PremiumEntrance(
             delay: const Duration(milliseconds: 90),
@@ -125,9 +134,14 @@ class WorkerDashboardContent extends StatelessWidget {
 }
 
 class WorkerIdentityCard extends StatelessWidget {
-  const WorkerIdentityCard({required this.worker, super.key});
+  const WorkerIdentityCard({
+    required this.worker,
+    this.photoRevision = 0,
+    super.key,
+  });
 
   final WorkerMe worker;
+  final int photoRevision;
 
   @override
   Widget build(BuildContext context) {
@@ -168,6 +182,7 @@ class WorkerIdentityCard extends StatelessWidget {
                     radius: avatarRadius,
                     name: displayName,
                     photoUrl: worker.profilePhotoUrl,
+                    cacheRevision: photoRevision,
                     backgroundColor: BrandColors.white.withValues(alpha: 0.16),
                     foregroundColor: BrandColors.white,
                     borderColor: BrandColors.accentGold,
