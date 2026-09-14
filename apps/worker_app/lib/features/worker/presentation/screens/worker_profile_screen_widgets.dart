@@ -121,8 +121,6 @@ class _ProfileOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final photoUrl = _photoUrl(worker.profilePhotoUrl);
-
     return PremiumCard(
       padding: EdgeInsets.zero,
       child: Column(
@@ -145,26 +143,14 @@ class _ProfileOverview extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 44),
                     child: Column(
                       children: [
-                        Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            border: Border.all(color: const Color(0xFFFF9C9C)),
+                        WorkerAvatar(
+                          radius: 42,
+                          name: worker.name,
+                          photoUrl: worker.profilePhotoUrl,
+                          backgroundColor: BrandColors.accentGold.withValues(
+                            alpha: 0.18,
                           ),
-                          child: CircleAvatar(
-                            radius: 40,
-                            backgroundColor: const Color(0xFFFFE5E2),
-                            backgroundImage: photoUrl == null
-                                ? null
-                                : NetworkImage(photoUrl),
-                            child: photoUrl == null
-                                ? const Icon(
-                                    Icons.person_outline,
-                                    color: BrandColors.primaryBurgundy,
-                                    size: 44,
-                                  )
-                                : null,
-                          ),
+                          borderColor: BrandColors.accentGold,
                         ),
                         const SizedBox(height: 12),
                         Text(
@@ -175,6 +161,8 @@ class _ProfileOverview extends StatelessWidget {
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(fontWeight: FontWeight.w700),
                         ),
+                        const SizedBox(height: 9),
+                        StatusPill(status: worker.status),
                       ],
                     ),
                   ),
@@ -195,6 +183,12 @@ class _ProfileOverview extends StatelessWidget {
             onTap: onEditPositions,
           ),
           _ProfileMenuRow(
+            title: 'Şöbə və departament',
+            summary: _taxonomySummary(worker),
+            icon: Icons.account_tree_outlined,
+            onTap: onEditPositions,
+          ),
+          _ProfileMenuRow(
             title: 'Cins',
             summary: _genderLabel(gender),
             icon: Icons.wc_outlined,
@@ -202,7 +196,9 @@ class _ProfileOverview extends StatelessWidget {
           ),
           _ProfileMenuRow(
             title: 'Əlaqə',
-            summary: 'Redaktə etmək üçün açın',
+            summary: worker.phone.trim().isEmpty
+                ? 'Telefon nömrəsi daxil edilməyib'
+                : worker.phone,
             icon: Icons.phone_outlined,
             onTap: onEditContact,
           ),
@@ -252,6 +248,14 @@ class _ProfileOverview extends StatelessWidget {
       'female' => 'Qadın',
       _ => 'Cins seçilməyib',
     };
+  }
+
+  String _taxonomySummary(WorkerMe value) {
+    final parts = <String>[
+      if (value.departments.isNotEmpty) value.departments.join(', '),
+      if (value.subdepartments.isNotEmpty) value.subdepartments.join(', '),
+    ];
+    return parts.isEmpty ? 'Şöbə seçilməyib' : parts.join(' · ');
   }
 }
 

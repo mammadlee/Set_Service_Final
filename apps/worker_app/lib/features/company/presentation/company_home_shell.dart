@@ -15,6 +15,7 @@ import '../../../shared/widgets/inline_message.dart';
 import '../../../shared/widgets/loading_button.dart';
 import '../../../shared/widgets/premium_components.dart';
 import '../../../shared/widgets/status_pill.dart';
+import '../../../shared/widgets/worker_avatar.dart';
 import '../../assignments/data/models/assignment.dart';
 import '../../attendance/data/models/attendance.dart';
 import '../../notifications/data/models/notification_item.dart';

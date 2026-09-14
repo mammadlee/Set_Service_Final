@@ -217,10 +217,11 @@ class _TaxonomySubdepartmentGroup extends StatelessWidget {
             runSpacing: 8,
             children: subdepartment.positions
                 .map(
-                  (position) => FilterChip(
-                    label: Text('Vəzifə: ${position.nameAz}'),
+                  (position) => PremiumSelectableChip(
+                    label: 'Vəzifə: ${position.nameAz}',
                     selected: selectedIds.contains(position.id),
                     onSelected: (_) => onToggle(position.id),
+                    semanticPrefix: 'Vəzifə',
                   ),
                 )
                 .toList(growable: false),
@@ -267,10 +268,11 @@ class _ChipPickerSection extends StatelessWidget {
           runSpacing: 8,
           children: allValues
               .map(
-                (value) => FilterChip(
-                  label: Text(value),
+                (value) => PremiumSelectableChip(
+                  label: value,
                   selected: selected.contains(value),
                   onSelected: (_) => onToggle(value),
+                  semanticPrefix: title,
                 ),
               )
               .toList(growable: false),
@@ -386,18 +388,27 @@ class _ExperienceEditorSection extends StatelessWidget {
   }
 }
 
-class _DocumentsEditorSection extends StatelessWidget {
-  const _DocumentsEditorSection({
+class WorkerDocumentsSection extends StatelessWidget {
+  const WorkerDocumentsSection({
     required this.worker,
     required this.uploading,
+    required this.uploadProgress,
+    required this.errorMessage,
+    required this.successMessage,
     required this.onUploadHealthCertificate,
     required this.onUploadCriminalRecord,
+    required this.onOpenDocument,
+    super.key,
   });
 
   final WorkerMe worker;
   final bool uploading;
+  final double? uploadProgress;
+  final String? errorMessage;
+  final String? successMessage;
   final Future<void> Function() onUploadHealthCertificate;
   final Future<void> Function() onUploadCriminalRecord;
+  final Future<void> Function(WorkerDocument document) onOpenDocument;
 
   @override
   Widget build(BuildContext context) {
@@ -406,44 +417,266 @@ class _DocumentsEditorSection extends StatelessWidget {
       children: [
         _SectionTitle(icon: Icons.upload_file_outlined, title: 'Sənəd yüklə'),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final health = OutlinedButton.icon(
               onPressed: uploading ? null : onUploadHealthCertificate,
-              icon: const Icon(Icons.upload_file_outlined),
+              icon: const Icon(Icons.health_and_safety_outlined),
               label: const Text('Sağlamlıq arayışı'),
-            ),
-            OutlinedButton.icon(
+            );
+            final criminal = OutlinedButton.icon(
               onPressed: uploading ? null : onUploadCriminalRecord,
               icon: const Icon(Icons.verified_user_outlined),
               label: const Text('Məhkumluq arayışı'),
-            ),
-          ],
+            );
+            if (constraints.maxWidth < 360) {
+              return Column(
+                children: [
+                  SizedBox(width: double.infinity, child: health),
+                  const SizedBox(height: 10),
+                  SizedBox(width: double.infinity, child: criminal),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: health),
+                const SizedBox(width: 10),
+                Expanded(child: criminal),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 14),
-        if (uploading) const SkeletonBlock(height: 10),
+        if (uploading) ...[
+          Semantics(
+            label: 'Sənəd yüklənir',
+            value: uploadProgress == null
+                ? null
+                : '${(uploadProgress! * 100).round()} faiz',
+            child: LinearProgressIndicator(value: uploadProgress),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            uploadProgress == null
+                ? 'Sənəd yüklənir...'
+                : 'Sənəd ${(uploadProgress! * 100).round()}% yüklənib',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: BrandColors.mutedBrown,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (errorMessage != null) ...[
+          InlineMessage(message: errorMessage!, kind: InlineMessageKind.error),
+          const SizedBox(height: 12),
+        ],
+        if (successMessage != null) ...[
+          InlineMessage(
+            message: successMessage!,
+            kind: InlineMessageKind.success,
+          ),
+          const SizedBox(height: 12),
+        ],
         if (worker.documents.isEmpty)
-          const InlineMessage(message: 'Hələ sənəd yüklənməyib.')
+          const InlineMessage(
+            key: ValueKey('worker-documents-empty'),
+            message: 'Hələ sənəd yüklənməyib.',
+          )
         else
           ...worker.documents.map(
-            (document) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.description_outlined),
-              title: Text(
-                _documentLabel(document.type),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                document.name ?? document.mimeType ?? '-',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            (document) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: PremiumCard(
+                key: ValueKey('worker-document-${document.type}'),
+                padding: const EdgeInsets.all(14),
+                onTap:
+                    document.available && document.effectiveDownloadPath != null
+                    ? () => onOpenDocument(document)
+                    : null,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: BrandColors.primaryBurgundy.withValues(
+                          alpha: 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: Icon(
+                        document.mimeType == 'application/pdf'
+                            ? Icons.picture_as_pdf_outlined
+                            : Icons.image_outlined,
+                        color: BrandColors.primaryBurgundy,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _documentLabel(document.type),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 7),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: _DocumentStateBadge(document: document),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            _documentName(document),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: BrandColors.darkText),
+                          ),
+                          const SizedBox(height: 7),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 5,
+                            children: [
+                              if (document.sizeBytes != null)
+                                _DocumentMeta(
+                                  icon: Icons.data_usage_outlined,
+                                  label: _formatBytes(document.sizeBytes!),
+                                ),
+                              if (_formatUploadedAt(document.uploadedAt) !=
+                                  null)
+                                _DocumentMeta(
+                                  icon: Icons.schedule_outlined,
+                                  label: _formatUploadedAt(
+                                    document.uploadedAt,
+                                  )!,
+                                ),
+                              _DocumentMeta(
+                                icon: document.companyVisible
+                                    ? Icons.visibility_outlined
+                                    : Icons.lock_outline_rounded,
+                                label: document.companyVisible
+                                    ? 'Müəssisəyə görünür'
+                                    : 'Məxfi sənəd',
+                              ),
+                            ],
+                          ),
+                          if (document.available &&
+                              document.effectiveDownloadPath != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Açmaq üçün toxunun',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: BrandColors.primaryBurgundy,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
       ],
     );
   }
+}
+
+class _DocumentStateBadge extends StatelessWidget {
+  const _DocumentStateBadge({required this.document});
+
+  final WorkerDocument document;
+
+  @override
+  Widget build(BuildContext context) {
+    final ready =
+        document.available &&
+        document.status == 'ready' &&
+        document.scanStatus == 'clean';
+    final label = ready
+        ? 'Yüklənib'
+        : document.status == 'legacy'
+        ? 'Yenidən yükləyin'
+        : document.scanStatus == 'unscanned'
+        ? 'Yoxlanılır'
+        : document.status;
+
+    return Container(
+      constraints: const BoxConstraints(minHeight: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: (ready ? BrandColors.accentGold : BrandColors.urbanGraphite)
+            .withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: ready
+              ? BrandColors.accentGold
+              : BrandColors.urbanGraphite.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: ready ? BrandColors.darkText : BrandColors.urbanGraphite,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _DocumentMeta extends StatelessWidget {
+  const _DocumentMeta({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: BrandColors.mutedBrown),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: BrandColors.mutedBrown),
+        ),
+      ],
+    );
+  }
+}
+
+String _documentName(WorkerDocument document) {
+  final name = document.name?.trim();
+  if (name != null && name.isNotEmpty) return name;
+  final mime = document.mimeType?.trim();
+  if (mime != null && mime.isNotEmpty) return mime;
+  return 'Fayl adı təqdim edilməyib';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
+
+String? _formatUploadedAt(String? value) {
+  final date = value == null ? null : DateTime.tryParse(value);
+  if (date == null) return null;
+  return DateFormat('dd.MM.yyyy, HH:mm').format(date.toLocal());
 }

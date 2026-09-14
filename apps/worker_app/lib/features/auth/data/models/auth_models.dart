@@ -166,6 +166,8 @@ class WorkerMe {
     required this.position,
     required this.positionIds,
     required this.positions,
+    this.departments = const [],
+    this.subdepartments = const [],
     required this.email,
     required this.emailVerified,
     required this.emailVerifiedAt,
@@ -191,6 +193,8 @@ class WorkerMe {
   final String? position;
   final List<String> positionIds;
   final List<String> positions;
+  final List<String> departments;
+  final List<String> subdepartments;
   final String? email;
   final bool emailVerified;
   final String? emailVerifiedAt;
@@ -217,6 +221,8 @@ class WorkerMe {
       position: json['position'] as String?,
       positionIds: _stringList(json['position_ids']),
       positions: _positionNames(json['positions']),
+      departments: _taxonomyNames(json['positions'], 'department'),
+      subdepartments: _taxonomyNames(json['positions'], 'subdepartment'),
       email: json['email'] as String?,
       emailVerified: json['email_verified'] == true,
       emailVerifiedAt: json['email_verified_at'] as String?,
@@ -269,28 +275,52 @@ class WorkerExperience {
 class WorkerDocument {
   const WorkerDocument({
     required this.type,
-    required this.url,
+    this.url = '',
+    this.downloadUrl,
     this.name,
     this.mimeType,
+    this.sizeBytes,
     this.uploadedAt,
     this.companyVisible = false,
+    this.status = 'legacy',
+    this.scanStatus = 'unscanned',
+    this.available = false,
   });
 
   final String type;
   final String url;
+  final String? downloadUrl;
   final String? name;
   final String? mimeType;
+  final int? sizeBytes;
   final String? uploadedAt;
   final bool companyVisible;
+  final String status;
+  final String scanStatus;
+  final bool available;
+
+  String? get effectiveDownloadPath {
+    final candidate = downloadUrl?.trim().isNotEmpty == true
+        ? downloadUrl!.trim()
+        : url.trim();
+    return candidate.isEmpty ? null : candidate;
+  }
 
   factory WorkerDocument.fromJson(Map<String, dynamic> json) {
     return WorkerDocument(
       type: json['type'] as String? ?? '',
       url: json['url'] as String? ?? '',
+      downloadUrl: json['download_url'] as String?,
       name: json['name'] as String?,
       mimeType: json['mime_type'] as String?,
+      sizeBytes: json['size_bytes'] is num
+          ? (json['size_bytes'] as num).toInt()
+          : null,
       uploadedAt: json['uploaded_at'] as String?,
       companyVisible: json['company_visible'] == true,
+      status: json['status'] as String? ?? 'legacy',
+      scanStatus: json['scan_status'] as String? ?? 'unscanned',
+      available: json['available'] == true,
     );
   }
 }
@@ -316,12 +346,24 @@ List<String> _positionNames(Object? value) {
       .toList(growable: false);
 }
 
+List<String> _taxonomyNames(Object? value, String key) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map((item) => item[key])
+      .whereType<Map<String, dynamic>>()
+      .map((item) => item['name_az'] as String? ?? '')
+      .where((item) => item.trim().isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+}
+
 List<WorkerDocument> _documentList(Object? value) {
   if (value is! List) return const [];
   return value
       .whereType<Map<String, dynamic>>()
       .map(WorkerDocument.fromJson)
-      .where((document) => document.type.isNotEmpty && document.url.isNotEmpty)
+      .where((document) => document.type.isNotEmpty)
       .toList(growable: false);
 }
 

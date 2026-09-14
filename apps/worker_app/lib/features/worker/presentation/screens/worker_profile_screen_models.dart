@@ -28,14 +28,6 @@ class _ExperienceDraft {
   }
 }
 
-String? _photoUrl(String? value) {
-  if (value == null || value.trim().isEmpty) return null;
-  if (value.startsWith('http://') || value.startsWith('https://')) {
-    return value;
-  }
-  return '${AppConfig.rawBaseUrl}${value.startsWith('/') ? '' : '/'}$value';
-}
-
 String _documentLabel(String type) {
   return switch (type) {
     'health_certificate' => 'Sağlamlıq arayışı',

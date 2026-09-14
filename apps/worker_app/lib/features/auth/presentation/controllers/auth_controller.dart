@@ -272,6 +272,20 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  Future<WorkerMe> refreshWorkerProfile() async {
+    final refreshed = await _repository.getWorkerProfile();
+    worker = refreshed;
+    errorMessage = null;
+    notifyListeners();
+    return refreshed;
+  }
+
+  void updateWorkerProfile(WorkerMe updatedWorker) {
+    worker = updatedWorker;
+    errorMessage = null;
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     isSubmitting = true;
     notifyListeners();

@@ -56,7 +56,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   }
 
   Future<WorkerMe> _load() {
-    return context.read<WorkerRepository>().getMe();
+    return context.read<AuthController>().refreshWorkerProfile();
   }
 
   Future<void> _loadTaxonomy() async {
@@ -115,7 +115,8 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             );
           }
 
-          final worker = snapshot.data!;
+          final worker =
+              context.watch<AuthController>().worker ?? snapshot.data!;
           _hydrate(worker);
 
           return RefreshIndicator(
@@ -174,7 +175,19 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w800),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.tonalIcon(
+                          onPressed:
+                              context.watch<AuthController>().isSubmitting
+                              ? null
+                              : _logout,
+                          icon: const Icon(Icons.logout_rounded),
+                          label: const Text(AppStrings.logout),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
                       const Text(AppStrings.deleteAccountDescription),
                       const SizedBox(height: 14),
                       SizedBox(
@@ -206,6 +219,13 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         },
       ),
     );
+  }
+
+  Future<void> _logout() async {
+    final auth = context.read<AuthController>();
+    await auth.logout();
+    if (!mounted) return;
+    await context.read<RoleSessionController>().clearRole();
   }
 
   Future<void> _confirmAccountDeletion() async {
@@ -439,35 +459,61 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     return false;
   }
 
-  Future<void> _pickAndUploadProfilePhoto() async {
+  Future<void> _pickAndUploadProfilePhoto({
+    ValueChanged<double?>? onProgress,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _error = null;
+        _success = null;
+      });
+    }
     final file = await _pickFile(FileType.image);
     if (file == null) return;
     await _upload(
-      (cancelToken) => context.read<WorkerRepository>().uploadProfilePhoto(
-        fileName: file.name,
-        path: file.path,
-        bytes: file.bytes,
-        fileSize: file.size,
-        cancelToken: cancelToken,
-      ),
+      (cancelToken, onProgress) =>
+          context.read<WorkerRepository>().uploadProfilePhoto(
+            fileName: file.name,
+            path: file.path,
+            bytes: file.bytes,
+            fileSize: file.size,
+            onSendProgress: onProgress,
+            cancelToken: cancelToken,
+          ),
+      successMessage: 'Profil şəkli yeniləndi.',
+      onProgress: onProgress,
+      invalidatePhotoCache: true,
     );
   }
 
-  Future<void> _pickAndUploadDocument(String type) async {
+  Future<WorkerMe?> _pickAndUploadDocument(
+    String type, {
+    ValueChanged<double?>? onProgress,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _error = null;
+        _success = null;
+      });
+    }
     final file = await _pickFile(
       FileType.custom,
       allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png', 'webp'],
     );
-    if (file == null) return;
-    await _upload(
-      (cancelToken) => context.read<WorkerRepository>().uploadDocument(
-        type: type,
-        fileName: file.name,
-        path: file.path,
-        bytes: file.bytes,
-        fileSize: file.size,
-        cancelToken: cancelToken,
-      ),
+    if (file == null) return null;
+    return _upload(
+      (cancelToken, progress) =>
+          context.read<WorkerRepository>().uploadDocument(
+            type: type,
+            fileName: file.name,
+            path: file.path,
+            bytes: file.bytes,
+            fileSize: file.size,
+            onSendProgress: progress,
+            cancelToken: cancelToken,
+          ),
+      successMessage: '${file.name} uğurla yükləndi.',
+      onProgress: onProgress,
     );
   }
 
@@ -483,7 +529,8 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     );
     if (!mounted) return null;
     final file = result?.files.single;
-    if (file == null || (kIsWeb ? file.bytes == null : file.path == null)) {
+    if (file == null) return null;
+    if (kIsWeb ? file.bytes == null : file.path == null) {
       setState(() {
         _error = 'Fayl seçilmədi.';
         _success = null;
@@ -510,10 +557,17 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     return file;
   }
 
-  Future<void> _upload(
-    Future<WorkerMe> Function(CancelToken cancelToken) action,
-  ) async {
-    if (_uploading) return;
+  Future<WorkerMe?> _upload(
+    Future<WorkerMe> Function(
+      CancelToken cancelToken,
+      ProgressCallback onProgress,
+    )
+    action, {
+    required String successMessage,
+    ValueChanged<double?>? onProgress,
+    bool invalidatePhotoCache = false,
+  }) async {
+    if (_uploading) return null;
     final cancelToken = CancelToken();
     _uploadCancelToken = cancelToken;
     setState(() {
@@ -521,23 +575,54 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _error = null;
       _success = null;
     });
+    onProgress?.call(null);
     try {
-      await action(cancelToken);
-      if (!mounted) return;
-      _success = 'Fayl yükləndi.';
-      await _refresh();
+      final auth = context.read<AuthController>();
+      final previousPhoto = resolvePublicAssetUrl(auth.worker?.profilePhotoUrl);
+      final uploaded = await action(cancelToken, (sent, total) {
+        if (!mounted) return;
+        final progress = total <= 0 ? null : (sent / total).clamp(0.0, 1.0);
+        onProgress?.call(progress);
+      });
+      if (!mounted) return null;
+      if (invalidatePhotoCache && previousPhoto != null) {
+        PaintingBinding.instance.imageCache.evict(NetworkImage(previousPhoto));
+      }
+      auth.updateWorkerProfile(uploaded);
+
+      var persisted = uploaded;
+      try {
+        persisted = await auth.refreshWorkerProfile();
+      } catch (_) {
+        // The mutation response is already the authoritative updated profile.
+        // Keep it visible if the follow-up read is temporarily unavailable.
+      }
+      if (!mounted) return persisted;
+
+      setState(() {
+        _hydrated = false;
+        _future = Future<WorkerMe>.value(persisted);
+        _success = successMessage;
+      });
+      return persisted;
     } on ApiException catch (error) {
-      if (!mounted) return;
-      _error = error.message;
+      if (!mounted) return null;
+      setState(() => _error = error.message);
     } catch (_) {
-      if (!mounted) return;
-      _error = 'Profil yenilənmədi.';
+      if (!mounted) return null;
+      setState(() => _error = 'Profil yenilənmədi. Yenidən cəhd edin.');
     } finally {
       if (identical(_uploadCancelToken, cancelToken)) {
         _uploadCancelToken = null;
       }
-      if (mounted) setState(() => _uploading = false);
+      if (mounted) {
+        setState(() {
+          _uploading = false;
+        });
+      }
+      onProgress?.call(null);
     }
+    return null;
   }
 
   List<String> _toggle(List<String> source, String value) {
@@ -548,31 +633,26 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
 
   Future<void> _openIdentitySheet(WorkerMe worker) async {
     var draftGender = _gender;
+    var sheetWorker = worker;
+    var sheetUploading = false;
+    double? sheetProgress;
     await _showEditSheet(
       title: 'Şəxsi məlumatlar',
       icon: Icons.badge_outlined,
       builder: (setSheetState) {
-        final photoUrl = _photoUrl(worker.profilePhotoUrl);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                CircleAvatar(
+                WorkerAvatar(
                   radius: 34,
+                  name: sheetWorker.name,
+                  photoUrl: sheetWorker.profilePhotoUrl,
                   backgroundColor: BrandColors.accentGold.withValues(
                     alpha: 0.18,
                   ),
-                  backgroundImage: photoUrl == null
-                      ? null
-                      : NetworkImage(photoUrl),
-                  child: photoUrl == null
-                      ? const Icon(
-                          Icons.person_outline,
-                          color: BrandColors.primaryBurgundy,
-                          size: 34,
-                        )
-                      : null,
+                  borderColor: BrandColors.accentGold,
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -580,15 +660,15 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        worker.name,
-                        maxLines: 1,
+                        sheetWorker.name,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: 6),
                       PremiumChip(
                         label:
-                            '${worker.ratingAverage.toStringAsFixed(1)} (${worker.ratingCount})',
+                            '${sheetWorker.ratingAverage.toStringAsFixed(1)} (${sheetWorker.ratingCount})',
                         icon: Icons.star_outline,
                       ),
                     ],
@@ -598,15 +678,52 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             ),
             const SizedBox(height: 16),
             OutlinedButton.icon(
-              onPressed: _uploading
+              onPressed: sheetUploading
                   ? null
                   : () async {
-                      await _pickAndUploadProfilePhoto();
-                      setSheetState(() {});
+                      setSheetState(() {
+                        sheetUploading = true;
+                        sheetProgress = null;
+                      });
+                      await _pickAndUploadProfilePhoto(
+                        onProgress: (value) {
+                          setSheetState(() => sheetProgress = value);
+                        },
+                      );
+                      if (!mounted) return;
+                      setSheetState(() {
+                        sheetWorker =
+                            context.read<AuthController>().worker ??
+                            sheetWorker;
+                        sheetUploading = false;
+                        sheetProgress = null;
+                      });
                     },
-              icon: const Icon(Icons.photo_camera_outlined),
-              label: const Text('Profil şəklini yenilə'),
+              icon: sheetUploading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.photo_camera_outlined),
+              label: Text(
+                sheetUploading
+                    ? sheetProgress == null
+                          ? 'Profil şəkli yüklənir...'
+                          : 'Profil şəkli ${(sheetProgress! * 100).round()}%'
+                    : 'Profil şəklini yenilə',
+              ),
             ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              InlineMessage(message: _error!, kind: InlineMessageKind.error),
+            ],
+            if (_success != null) ...[
+              const SizedBox(height: 12),
+              InlineMessage(
+                message: _success!,
+                kind: InlineMessageKind.success,
+              ),
+            ],
             const SizedBox(height: 18),
             _SectionTitle(icon: Icons.wc_outlined, title: 'Cins'),
             const SizedBox(height: 10),
@@ -912,24 +1029,99 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   }
 
   Future<void> _openDocumentsSheet(WorkerMe worker) {
+    var sheetWorker = worker;
+    var sheetUploading = false;
+    double? sheetProgress;
     return _showEditSheet(
       title: 'Sənədlər',
       icon: Icons.folder_copy_outlined,
       saveLabel: 'Bağla',
-      builder: (setSheetState) => _DocumentsEditorSection(
-        worker: worker,
-        uploading: _uploading,
+      builder: (setSheetState) => WorkerDocumentsSection(
+        worker: sheetWorker,
+        uploading: sheetUploading,
+        uploadProgress: sheetProgress,
+        errorMessage: _error,
+        successMessage: _success,
         onUploadHealthCertificate: () async {
-          await _pickAndUploadDocument('health_certificate');
-          setSheetState(() {});
+          setSheetState(() {
+            sheetUploading = true;
+            sheetProgress = null;
+          });
+          await _pickAndUploadDocument(
+            'health_certificate',
+            onProgress: (value) {
+              setSheetState(() => sheetProgress = value);
+            },
+          );
+          if (!mounted) return;
+          setSheetState(() {
+            sheetWorker = context.read<AuthController>().worker ?? sheetWorker;
+            sheetUploading = false;
+            sheetProgress = null;
+          });
         },
         onUploadCriminalRecord: () async {
-          await _pickAndUploadDocument('criminal_record');
+          setSheetState(() {
+            sheetUploading = true;
+            sheetProgress = null;
+          });
+          await _pickAndUploadDocument(
+            'criminal_record',
+            onProgress: (value) {
+              setSheetState(() => sheetProgress = value);
+            },
+          );
+          if (!mounted) return;
+          setSheetState(() {
+            sheetWorker = context.read<AuthController>().worker ?? sheetWorker;
+            sheetUploading = false;
+            sheetProgress = null;
+          });
+        },
+        onOpenDocument: (document) async {
+          await _openDocument(sheetWorker, document);
           setSheetState(() {});
         },
       ),
       onSave: () async => true,
     );
+  }
+
+  Future<void> _openDocument(WorkerMe worker, WorkerDocument document) async {
+    if (!document.available || document.effectiveDownloadPath == null) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Bu sənəd təhlükəsiz baxış üçün hazır deyil.';
+        _success = null;
+      });
+      return;
+    }
+
+    try {
+      final uri = await context.read<WorkerRepository>().getDocumentDownloadUrl(
+        workerId: worker.id,
+        type: document.type,
+      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) {
+        throw const ApiException(
+          message: 'Sənədi açmaq mümkün olmadı.',
+          code: 'WORKER_DOCUMENT_OPEN_FAILED',
+        );
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.message;
+        _success = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Sənədi açmaq mümkün olmadı.';
+        _success = null;
+      });
+    }
   }
 
   Future<void> _showEditSheet({

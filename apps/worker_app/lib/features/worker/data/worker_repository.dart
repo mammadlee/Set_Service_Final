@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http_parser/http_parser.dart';
 
 import '../../../core/network/api_client.dart';
@@ -156,6 +155,70 @@ class WorkerRepository {
       onSendProgress: onSendProgress,
       cancelToken: cancelToken,
     );
+  }
+
+  Future<Uri> getDocumentDownloadUrl({
+    required String workerId,
+    required String type,
+  }) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/workers/$workerId/documents/$type/download',
+        options: Options(headers: const {'Cache-Control': 'no-store'}),
+      );
+      final value = response.data?['url'];
+      final uri = resolveDocumentDownloadUrl(
+        value is String ? value : null,
+        apiBaseUrl: _dio.options.baseUrl,
+      );
+      if (uri == null) {
+        throw const ApiException(
+          message: 'Sənəd keçidi etibarlı deyil.',
+          code: 'WORKER_DOCUMENT_URL_INVALID',
+        );
+      }
+      return uri;
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  @visibleForTesting
+  static Uri? resolveDocumentDownloadUrl(
+    String? value, {
+    required String apiBaseUrl,
+  }) {
+    final rawValue = value?.trim();
+    if (rawValue == null || rawValue.isEmpty) return null;
+
+    final parsed = Uri.tryParse(rawValue);
+    if (parsed == null || (!parsed.isAbsolute && parsed.hasAuthority)) {
+      return null;
+    }
+
+    Uri resolved = parsed;
+    if (!parsed.isAbsolute) {
+      final parsedBase = Uri.tryParse(apiBaseUrl.trim());
+      if (parsedBase == null ||
+          !parsedBase.isAbsolute ||
+          parsedBase.host.isEmpty) {
+        return null;
+      }
+      final base = parsedBase.replace(
+        path: parsedBase.path.endsWith('/')
+            ? parsedBase.path
+            : '${parsedBase.path}/',
+      );
+      resolved = base.resolveUri(parsed);
+    }
+
+    final scheme = resolved.scheme.toLowerCase();
+    if ((scheme != 'http' && scheme != 'https') ||
+        resolved.host.isEmpty ||
+        resolved.userInfo.isNotEmpty) {
+      return null;
+    }
+    return resolved;
   }
 
   Future<WorkerMe> _uploadFile(

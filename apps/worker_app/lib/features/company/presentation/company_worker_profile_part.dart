@@ -310,18 +310,12 @@ class _CompanyWorkerProfileScreenState
                     ? AppStrings.worker
                     : profile.position,
                 compact: true,
-                leading: CircleAvatar(
+                leading: WorkerAvatar(
+                  name: profile.name,
+                  photoUrl: profile.profilePhotoUrl,
                   radius: 26,
                   backgroundColor: BrandColors.white.withValues(alpha: 0.18),
-                  backgroundImage: profile.profilePhotoUrl == null
-                      ? null
-                      : NetworkImage(profile.profilePhotoUrl!),
-                  child: profile.profilePhotoUrl == null
-                      ? const Icon(
-                          Icons.person_outline,
-                          color: BrandColors.white,
-                        )
-                      : null,
+                  foregroundColor: BrandColors.white,
                 ),
                 children: [
                   PremiumChip(
