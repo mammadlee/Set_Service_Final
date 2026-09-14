@@ -45,7 +45,7 @@ class ApiClient {
     }
     var token = _tokenStorage.cachedAccessToken;
     final payload = readAccessTokenPayload(token);
-    if (isAccessTokenExpired(payload)) {
+    if (token != null && token.isNotEmpty && isAccessTokenExpired(payload)) {
       options.extra['refreshAttempted'] = true;
       final outcome = await _refreshTokensSingleFlight();
       if (outcome == _RefreshOutcome.refreshed) {

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../app_shell/presentation/multi_role_gate.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
@@ -27,7 +28,9 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<CompanyAuthController>().clearTransientMessages();
+      if (mounted) {
+        context.read<CompanyAuthController>().clearTransientMessages();
+      }
     });
   }
 
@@ -151,7 +154,9 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                   onPressed: auth.isSubmitting
                       ? null
                       : () async {
-                          context.read<CompanyAuthController>().clearTransientMessages();
+                          context
+                              .read<CompanyAuthController>()
+                              .clearTransientMessages();
                           await Navigator.of(context).push<void>(
                             MaterialPageRoute(
                               builder: (_) => const CompanyRegisterScreen(),
@@ -241,7 +246,8 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
             ),
             child: SafeArea(
               child: SingleChildScrollView(
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -273,14 +279,8 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                         expandedInsets: EdgeInsets.zero,
                         showSelectedIcon: false,
                         segments: const [
-                          ButtonSegment(
-                            value: 'phone',
-                            label: Text('Telefon'),
-                          ),
-                          ButtonSegment(
-                            value: 'email',
-                            label: Text('E-poçt'),
-                          ),
+                          ButtonSegment(value: 'phone', label: Text('Telefon')),
+                          ButtonSegment(value: 'email', label: Text('E-poçt')),
                         ],
                         selected: {method},
                         onSelectionChanged: (value) =>
@@ -340,23 +340,19 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   }
 
   String? _validateEmail(String? value) {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.emailValidation;
-    }
-    return null;
+    return AuthInputValidators.email(value);
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    return null;
+    return AuthInputValidators.loginPassword(value);
   }
 
   bool _validPhone(String value) {
-    return RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(_normalizePhone(value));
+    return AuthInputValidators.isValidPhone(value);
   }
 
   String _normalizePhone(String value) {
-    return value.trim().replaceAll(RegExp(r'[\s().-]'), '');
+    return AuthInputValidators.normalizePhone(value);
   }
 }
 
@@ -388,7 +384,9 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<CompanyAuthController>().clearTransientMessages();
+      if (mounted) {
+        context.read<CompanyAuthController>().clearTransientMessages();
+      }
     });
   }
 
@@ -509,20 +507,14 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(_normalizePhone(value ?? ''))) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   String? _validateEmail(String? value) {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.emailValidation;
-    }
-    return null;
+    return AuthInputValidators.email(value);
   }
 
   String _normalizePhone(String value) {
-    return value.trim().replaceAll(RegExp(r'[\s().-]'), '');
+    return AuthInputValidators.normalizePhone(value);
   }
 }

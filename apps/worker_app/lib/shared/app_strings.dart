@@ -47,9 +47,9 @@ class AppStrings {
   static const roleSelectionTitle = 'SET Service-ə xoş gəlmisiniz';
   static const roleSelectionSubtitle =
       'İşçi və müəssisələr üçün premium xidmət idarəetmə platforması';
-  static const instagram = 'Instagram: @setservice';
+  static const instagram = 'Instagram: @setservice.az';
   static const facebook = 'Facebook: SET Service';
-  static const hotline = 'Qaynar xətt: +994 XX XXX XX XX';
+  static const hotline = 'Qaynar xətt: +994 70 231 51 51';
   static const workerRole = 'İşçi';
   static const companyRole = 'Müəssisə';
   static const adminRole = 'Admin';
@@ -215,7 +215,11 @@ class AppStrings {
   static const createNewPassword = 'Yeni şifrə yaradın';
   static const saveNewPassword = 'Yeni şifrəni yadda saxla';
   static const passwordValidation =
-      'Şifrə ən azı 8 simvoldan ibarət olmalı, həm hərf, həm də rəqəm ehtiva etməlidir.';
+      'Şifrə 8–128 simvoldan ibarət olmalı, həm hərf, həm də rəqəm ehtiva etməlidir.';
+  static const passwordRequired = 'Şifrəni daxil edin.';
+  static const passwordTooLong = 'Şifrə 128 simvoldan uzun olmamalıdır.';
+  static const passwordDisallowed =
+      'Bu şifrə təhlükəsizlik səbəbilə istifadə edilə bilməz.';
   static const passwordsDoNotMatch = 'Şifrələr uyğun gəlmir.';
   static const passwordResetSuccess =
       'Şifrə yeniləndi. Yeni şifrə ilə daxil olun.';

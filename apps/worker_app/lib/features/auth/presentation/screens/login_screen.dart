@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
@@ -326,20 +327,15 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   String? _validatePhone(String? value) {
-    final phone = value?.trim() ?? '';
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    return null;
+    return AuthInputValidators.loginPassword(value);
   }
 
   bool _validEmail(String value) {
-    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
+    return AuthInputValidators.isValidEmail(value);
   }
 }
 

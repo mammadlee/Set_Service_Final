@@ -1096,11 +1096,101 @@ class PremiumChip extends StatelessWidget {
   }
 }
 
+class PremiumSelectableChip extends StatelessWidget {
+  const PremiumSelectableChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+    this.semanticPrefix,
+    super.key,
+  });
+
+  final String label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+  final String? semanticPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    const radius = BorderRadius.all(Radius.circular(18));
+    final foreground = selected
+        ? BrandColors.primaryBurgundy
+        : BrandColors.darkText;
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: semanticPrefix == null ? label : '$semanticPrefix: $label',
+      child: Material(
+        color: BrandColors.transparent,
+        borderRadius: radius,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: () => onSelected(!selected),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            constraints: const BoxConstraints(minHeight: 44, maxWidth: 320),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: selected
+                  ? BrandColors.accentGold.withValues(alpha: 0.24)
+                  : BrandColors.white.withValues(alpha: 0.9),
+              borderRadius: radius,
+              border: Border.all(
+                color: selected
+                    ? BrandColors.primaryBurgundy
+                    : BrandColors.accentGold.withValues(alpha: 0.72),
+                width: 1.25,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AnimatedOpacity(
+                  opacity: selected ? 1 : 0,
+                  duration: const Duration(milliseconds: 120),
+                  child: Icon(
+                    Icons.check_rounded,
+                    key: ValueKey('selectable-chip-indicator-$label'),
+                    size: 17,
+                    color: BrandColors.primaryBurgundy,
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 3,
+                    softWrap: true,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PremiumBottomSheet extends StatelessWidget {
-  const PremiumBottomSheet({required this.child, this.title, super.key});
+  const PremiumBottomSheet({
+    required this.child,
+    this.title,
+    this.contentScrollable = true,
+    super.key,
+  });
 
   final Widget child;
   final String? title;
+  final bool contentScrollable;
 
   @override
   Widget build(BuildContext context) {
@@ -1126,7 +1216,15 @@ class PremiumBottomSheet extends StatelessWidget {
               Text(title!, style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 14),
             ],
-            Flexible(child: SingleChildScrollView(child: child)),
+            Flexible(
+              child: contentScrollable
+                  ? SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      child: child,
+                    )
+                  : child,
+            ),
           ],
         ),
       ),
@@ -1138,6 +1236,7 @@ Future<T?> showPremiumBottomSheet<T>({
   required BuildContext context,
   required Widget child,
   String? title,
+  bool contentScrollable = true,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -1157,7 +1256,11 @@ Future<T?> showPremiumBottomSheet<T>({
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.9,
         ),
-        child: PremiumBottomSheet(title: title, child: child),
+        child: PremiumBottomSheet(
+          title: title,
+          contentScrollable: contentScrollable,
+          child: child,
+        ),
       ),
     ),
   );

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
@@ -126,6 +128,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   message: _taxonomyError!,
                   kind: InlineMessageKind.error,
                 ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    onPressed: _taxonomyLoading ? null : _loadTaxonomy,
+                    icon: _taxonomyLoading
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded),
+                    label: const Text(AppStrings.tryAgain),
+                  ),
+                ),
                 const SizedBox(height: 14),
               ],
               _SelectorField(
@@ -134,7 +150,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 placeholder: 'Şöbə seçin',
                 icon: Icons.business_center_outlined,
                 requiredMessage: AppStrings.positionRequired,
-                onTap: _taxonomyLoading ? null : _selectDepartment,
+                onTap: _taxonomyLoading || _taxonomyError != null
+                    ? null
+                    : _selectDepartment,
               ),
               if (_departmentId != null) ...[
                 const SizedBox(height: 14),
@@ -217,11 +235,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
-    final phone = value?.trim() ?? '';
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   Future<void> _selectDepartment() async {
@@ -349,122 +363,130 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return await showPremiumBottomSheet<List<String>>(
         context: context,
         title: title,
+        contentScrollable: false,
         child: StatefulBuilder(
           builder: (context, setSheetState) {
             final allOptions = {
               ...options,
               ...draft.where((item) => !options.contains(item)),
             }.toList();
-            final optionsHeight = (MediaQuery.sizeOf(context).height * 0.29)
-                .clamp(190.0, 300.0);
+            final availableHeight =
+                MediaQuery.sizeOf(context).height -
+                MediaQuery.viewInsetsOf(context).bottom;
+            final sheetHeight = (availableHeight * (allowCustom ? 0.72 : 0.56))
+                .clamp(240.0, allowCustom ? 520.0 : 420.0);
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  height: optionsHeight,
-                  child: SingleChildScrollView(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: allOptions
-                          .map(
-                            (item) => FilterChip(
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              visualDensity: VisualDensity.compact,
-                              labelPadding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                              ),
-                              label: Text(
-                                item,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              selected: draft.contains(item),
-                              onSelected: (_) => setSheetState(
-                                () => draft = _toggle(draft, item),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
+            return SizedBox(
+              height: sheetHeight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    draft.isEmpty
+                        ? 'Heç bir seçim edilməyib'
+                        : '${draft.length} seçim edilib',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: BrandColors.mutedBrown,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ),
-                if (allowCustom) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: customController,
-                    textInputAction: TextInputAction.done,
-                    decoration: InputDecoration(
-                      labelText: 'Yeni bacarıq əlavə et',
-                      prefixIcon: const Icon(Icons.add_circle_outline),
-                      suffixIcon: IconButton(
-                        tooltip: 'Əlavə et',
-                        onPressed: () => _addCustomSkill(
-                          setSheetState,
-                          customController,
-                          (value) => draft = value,
-                          draft,
-                        ),
-                        icon: const Icon(Icons.add_rounded),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: allOptions
+                            .map(
+                              (item) => PremiumSelectableChip(
+                                label: item,
+                                selected: draft.contains(item),
+                                onSelected: (_) => setSheetState(
+                                  () => draft = _toggle(draft, item),
+                                ),
+                                semanticPrefix: title,
+                              ),
+                            )
+                            .toList(growable: false),
                       ),
                     ),
-                    onSubmitted: (_) => _addCustomSkill(
-                      setSheetState,
-                      customController,
-                      (value) => draft = value,
-                      draft,
-                    ),
                   ),
-                ],
-                const SizedBox(height: 14),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final narrow = constraints.maxWidth < 300;
-                    if (narrow) {
-                      return Column(
+                  if (allowCustom) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: customController,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: 'Yeni bacarıq əlavə et',
+                        prefixIcon: const Icon(Icons.add_circle_outline),
+                        suffixIcon: IconButton(
+                          tooltip: 'Əlavə et',
+                          onPressed: () => _addCustomSkill(
+                            setSheetState,
+                            customController,
+                            (value) => draft = value,
+                            draft,
+                          ),
+                          icon: const Icon(Icons.add_rounded),
+                        ),
+                      ),
+                      onSubmitted: (_) => _addCustomSkill(
+                        setSheetState,
+                        customController,
+                        (value) => draft = value,
+                        draft,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final narrow = constraints.maxWidth < 260;
+                      if (narrow) {
+                        return Column(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text(AppStrings.cancel),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            LoadingButton(
+                              label: AppStrings.save,
+                              icon: Icons.check_rounded,
+                              loading: false,
+                              onPressed: () => Navigator.of(context).pop(draft),
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
                         children: [
-                          SizedBox(
-                            width: double.infinity,
+                          Expanded(
                             child: OutlinedButton(
                               onPressed: () => Navigator.of(context).pop(),
                               child: const Text(AppStrings.cancel),
                             ),
                           ),
-                          const SizedBox(height: 10),
-                          LoadingButton(
-                            label: AppStrings.save,
-                            icon: Icons.check_rounded,
-                            loading: false,
-                            onPressed: () => Navigator.of(context).pop(draft),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: LoadingButton(
+                              label: AppStrings.save,
+                              icon: Icons.check_rounded,
+                              loading: false,
+                              onPressed: () => Navigator.of(context).pop(draft),
+                            ),
                           ),
                         ],
                       );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: const Text(AppStrings.cancel),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: LoadingButton(
-                            label: AppStrings.save,
-                            icon: Icons.check_rounded,
-                            loading: false,
-                            onPressed: () => Navigator.of(context).pop(draft),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
+                    },
+                  ),
+                ],
+              ),
             );
           },
         ),
@@ -499,6 +521,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _loadTaxonomy() async {
+    if (mounted) {
+      setState(() {
+        _taxonomyLoading = true;
+        _taxonomyError = null;
+      });
+    }
     try {
       final departments = await context.read<TaxonomyRepository>().list();
       if (!mounted) return;
@@ -507,11 +535,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _taxonomyLoading = false;
         _taxonomyError = null;
       });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _taxonomyLoading = false;
+        _taxonomyError = error.message;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _taxonomyLoading = false;
-        _taxonomyError = 'Vəzifələr yüklənmədi.';
+        _taxonomyError = AppStrings.unknownError;
       });
     }
   }
@@ -623,13 +657,14 @@ class _SelectorField extends StatelessWidget {
                           displayValue.isEmpty ? placeholder : displayValue,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: displayValue.isEmpty
-                                ? BrandColors.urbanGraphite
-                                : BrandColors.darkText,
-                            fontWeight: FontWeight.w600,
-                            height: 1.2,
-                          ),
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: displayValue.isEmpty
+                                    ? BrandColors.urbanGraphite
+                                    : BrandColors.darkText,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                              ),
                         ),
                       ),
                       const SizedBox(width: 8),

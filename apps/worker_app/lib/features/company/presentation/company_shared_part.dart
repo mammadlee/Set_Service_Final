@@ -127,7 +127,9 @@ class _SummaryGrid extends StatelessWidget {
             children: List<Widget>.generate(items.length, (index) {
               final item = items[index];
               return Padding(
-                padding: EdgeInsets.only(bottom: index == items.length - 1 ? 0 : 10),
+                padding: EdgeInsets.only(
+                  bottom: index == items.length - 1 ? 0 : 10,
+                ),
                 child: PremiumEntrance(
                   delay: Duration(milliseconds: 70 * index),
                   offset: const Offset(0, 10),
@@ -189,9 +191,9 @@ class _SummaryCard extends StatelessWidget {
             fit: BoxFit.scaleDown,
             child: Text(
               '${item.value}',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
           ),
         ],
@@ -293,7 +295,8 @@ class _CompanyAttendanceStatusCache {
   static const _allAssignmentsScope = 'all';
 
   final Map<String, Set<String>> _completedIdsByScope = <String, Set<String>>{};
-  final Map<String, Future<Set<String>>> _inFlight = <String, Future<Set<String>>>{};
+  final Map<String, Future<Set<String>>> _inFlight =
+      <String, Future<Set<String>>>{};
 
   Future<Set<String>> loadCompletedIds(
     CompanyRepository repo,

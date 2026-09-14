@@ -134,6 +134,47 @@ void main() {
     });
 
     test(
+      'request without credentials does not refresh or invalidate session',
+      () async {
+        final storage = _MemoryTokenStorage(null, null);
+        final coordinator = SessionCoordinator();
+        addTearDown(coordinator.dispose);
+        final invalidations = <SessionInvalidation>[];
+        final subscription = coordinator.invalidations.listen(
+          invalidations.add,
+        );
+        addTearDown(subscription.cancel);
+        var refreshCalls = 0;
+
+        final client = ApiClient(
+          baseUrl: 'https://example.test',
+          tokenStorage: storage,
+          expectedRole: 'worker',
+          sessionCoordinator: coordinator,
+          dioOverride: _dioWithAdapter(
+            (options, _) async => _jsonResponse(200, {
+              'authorization': options.headers['authorization'],
+            }),
+          ),
+          refreshDioOverride: _dioWithAdapter((_, __) async {
+            refreshCalls += 1;
+            return _jsonResponse(500, {'code': 'UNEXPECTED_REFRESH'});
+          }),
+        );
+
+        final response = await client.dio.get<Map<String, dynamic>>(
+          '/taxonomy',
+        );
+
+        expect(response.data?['authorization'], isNull);
+        expect(refreshCalls, 0);
+        expect(storage.clearCount, 0);
+        expect(invalidations, isEmpty);
+        expect(coordinator.stateFor('worker'), SessionState.unauthenticated);
+      },
+    );
+
+    test(
       'terminal 403 account response clears the protected session',
       () async {
         final access = _jwt(role: 'worker');

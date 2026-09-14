@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../app_shell/presentation/multi_role_gate.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
@@ -153,14 +154,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   }
 
   String? _validateEmail(String? value) {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.emailValidation;
-    }
-    return null;
+    return AuthInputValidators.email(value);
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    return null;
+    return AuthInputValidators.loginPassword(value);
   }
 }

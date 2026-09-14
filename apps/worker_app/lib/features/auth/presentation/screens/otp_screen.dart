@@ -30,7 +30,11 @@ class _OtpScreenState extends State<OtpScreen> {
     final auth = context.watch<AuthController>();
     final isReset = auth.pendingPurpose == OtpPurpose.workerPasswordReset;
     final height = MediaQuery.sizeOf(context).height;
-    final topSpace = height < 700 ? 36.0 : height < 820 ? 72.0 : 110.0;
+    final topSpace = height < 700
+        ? 36.0
+        : height < 820
+        ? 72.0
+        : 110.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -53,7 +57,9 @@ class _OtpScreenState extends State<OtpScreen> {
           key: _formKey,
           child: ListView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom + 24),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
               SizedBox(height: topSpace),
               Text(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
@@ -34,7 +35,11 @@ class _CompanyPasswordScreenState extends State<CompanyPasswordScreen> {
     final isReset =
         auth.pendingPurpose == CompanyPendingOtpPurpose.passwordReset;
     final height = MediaQuery.sizeOf(context).height;
-    final topSpace = height < 700 ? 22.0 : height < 820 ? 38.0 : 58.0;
+    final topSpace = height < 700
+        ? 22.0
+        : height < 820
+        ? 38.0
+        : 58.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -147,12 +152,7 @@ class _CompanyPasswordScreenState extends State<CompanyPasswordScreen> {
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    if (!RegExp(r'[A-Za-z]').hasMatch(value ?? '') ||
-        !RegExp(r'\d').hasMatch(value ?? '')) {
-      return AppStrings.passwordValidation;
-    }
-    return null;
+    return AuthInputValidators.newPassword(value);
   }
 
   String? _validatePasswordConfirm(String? value) {

@@ -31,7 +31,11 @@ class _CompanyOtpScreenState extends State<CompanyOtpScreen> {
     final isReset =
         auth.pendingPurpose == CompanyPendingOtpPurpose.passwordReset;
     final height = MediaQuery.sizeOf(context).height;
-    final topSpace = height < 700 ? 24.0 : height < 820 ? 42.0 : 64.0;
+    final topSpace = height < 700
+        ? 24.0
+        : height < 820
+        ? 42.0
+        : 64.0;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,

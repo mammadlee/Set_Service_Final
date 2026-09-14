@@ -14,9 +14,12 @@ void main() {
   });
 
   group('release API base URL validation', () {
-    test('uses the production default when no explicit base URL is provided', () {
-      expect(AppConfig.validateBaseUrl('', releaseMode: true), isNull);
-    });
+    test(
+      'uses the production default when no explicit base URL is provided',
+      () {
+        expect(AppConfig.validateBaseUrl('', releaseMode: true), isNull);
+      },
+    );
 
     test('rejects malformed, credentialed, and query URLs', () {
       expect(

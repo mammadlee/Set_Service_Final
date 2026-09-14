@@ -31,7 +31,9 @@ class PendingApprovalScreen extends StatelessWidget {
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight - 40),
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight - 40,
+                ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -45,10 +47,11 @@ class PendingApprovalScreen extends StatelessWidget {
                     Text(
                       'Təsdiq gözlənilir...',
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: BrandColors.darkText,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(
+                            color: BrandColors.darkText,
+                            fontWeight: FontWeight.w800,
+                          ),
                     ),
                     const SizedBox(height: 12),
                     const InlineMessage(
