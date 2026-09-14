@@ -604,16 +604,19 @@ class _SelectorField extends StatelessWidget {
         return null;
       },
       builder: (field) {
+        const radius = BorderRadius.all(Radius.circular(14));
         final enabled = onTap != null;
         final borderColor = field.hasError
             ? BrandColors.error
-            : BrandColors.accentGold;
+            : displayValue.isEmpty
+            ? BrandColors.accentGold.withValues(alpha: 0.72)
+            : BrandColors.primaryBurgundy;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(left: 18, bottom: 7),
+              padding: const EdgeInsets.only(left: 14, bottom: 7),
               child: Text(
                 label,
                 maxLines: 2,
@@ -628,36 +631,48 @@ class _SelectorField extends StatelessWidget {
               ),
             ),
             Material(
-              color: BrandColors.white.withValues(alpha: 0.88),
-              borderRadius: BorderRadius.circular(28),
+              color: BrandColors.transparent,
+              borderRadius: radius,
+              clipBehavior: Clip.antiAlias,
               child: InkWell(
-                borderRadius: BorderRadius.circular(28),
+                borderRadius: radius,
                 onTap: enabled ? onTap : null,
-                child: Container(
+                child: AnimatedContainer(
+                  key: ValueKey('registration-selector-$label'),
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOutCubic,
                   width: double.infinity,
-                  constraints: const BoxConstraints(minHeight: 64),
+                  constraints: const BoxConstraints(minHeight: 56),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+                    horizontal: 13,
+                    vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: borderColor),
+                    color: displayValue.isEmpty
+                        ? BrandColors.white.withValues(alpha: 0.9)
+                        : BrandColors.accentGold.withValues(alpha: 0.1),
+                    borderRadius: radius,
+                    border: Border.all(color: borderColor, width: 1.25),
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        icon,
-                        size: 25,
-                        color: enabled
-                            ? BrandColors.urbanGraphite
-                            : BrandColors.urbanGraphite.withValues(alpha: 0.55),
+                      SizedBox.square(
+                        dimension: 24,
+                        child: Icon(
+                          icon,
+                          size: 23,
+                          color: enabled
+                              ? BrandColors.urbanGraphite
+                              : BrandColors.urbanGraphite.withValues(
+                                  alpha: 0.55,
+                                ),
+                        ),
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Text(
                           displayValue.isEmpty ? placeholder : displayValue,
-                          maxLines: 2,
+                          maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyLarge
                               ?.copyWith(
@@ -669,12 +684,15 @@ class _SelectorField extends StatelessWidget {
                               ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        color: enabled
-                            ? BrandColors.primaryBurgundy
-                            : BrandColors.urbanGraphite,
+                      const SizedBox(width: 6),
+                      SizedBox.square(
+                        dimension: 24,
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: enabled
+                              ? BrandColors.primaryBurgundy
+                              : BrandColors.urbanGraphite,
+                        ),
                       ),
                     ],
                   ),
@@ -684,7 +702,7 @@ class _SelectorField extends StatelessWidget {
             if (field.errorText != null) ...[
               const SizedBox(height: 6),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Text(
                   field.errorText!,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(

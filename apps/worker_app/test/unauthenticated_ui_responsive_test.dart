@@ -115,6 +115,7 @@ void main() {
     expect(find.text(AppStrings.fullName), findsOneWidget);
     expect(find.text(AppStrings.phoneNumber), findsOneWidget);
     expect(find.text('Şöbə seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Şöbə');
 
     await tester.tap(find.text('Şöbə seçin'));
     await tester.pumpAndSettle();
@@ -125,6 +126,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Departament seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Departament');
     await tester.tap(find.text('Departament seçin'));
     await tester.pumpAndSettle();
     expect(find.text('İsti mətbəx'), findsOneWidget);
@@ -134,6 +136,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Vəzifə seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Vəzifə');
     await tester.tap(find.text('Vəzifə seçin'));
     await tester.pumpAndSettle();
     expect(find.text('Aşpaz'), findsOneWidget);
@@ -203,6 +206,19 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+void _expectRegistrationSelectorBorder(WidgetTester tester, String label) {
+  final selector = tester.widget<AnimatedContainer>(
+    find.byKey(ValueKey('registration-selector-$label')),
+  );
+  final decoration = selector.decoration! as BoxDecoration;
+  expect(decoration.borderRadius, const BorderRadius.all(Radius.circular(14)));
+  final border = decoration.border! as Border;
+  expect(border.top.width, 1.25);
+  expect(border.right.width, 1.25);
+  expect(border.bottom.width, 1.25);
+  expect(border.left.width, 1.25);
 }
 
 class _UiFixture {
