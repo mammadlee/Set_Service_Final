@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -25,49 +27,90 @@ class RoleSelectionScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: BrandColors.creamBackground,
         body: SafeArea(
-          child: ClipRect(
-            child: SizedBox.expand(
-              child: FittedBox(
-                fit: BoxFit.cover,
-                alignment: Alignment.center,
-                child: SizedBox(
-                  width: _designSize.width,
-                  height: _designSize.height,
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: Image.asset(
-                          _backgroundAsset,
-                          fit: BoxFit.fill,
-                          filterQuality: FilterQuality.high,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final scale = math.min(
+                constraints.maxWidth / _designSize.width,
+                constraints.maxHeight / _designSize.height,
+              );
+              final artworkSize = _designSize * scale;
+
+              return ClipRect(
+                child: Stack(
+                  key: const ValueKey('role-selection-viewport'),
+                  fit: StackFit.expand,
+                  children: [
+                    const DecoratedBox(
+                      key: ValueKey('role-selection-edge-fill'),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0xFFFDFBF9), Color(0xFFFDEFD4)],
                         ),
                       ),
-                      _RoleHitTarget(
-                        rect: const Rect.fromLTWH(260, 135, 560, 385),
-                        label: AppStrings.adminLogin,
-                        onLongPress: () => context
-                            .read<RoleSessionController>()
-                            .selectRole(AppRole.admin),
+                    ),
+                    Align(
+                      alignment: Alignment.center,
+                      child: SizedBox(
+                        key: const ValueKey('role-selection-artwork'),
+                        width: artworkSize.width,
+                        height: artworkSize.height,
+                        child: FittedBox(
+                          fit: BoxFit.fill,
+                          child: SizedBox(
+                            width: _designSize.width,
+                            height: _designSize.height,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: Image.asset(
+                                    _backgroundAsset,
+                                    fit: BoxFit.fill,
+                                    filterQuality: FilterQuality.high,
+                                  ),
+                                ),
+                                _RoleHitTarget(
+                                  rect: const Rect.fromLTWH(260, 135, 560, 385),
+                                  label: AppStrings.adminLogin,
+                                  onLongPress: () => context
+                                      .read<RoleSessionController>()
+                                      .selectRole(AppRole.admin),
+                                ),
+                                _RoleHitTarget(
+                                  rect: const Rect.fromLTWH(
+                                    124,
+                                    1055,
+                                    890,
+                                    220,
+                                  ),
+                                  label: AppStrings.continueAsWorker,
+                                  onTap: () => context
+                                      .read<RoleSessionController>()
+                                      .selectRole(AppRole.worker),
+                                ),
+                                _RoleHitTarget(
+                                  rect: const Rect.fromLTWH(
+                                    124,
+                                    1337,
+                                    890,
+                                    220,
+                                  ),
+                                  label: AppStrings.continueAsCompany,
+                                  onTap: () => context
+                                      .read<RoleSessionController>()
+                                      .selectRole(AppRole.company),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
-                      _RoleHitTarget(
-                        rect: const Rect.fromLTWH(124, 1099, 890, 132),
-                        label: AppStrings.continueAsWorker,
-                        onTap: () => context
-                            .read<RoleSessionController>()
-                            .selectRole(AppRole.worker),
-                      ),
-                      _RoleHitTarget(
-                        rect: const Rect.fromLTWH(124, 1381, 890, 132),
-                        label: AppStrings.continueAsCompany,
-                        onTap: () => context
-                            .read<RoleSessionController>()
-                            .selectRole(AppRole.company),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),
