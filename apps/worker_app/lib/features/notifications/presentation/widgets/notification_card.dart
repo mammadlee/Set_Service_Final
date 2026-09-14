@@ -265,11 +265,7 @@ class _DetailLine extends StatelessWidget {
           if (stacked) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                labelWidget,
-                const SizedBox(height: 3),
-                valueWidget,
-              ],
+              children: [labelWidget, const SizedBox(height: 3), valueWidget],
             );
           }
 

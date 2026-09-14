@@ -90,7 +90,8 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
             return RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
-                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 children: [
                   _AssignmentHeader(assignment: assignment),
                   const SizedBox(height: 16),
@@ -194,9 +195,9 @@ class _AssignmentHeader extends StatelessWidget {
                 assignment.order.title,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               );
               if (compact) {
                 return Column(

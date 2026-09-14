@@ -120,7 +120,9 @@ class _AssignmentListScreenState extends State<AssignmentListScreen> {
                                 icon: compact
                                     ? const Icon(Icons.view_list_rounded)
                                     : null,
-                                label: Text(compact ? 'Hamısı' : AppStrings.allJobs),
+                                label: Text(
+                                  compact ? 'Hamısı' : AppStrings.allJobs,
+                                ),
                               ),
                             ],
                             selected: {_filter},
