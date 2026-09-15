@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import {
   CopyObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -27,6 +28,19 @@ export interface PrivateUploadObjectResult {
   key: string;
 }
 
+export interface PublicUploadObject {
+  body: Buffer;
+  contentType: string;
+  etag?: string;
+}
+
+export class UploadObjectNotFoundError extends Error {
+  constructor() {
+    super('Upload object not found.');
+    this.name = 'UploadObjectNotFoundError';
+  }
+}
+
 export type ObjectVisibility = 'public' | 'private';
 
 export interface UploadService {
@@ -35,9 +49,12 @@ export interface UploadService {
   putPrivateObject(input: UploadObjectInput): Promise<PrivateUploadObjectResult>;
   promotePrivateObject(sourceKey: string, targetKey: string): Promise<PrivateUploadObjectResult>;
   createSignedDownloadUrl(key: string, expiresInSeconds: number, downloadName?: string): Promise<string>;
+  getPublicObject(key: string): Promise<PublicUploadObject>;
   deleteObject(key: string, visibility: ObjectVisibility): Promise<void>;
   getPublicUrl(key: string): string;
 }
+
+const MAX_PUBLIC_PROFILE_PHOTO_BYTES = 5 * 1024 * 1024;
 
 class LocalUploadService implements UploadService {
   provider: StorageProviderName = 'local';
@@ -92,6 +109,23 @@ class LocalUploadService implements UploadService {
       await fs.rm(sourcePath, { force: true });
     }
     return { key: safeTargetKey };
+  }
+
+  async getPublicObject(key: string): Promise<PublicUploadObject> {
+    const safeKey = normalizeUploadKey(key);
+    try {
+      const body = await fs.readFile(resolveWithinRoot(publicUploadRoot(), safeKey));
+      ensurePublicObjectSize(body.length);
+      return {
+        body,
+        contentType: publicImageContentType(safeKey),
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new UploadObjectNotFoundError();
+      }
+      throw error;
+    }
   }
 
   async deleteObject(key: string, visibility: ObjectVisibility): Promise<void> {
@@ -199,6 +233,28 @@ class ObjectStorageUploadService implements UploadService {
     });
   }
 
+  async getPublicObject(key: string): Promise<PublicUploadObject> {
+    const safeKey = normalizeUploadKey(key);
+    try {
+      const result = await this.client.send(new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: safeKey,
+      }));
+      if (!result.Body) throw new UploadObjectNotFoundError();
+      ensurePublicObjectSize(result.ContentLength);
+      const body = Buffer.from(await result.Body.transformToByteArray());
+      ensurePublicObjectSize(body.length);
+      return {
+        body,
+        contentType: result.ContentType ?? publicImageContentType(safeKey),
+        ...(result.ETag ? { etag: result.ETag } : {}),
+      };
+    } catch (error) {
+      if (isMissingObjectError(error)) throw new UploadObjectNotFoundError();
+      throw error;
+    }
+  }
+
   async deleteObject(key: string, _visibility: ObjectVisibility): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: normalizeUploadKey(key) }));
   }
@@ -221,6 +277,32 @@ function requireRuntimeCredential(key: string): string {
   const issue = credentialReferenceIssue(value);
   if (issue) throw new Error(`${key} ${issue}.`);
   return value;
+}
+
+function ensurePublicObjectSize(size: number | undefined): void {
+  if (size !== undefined && size > MAX_PUBLIC_PROFILE_PHOTO_BYTES) {
+    throw new Error('Public profile photo exceeds the maximum supported size.');
+  }
+}
+
+function publicImageContentType(key: string): string {
+  const extension = path.extname(key).toLowerCase();
+  if (extension === '.png') return 'image/png';
+  if (extension === '.webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function isMissingObjectError(error: unknown): boolean {
+  if (error instanceof UploadObjectNotFoundError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as {
+    name?: string;
+    Code?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  return candidate.name === 'NoSuchKey'
+    || candidate.Code === 'NoSuchKey'
+    || candidate.$metadata?.httpStatusCode === 404;
 }
 
 export function createUploadService(): UploadService {

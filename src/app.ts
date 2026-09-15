@@ -21,6 +21,7 @@ import reportsRouter, { companyReportsRouter } from './modules/reports/reports.r
 import notificationsRouter from './modules/notifications/notifications.router';
 import adminsRouter from './modules/admins/admins.router';
 import taxonomyRouter from './modules/taxonomy/taxonomy.router';
+import publicUploadsRouter from './modules/uploads/public-uploads.router';
 import { logger } from './lib/logger';
 import { Errors } from './lib/errors';
 import { assignCompatibilityRouter } from './modules/assignments/assignments.router';
@@ -62,9 +63,7 @@ app.use((_req, res, next) => {
 app.use(cors(corsOptions));
 app.use(requestContextMiddleware);
 app.use(express.json({ limit: '1mb' }));
-if (!isProduction && (process.env.STORAGE_PROVIDER ?? 'local') === 'local') {
-  app.use('/uploads', express.static(path.resolve(process.env.LOCAL_UPLOAD_DIR ?? 'uploads')));
-}
+app.use('/uploads', publicUploadsRouter);
 const globalLimiter = createRateLimitMiddleware({
   scope: 'global',
   windowMs: 15 * 60 * 1000,
