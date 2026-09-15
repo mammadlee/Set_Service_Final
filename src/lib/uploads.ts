@@ -41,6 +41,13 @@ export class UploadObjectNotFoundError extends Error {
   }
 }
 
+export class UploadObjectTooLargeError extends Error {
+  constructor() {
+    super('Public profile photo exceeds the maximum supported size.');
+    this.name = 'UploadObjectTooLargeError';
+  }
+}
+
 export type ObjectVisibility = 'public' | 'private';
 
 export interface UploadService {
@@ -241,9 +248,21 @@ class ObjectStorageUploadService implements UploadService {
         Key: safeKey,
       }));
       if (!result.Body) throw new UploadObjectNotFoundError();
-      ensurePublicObjectSize(result.ContentLength);
-      const body = Buffer.from(await result.Body.transformToByteArray());
-      ensurePublicObjectSize(body.length);
+      const responseBody = result.Body as typeof result.Body & { destroy?: () => void };
+      if (
+        result.ContentLength !== undefined
+        && result.ContentLength > MAX_PUBLIC_PROFILE_PHOTO_BYTES
+      ) {
+        responseBody.destroy?.();
+        throw new UploadObjectTooLargeError();
+      }
+      let body: Buffer;
+      try {
+        body = Buffer.from(await responseBody.transformToByteArray());
+        ensurePublicObjectSize(body.length);
+      } finally {
+        responseBody.destroy?.();
+      }
       return {
         body,
         contentType: result.ContentType ?? publicImageContentType(safeKey),
@@ -281,7 +300,7 @@ function requireRuntimeCredential(key: string): string {
 
 function ensurePublicObjectSize(size: number | undefined): void {
   if (size !== undefined && size > MAX_PUBLIC_PROFILE_PHOTO_BYTES) {
-    throw new Error('Public profile photo exceeds the maximum supported size.');
+    throw new UploadObjectTooLargeError();
   }
 }
 

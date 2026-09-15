@@ -322,7 +322,11 @@ export function isOutboxHeartbeatFresh(raw: string | null, now = Date.now()): bo
   if (!raw) return false;
   try {
     const parsed = JSON.parse(raw) as { timestamp?: unknown; healthy?: unknown };
-    if (parsed.healthy !== true || typeof parsed.timestamp !== 'string') return false;
+    // API readiness answers whether the separate worker is alive and can still
+    // report state. Delivery failures and retained dead letters remain visible
+    // through the worker /health endpoint and metrics, but must not permanently
+    // remove an otherwise healthy API instance from service.
+    if (typeof parsed.healthy !== 'boolean' || typeof parsed.timestamp !== 'string') return false;
     const timestamp = Date.parse(parsed.timestamp);
     return Number.isFinite(timestamp)
       && timestamp <= now + 5_000

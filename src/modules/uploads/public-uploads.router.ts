@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from 'express';
 import {
   createUploadService,
   UploadObjectNotFoundError,
+  UploadObjectTooLargeError,
 } from '../../lib/uploads';
 import { Errors } from '../../lib/errors';
 
@@ -43,6 +44,12 @@ router.get('/*', async (req: Request, res: Response, next: NextFunction) => {
   } catch (error) {
     if (error instanceof UploadObjectNotFoundError) {
       return next(Errors.notFound('Profile photo not found.', 'PROFILE_PHOTO_NOT_FOUND'));
+    }
+    if (error instanceof UploadObjectTooLargeError) {
+      return next(Errors.payloadTooLarge(
+        'Profile photo exceeds the maximum supported size.',
+        'PROFILE_PHOTO_TOO_LARGE',
+      ));
     }
     return next(error);
   }

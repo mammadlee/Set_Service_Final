@@ -1303,7 +1303,7 @@ paths:
     get:
       tags: [Operations]
       summary: Dependency readiness probe
-      description: Returns 200 only when PostgreSQL, configured Redis, and the in-process or separately deployed outbox worker heartbeat are ready.
+      description: Returns 200 only when PostgreSQL and configured Redis are reachable and the in-process outbox processor is healthy or the separately deployed outbox worker heartbeat is fresh. Historical dead-letter delivery failures remain exposed by the worker health endpoint and metrics without permanently removing the API from service.
       servers:
         - url: http://localhost:3000
         - url: https://api.setservice.az

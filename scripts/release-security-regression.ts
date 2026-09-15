@@ -131,9 +131,22 @@ function testOutboxHealthContract(): void {
     healthy: true,
     timestamp: new Date(now - 60_000).toISOString(),
   });
+  const freshWithDeadLetters = JSON.stringify({
+    healthy: false,
+    timestamp: new Date(now - 5_000).toISOString(),
+  });
   assert.equal(isOutboxHeartbeatFresh(fresh, now), true);
+  assert.equal(
+    isOutboxHeartbeatFresh(freshWithDeadLetters, now),
+    true,
+    'Historical delivery failures must not hide a live worker from API readiness.',
+  );
   assert.equal(isOutboxHeartbeatFresh(stale, now), false);
   assert.equal(isOutboxHeartbeatFresh('{"healthy":false}', now), false);
+  assert.equal(
+    isOutboxHeartbeatFresh(JSON.stringify({ timestamp: new Date(now).toISOString() }), now),
+    false,
+  );
   assert.equal(isOutboxHeartbeatFresh('not-json', now), false);
   assert.equal(
     isOutboxDeliveryStateHealthy({ lastBatchDeliveryFailures: 0, deadEvents: 0 }),
