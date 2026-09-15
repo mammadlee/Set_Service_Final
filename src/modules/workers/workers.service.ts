@@ -73,6 +73,7 @@ export async function getMyWorker(userId: string) {
 export async function updateMyWorker(
   userId: string,
   data: {
+    full_name?: string;
     skills?: unknown;
     languages?: unknown;
     availability?: boolean;
@@ -94,6 +95,9 @@ export async function updateMyWorker(
 
   const { email, position_ids } = data;
   const workerData: Prisma.WorkerUpdateInput = {};
+  if (data.full_name !== undefined) {
+    workerData.user = { update: { name: data.full_name.trim() } };
+  }
   if (data.skills !== undefined) workerData.skills = data.skills as Prisma.InputJsonValue;
   if (data.languages !== undefined) workerData.languages = data.languages as Prisma.InputJsonValue;
   if (data.availability !== undefined) workerData.availability = data.availability;

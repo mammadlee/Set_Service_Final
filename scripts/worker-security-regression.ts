@@ -163,6 +163,7 @@ async function withPrismaMethod<T>(
 
 async function testStrictWorkerPatchAllowlist(): Promise<void> {
   const valid = UpdateWorkerSchema.safeParse({
+    full_name: '  Updated Worker Name  ',
     skills: ['Banquet service'],
     languages: ['az', 'en'],
     availability: true,
@@ -178,6 +179,10 @@ async function testStrictWorkerPatchAllowlist(): Promise<void> {
     whatsapp_available: true,
   });
   assert.equal(valid.success, true);
+  assert.equal(valid.data?.full_name, 'Updated Worker Name');
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: ' ' }).success, false);
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: 'A' }).success, false);
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: 'A'.repeat(121) }).success, false);
 
   const forbiddenFields = [
     'status',
@@ -214,6 +219,54 @@ async function testStrictWorkerPatchAllowlist(): Promise<void> {
     }).success,
     false,
     'Nested PATCH objects must also reject unknown fields.',
+  );
+}
+
+async function testWorkerNameUpdateIsOwnedAndPersisted(): Promise<void> {
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+  let updateQuery: any;
+
+  await withPrismaMethod(
+    workerTarget,
+    'findUnique',
+    async (query: any) => query.where.user_id === ownerUserId
+      ? { id: workerId, user_id: ownerUserId, status: 'approved', deleted_at: null }
+      : null,
+    async () => withPrismaMethod(
+      workerTarget,
+      'update',
+      async (query: any) => {
+        updateQuery = query;
+        return {
+          ...fullWorkerRecord,
+          user: {
+            ...fullWorkerRecord.user,
+            name: query.data.user.update.name,
+          },
+        };
+      },
+      async () => {
+        const updated = await WorkersService.updateMyWorker(ownerUserId, {
+          full_name: '  Persisted Worker Name  ',
+        });
+        assert.equal(updated.name, 'Persisted Worker Name');
+      },
+    ),
+  );
+
+  assert.equal(updateQuery.where.user_id, ownerUserId);
+  assert.equal(updateQuery.data.user.update.name, 'Persisted Worker Name');
+  await withPrismaMethod(
+    workerTarget,
+    'findUnique',
+    async () => null,
+    async () => expectAppError(
+      () => WorkersService.updateMyWorker(otherWorkerUserId, {
+        full_name: 'Unauthorized Name',
+      }),
+      404,
+      'WORKER_NOT_FOUND',
+    ),
   );
 }
 
@@ -779,6 +832,7 @@ async function testLocalQuarantinePromotionAndCleanup(): Promise<void> {
 
 async function main(): Promise<void> {
   await testStrictWorkerPatchAllowlist();
+  await testWorkerNameUpdateIsOwnedAndPersisted();
   await testMetadataDoesNotLeakPublicDocumentUrls();
   await testDocumentAuthorization();
   await testSignedUrlExpiryAndTamperResistance();

@@ -44,7 +44,75 @@ void main() {
       expect(captured?.data, {'confirm': true});
     },
   );
+
+  test(
+    'profile update sends the trimmed full name and parses it back',
+    () async {
+      RequestOptions? captured;
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test/v1'));
+      dio.httpClientAdapter = _CallbackAdapter((options) async {
+        captured = options;
+        return ResponseBody.fromString(
+          jsonEncode(_workerProfile('Düzəldilmiş Ad Soyad')),
+          200,
+          headers: {
+            Headers.contentTypeHeader: ['application/json'],
+          },
+        );
+      });
+      final coordinator = SessionCoordinator();
+      addTearDown(coordinator.dispose);
+      final client = ApiClient(
+        baseUrl: 'https://example.test/v1',
+        tokenStorage: _MemoryTokenStorage(_jwt(), 'refresh-token'),
+        expectedRole: 'worker',
+        sessionCoordinator: coordinator,
+        dioOverride: dio,
+        refreshDioOverride: Dio(
+          BaseOptions(baseUrl: 'https://example.test/v1'),
+        ),
+      );
+
+      final updated = await WorkerRepository(apiClient: client).updateProfile(
+        fullName: '  Düzəldilmiş Ad Soyad  ',
+        email: null,
+        positionIds: const [],
+        skills: const [],
+        languages: const [],
+        workHistorySummary: '',
+        workHistory: const [],
+        gender: null,
+        whatsappAvailable: false,
+      );
+
+      expect(captured?.method, 'PATCH');
+      expect(captured?.path, '/workers/me');
+      expect(
+        (captured?.data as Map<String, dynamic>)['full_name'],
+        'Düzəldilmiş Ad Soyad',
+      );
+      expect(updated.name, 'Düzəldilmiş Ad Soyad');
+    },
+  );
 }
+
+Map<String, dynamic> _workerProfile(String name) => {
+  'id': 'worker-1',
+  'name': name,
+  'phone': '+994501112233',
+  'position': 'Ofisiant',
+  'position_ids': <String>[],
+  'positions': <Object>[],
+  'profile_photo_url': null,
+  'skills': <Object>[],
+  'languages': <Object>[],
+  'documents': <Object>[],
+  'work_history': <Object>[],
+  'status': 'approved',
+  'availability': true,
+  'rating_avg': 0,
+  'rating_count': 0,
+};
 
 typedef _AdapterHandler = Future<ResponseBody> Function(RequestOptions options);
 

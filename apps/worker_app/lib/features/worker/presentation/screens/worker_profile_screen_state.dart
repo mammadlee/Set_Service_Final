@@ -287,16 +287,17 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     _hydrated = true;
   }
 
-  Future<void> _saveProfile() async {
+  Future<bool> _saveProfile({String? fullName}) async {
     final workHistory = _experiencePayload();
-    if (workHistory == null) return;
+    if (workHistory == null) return false;
     setState(() {
       _error = null;
       _success = null;
     });
 
     try {
-      await context.read<WorkerRepository>().updateProfile(
+      final updated = await context.read<WorkerRepository>().updateProfile(
+        fullName: fullName,
         email: _emailController.text,
         positionIds: _positionIds,
         skills: _skills,
@@ -306,14 +307,17 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         whatsappAvailable: _whatsappAvailable,
         workHistorySummary: _experienceSummary(workHistory),
       );
-      if (!mounted) return;
+      if (!mounted) return false;
+      context.read<AuthController>().updateWorkerProfile(updated);
       _success = 'Profil yeniləndi.';
       await _refresh();
+      return mounted;
     } on ApiException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } catch (_) {
       if (mounted) setState(() => _error = 'Profil yenilənmədi.');
     }
+    return false;
   }
 
   Future<bool> _requestPhoneOtp(String rawPhone) async {
@@ -655,130 +659,167 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   }
 
   Future<void> _openIdentitySheet(WorkerMe worker) async {
+    final nameController = TextEditingController(text: worker.name);
     var draftGender = _gender;
     var sheetWorker = worker;
     var sheetUploading = false;
     double? sheetProgress;
-    await _showEditSheet(
-      title: 'Şəxsi məlumatlar',
-      icon: Icons.badge_outlined,
-      builder: (setSheetState) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                WorkerAvatar(
-                  radius: 34,
-                  name: sheetWorker.name,
-                  photoUrl: sheetWorker.profilePhotoUrl,
-                  cacheRevision: context
-                      .read<AuthController>()
-                      .workerPhotoRevision,
-                  backgroundColor: BrandColors.accentGold.withValues(
-                    alpha: 0.18,
+    try {
+      await _showEditSheet(
+        title: 'Şəxsi məlumatlar',
+        icon: Icons.badge_outlined,
+        builder: (setSheetState) {
+          final draftName = nameController.text.trim();
+          final displayName = draftName.isEmpty ? sheetWorker.name : draftName;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  WorkerAvatar(
+                    radius: 34,
+                    name: displayName,
+                    photoUrl: sheetWorker.profilePhotoUrl,
+                    cacheRevision: context
+                        .read<AuthController>()
+                        .workerPhotoRevision,
+                    backgroundColor: BrandColors.accentGold.withValues(
+                      alpha: 0.18,
+                    ),
+                    borderColor: BrandColors.accentGold,
                   ),
-                  borderColor: BrandColors.accentGold,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 6),
+                        PremiumChip(
+                          label:
+                              '${sheetWorker.ratingAverage.toStringAsFixed(1)} (${sheetWorker.ratingCount})',
+                          icon: Icons.star_outline,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                key: const ValueKey('worker-profile-full-name-field'),
+                controller: nameController,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.name],
+                maxLength: 120,
+                onChanged: (_) => setSheetState(() {}),
+                decoration: const InputDecoration(
+                  labelText: AppStrings.fullName,
+                  prefixIcon: Icon(Icons.person_outline_rounded),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        sheetWorker.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: 6),
-                      PremiumChip(
-                        label:
-                            '${sheetWorker.ratingAverage.toStringAsFixed(1)} (${sheetWorker.ratingCount})',
-                        icon: Icons.star_outline,
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: sheetUploading
+                    ? null
+                    : () async {
+                        setSheetState(() {
+                          sheetUploading = true;
+                          sheetProgress = null;
+                        });
+                        await _pickAndUploadProfilePhoto(
+                          onProgress: (value) {
+                            setSheetState(() => sheetProgress = value);
+                          },
+                        );
+                        if (!mounted) return;
+                        setSheetState(() {
+                          sheetWorker =
+                              context.read<AuthController>().worker ??
+                              sheetWorker;
+                          sheetUploading = false;
+                          sheetProgress = null;
+                        });
+                      },
+                icon: sheetUploading
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.photo_camera_outlined),
+                label: Text(
+                  sheetUploading
+                      ? sheetProgress == null
+                            ? 'Profil şəkli yüklənir...'
+                            : 'Profil şəkli ${(sheetProgress! * 100).round()}%'
+                      : 'Profil şəklini yenilə',
+                ),
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                InlineMessage(message: _error!, kind: InlineMessageKind.error),
+              ],
+              if (_success != null) ...[
+                const SizedBox(height: 12),
+                InlineMessage(
+                  message: _success!,
+                  kind: InlineMessageKind.success,
                 ),
               ],
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: sheetUploading
-                  ? null
-                  : () async {
-                      setSheetState(() {
-                        sheetUploading = true;
-                        sheetProgress = null;
-                      });
-                      await _pickAndUploadProfilePhoto(
-                        onProgress: (value) {
-                          setSheetState(() => sheetProgress = value);
-                        },
-                      );
-                      if (!mounted) return;
-                      setSheetState(() {
-                        sheetWorker =
-                            context.read<AuthController>().worker ??
-                            sheetWorker;
-                        sheetUploading = false;
-                        sheetProgress = null;
-                      });
-                    },
-              icon: sheetUploading
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.photo_camera_outlined),
-              label: Text(
-                sheetUploading
-                    ? sheetProgress == null
-                          ? 'Profil şəkli yüklənir...'
-                          : 'Profil şəkli ${(sheetProgress! * 100).round()}%'
-                    : 'Profil şəklini yenilə',
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
-              InlineMessage(message: _error!, kind: InlineMessageKind.error),
-            ],
-            if (_success != null) ...[
-              const SizedBox(height: 12),
-              InlineMessage(
-                message: _success!,
-                kind: InlineMessageKind.success,
+              const SizedBox(height: 18),
+              _SectionTitle(icon: Icons.wc_outlined, title: 'Cins'),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilterChip(
+                    label: const Text('Kişi'),
+                    selected: draftGender == 'male',
+                    onSelected: (_) =>
+                        setSheetState(() => draftGender = 'male'),
+                  ),
+                  FilterChip(
+                    label: const Text('Qadın'),
+                    selected: draftGender == 'female',
+                    onSelected: (_) =>
+                        setSheetState(() => draftGender = 'female'),
+                  ),
+                ],
               ),
             ],
-            const SizedBox(height: 18),
-            _SectionTitle(icon: Icons.wc_outlined, title: 'Cins'),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilterChip(
-                  label: const Text('Kişi'),
-                  selected: draftGender == 'male',
-                  onSelected: (_) => setSheetState(() => draftGender = 'male'),
-                ),
-                FilterChip(
-                  label: const Text('Qadın'),
-                  selected: draftGender == 'female',
-                  onSelected: (_) =>
-                      setSheetState(() => draftGender = 'female'),
-                ),
-              ],
-            ),
-          ],
-        );
-      },
-      onSave: () async {
-        setState(() => _gender = draftGender);
-        await _saveProfile();
-        return true;
-      },
-    );
+          );
+        },
+        onSave: () async {
+          final fullName = nameController.text.trim();
+          if (fullName.length < 2) {
+            setState(() {
+              _error = AppStrings.fullNameRequired;
+              _success = null;
+            });
+            return false;
+          }
+          if (fullName.length > 120) {
+            setState(() {
+              _error = 'Ad və soyad 120 simvoldan uzun ola bilməz.';
+              _success = null;
+            });
+            return false;
+          }
+          setState(() => _gender = draftGender);
+          return _saveProfile(fullName: fullName);
+        },
+      );
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      nameController.dispose();
+    }
   }
 
   Future<void> _openContactSheet(WorkerMe worker) async {
@@ -909,8 +950,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
             _phoneOtpSent = draftPhoneOtpSent;
             _emailOtpSent = draftEmailOtpSent;
           });
-          await _saveProfile();
-          return mounted;
+          return _saveProfile();
         },
       );
     } finally {
@@ -938,8 +978,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       ),
       onSave: () async {
         setState(() => _languages = draftLanguages);
-        await _saveProfile();
-        return true;
+        return _saveProfile();
       },
     );
   }
@@ -960,8 +999,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       ),
       onSave: () async {
         setState(() => _positionIds = draftPositionIds);
-        await _saveProfile();
-        return true;
+        return _saveProfile();
       },
     );
   }
@@ -1002,8 +1040,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         ),
         onSave: () async {
           setState(() => _skills = draftSkills);
-          await _saveProfile();
-          return true;
+          return _saveProfile();
         },
       );
     } finally {
@@ -1039,8 +1076,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
           final payload = _experiencePayloadFrom(drafts, reportErrors: true);
           if (payload == null) return false;
           setState(() => _replaceExperiences(payload));
-          await _saveProfile();
-          return true;
+          return _saveProfile();
         },
       );
     } finally {

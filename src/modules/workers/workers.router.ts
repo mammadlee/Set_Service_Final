@@ -28,6 +28,7 @@ const upload = multer({
 });
 
 export const UpdateWorkerSchema = z.object({
+  full_name: z.string().trim().min(2).max(120).optional(),
   email: z.string().trim().email().max(254).nullable().optional(),
   position_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
   skills: z.array(z.union([

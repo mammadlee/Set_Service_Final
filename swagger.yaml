@@ -1897,6 +1897,7 @@ paths:
             schema:
               type: object
               properties:
+                full_name: { type: string, minLength: 2, maxLength: 120, description: Trimmed worker full name. }
                 skills: { type: array, items: { $ref: '#/components/schemas/Skill' } }
                 languages: { type: array, items: { type: string } }
                 email: { type: string, format: email, nullable: true, description: Optional worker email. Must be unique when provided. }

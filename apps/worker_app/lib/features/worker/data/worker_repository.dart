@@ -26,6 +26,7 @@ class WorkerRepository {
   }
 
   Future<WorkerMe> updateProfile({
+    String? fullName,
     required String? email,
     required List<String> positionIds,
     required List<String> skills,
@@ -39,6 +40,7 @@ class WorkerRepository {
       final response = await _dio.patch<Map<String, dynamic>>(
         '/workers/me',
         data: {
+          if (fullName != null) 'full_name': fullName.trim(),
           'email': email?.trim().isEmpty == true ? null : email?.trim(),
           if (positionIds.isNotEmpty) 'position_ids': positionIds,
           'skills': skills,
