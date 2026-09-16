@@ -581,6 +581,7 @@ async function main() {
   let workerId!: string;
   let workerOtpChallenge!: string;
   let approvalCompanyId!: string;
+  let approvalCompanyEnrollmentToken!: string;
   let approvalCompanyOtpChallenge!: string;
   let capacityWorkerId!: string;
   let adminTokens!: Tokens;
@@ -746,7 +747,7 @@ async function main() {
     expectStatus(me.response, me.json, 200);
   });
 
-  await step('Company OTP verification alone does not make the account approvable', async () => {
+  await step('Incomplete company phone OTP flow creates no company account', async () => {
     const registration = await postAuthFlow('/auth/company/register', {
       name: `Approval Test Company ${RUN_ID}`,
       contact_name: 'Approval Test Contact',
@@ -754,9 +755,14 @@ async function main() {
       phone: approvalCompanyPhone,
     });
     expectStatus(registration.response, registration.json, 201);
-    approvalCompanyId = expectString(
+    approvalCompanyEnrollmentToken = expectString(
+      unwrapData(registration.json)?.enrollment_token ?? registration.json?.enrollment_token,
+      'approval test company enrollment token',
+    );
+    expectEqual(
       unwrapData(registration.json)?.company_id ?? registration.json?.company_id,
-      'approval test company id',
+      undefined,
+      'incomplete registration company id',
     );
 
     const verify = await postAuthFlow('/auth/verify-otp', {
@@ -768,18 +774,54 @@ async function main() {
     const payload = expectObject(unwrapData(verify.json), 'company OTP verification');
     approvalCompanyOtpChallenge = expectString(payload.otp_challenge, 'company OTP challenge');
 
-    const approval = await patch(`/admin/companies/${approvalCompanyId}/approve`, {}, adminTokens.accessToken);
-    expectStatus(approval.response, approval.json, 409);
-    expectErrorCode(approval.json, 'REGISTRATION_INCOMPLETE');
+    const companies = await get(
+      `/admin/companies?status=pending_approval&search=${encodeURIComponent(approvalCompanyPhone)}`,
+      adminTokens.accessToken,
+    );
+    expectStatus(companies.response, companies.json, 200);
+    expectEqual(
+      (unwrapData(companies.json)?.data ?? companies.json?.data ?? []).length,
+      0,
+      'incomplete phone OTP company list result',
+    );
   });
 
-  await step('Company becomes approvable only after password creation', async () => {
+  await step('Phone verification and password atomically finalize pending company', async () => {
     const completion = await postAuthFlow('/auth/company/complete-registration', {
-      email: approvalCompanyEmail,
+      enrollment_token: approvalCompanyEnrollmentToken,
       otp_challenge: approvalCompanyOtpChallenge,
       password: WORKER_PASSWORD,
     });
-    expectStatus(completion.response, completion.json, 200);
+    expectStatus(completion.response, completion.json, 201);
+    approvalCompanyId = expectString(
+      unwrapData(completion.json)?.company_id ?? completion.json?.company_id,
+      'approval test company id',
+    );
+    expectEqual(
+      unwrapData(completion.json)?.status ?? completion.json?.status,
+      'pending_approval',
+      'finalized company status',
+    );
+
+    const companies = await get(
+      `/admin/companies?status=pending_approval&search=${encodeURIComponent(approvalCompanyPhone)}`,
+      adminTokens.accessToken,
+    );
+    expectStatus(companies.response, companies.json, 200);
+    expectEqual(
+      (unwrapData(companies.json)?.data ?? companies.json?.data ?? []).length,
+      1,
+      'finalized company list result',
+    );
+  });
+
+  await step('Pending company is blocked until admin approval', async () => {
+    const pendingLogin = await postAuthFlow('/auth/company/login', {
+      email: approvalCompanyEmail,
+      password: WORKER_PASSWORD,
+    });
+    expectStatus(pendingLogin.response, pendingLogin.json, 403);
+    expectErrorCode(pendingLogin.json, 'PENDING_APPROVAL');
 
     const approval = await patch(`/admin/companies/${approvalCompanyId}/approve`, {}, adminTokens.accessToken);
     expectStatus(approval.response, approval.json, 200);

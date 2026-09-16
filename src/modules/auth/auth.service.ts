@@ -13,6 +13,12 @@ import { normalizePhone } from '../../lib/phone';
 import { hashPassword, normalizeEmail, verifyPassword } from '../../lib/password';
 import { recordAudit } from '../../lib/audit';
 import {
+  createCompanyEnrollment,
+  deleteCompanyEnrollment,
+  readCompanyEnrollment,
+} from '../../lib/company-enrollment';
+import { logger } from '../../lib/logger';
+import {
   assertOtpCooldown,
   assertOtpNotBlocked,
   blockOtp,
@@ -608,95 +614,128 @@ export async function registerCompany(input: CompanyRegisterInput, ip?: string) 
   const email = normalizeEmail(input.email);
   const existing = await prisma.user.findFirst({
     where: { OR: [{ phone }, { email }] },
-    include: { company: true },
+    select: { phone: true, email: true },
   });
-  const canResumeRegistration = existing?.role === 'company'
-    && existing.phone === phone
-    && existing.email === email
-    && existing.company?.status === 'pending_approval'
-    && !existing.password_set_at;
-
-  if (canResumeRegistration && existing.company) {
-    await requestOtp({ phone, purpose: 'company_registration', user_id: existing.id, ip_address: ip });
-    return {
-      user_id: existing.id,
-      company_id: existing.company.id,
-      status: existing.company.status,
-      otp_sent: true,
-    };
-  }
 
   if (existing?.phone === phone) throw Errors.conflict('Bu telefon nömrəsindən istifadə etmək mümkün deyil.', 'PHONE_ALREADY_REGISTERED');
   if (existing?.email === email) throw Errors.conflict('Bu email ünvanından istifadə etmək mümkün deyil.', 'EMAIL_ALREADY_REGISTERED');
 
-  const user = await prisma.user.create({
-    data: {
-      phone,
-      email,
-      role: 'company' as Role,
-      name: input.contact_name,
-      company: {
-        create: {
-          name: input.name,
-          status: 'pending_approval' as CompanyStatus,
-        },
-      },
-    },
-    include: { company: true },
+  const enrollmentToken = await createCompanyEnrollment({
+    name: input.name.trim(),
+    contactName: input.contact_name.trim(),
+    email,
+    phone,
+    stage: 'phone_otp_pending',
   });
 
-  await requestOtp({ phone, purpose: 'company_registration', user_id: user.id, ip_address: ip });
-  if (!user.company) {
-    throw new Error('Company profile creation did not return the related company record.');
+  try {
+    await requestOtp({ phone, purpose: 'company_registration', ip_address: ip });
+  } catch (error) {
+    await deleteCompanyEnrollment(enrollmentToken).catch(() => undefined);
+    throw error;
   }
 
   return {
-    user_id: user.id,
-    company_id: user.company.id,
-    company_name: user.company.name,
-    status: user.company.status,
+    enrollment_token: enrollmentToken,
+    status: 'phone_otp_pending',
     otp_sent: true,
+    retry_after_seconds: 60,
   };
 }
 
-export async function completeCompanyRegistration(input: CompanyCompleteRegistrationInput) {
-  const email = normalizeEmail(input.email);
-  const user = await prisma.user.findUnique({ where: { email }, include: { company: true } });
-  if (!user || user.role !== 'company' || !user.company) throw Errors.notFound('Müəssisə profili tapılmadı.', 'COMPANY_NOT_FOUND');
-
+export async function completeCompanyRegistration(
+  input: CompanyCompleteRegistrationInput,
+) {
+  const draft = await readCompanyEnrollment(input.enrollment_token);
   const otp = await verifyOtpProof({
-    target: user.phone,
+    target: draft.phone,
     purpose: 'company_registration',
     otp_code: input.otp_code,
     otp_challenge: input.otp_challenge,
   });
-  if (otp.user_id !== user.id) {
-    throw Errors.unauthorized('OTP bu müəssisə hesabı ilə uyğun gəlmir.', 'OTP_ACCOUNT_NOT_FOUND');
+  if (otp.user_id) {
+    throw Errors.unauthorized('OTP qeydiyyat sessiyası ilə uyğun gəlmir.', 'OTP_ACCOUNT_NOT_FOUND');
   }
 
-  const now = new Date();
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await consumeVerifiedOtp(tx, otp.id, now);
-    await tx.user.update({
-      where: { id: user.id },
-      data: { password_hash: await hashPassword(input.password), password_set_at: now },
-    });
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ phone: draft.phone }, { email: draft.email }] },
+    select: { phone: true, email: true },
   });
+  if (existing?.phone === draft.phone) {
+    throw Errors.conflict(
+      'Bu telefon nömrəsindən istifadə etmək mümkün deyil.',
+      'PHONE_ALREADY_REGISTERED',
+    );
+  }
+  if (existing?.email === draft.email) {
+    throw Errors.conflict(
+      'Bu email ünvanından istifadə etmək mümkün deyil.',
+      'EMAIL_ALREADY_REGISTERED',
+    );
+  }
 
-  return {
-    user_id: user.id,
-    company_id: user.company.id,
-    status: user.company.status,
-    password_set: true,
-    registration_access_token: signRegistrationToken({
-      sub: user.id,
-      role: user.role,
-      session_version: user.session_version,
-    }),
-    email_verified: Boolean(user.email_verified_at),
-    required_document_types: [],
-    message: 'OTP təsdiqləndi. Müəssisə admin təsdiqini gözləyir.',
-  };
+  const passwordHash = await hashPassword(input.password);
+  const now = new Date();
+  try {
+    const user = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.user.create({
+        data: {
+          phone: draft.phone,
+          email: draft.email,
+          password_hash: passwordHash,
+          password_set_at: now,
+          role: 'company' as Role,
+          name: draft.contactName,
+          company: {
+            create: {
+              name: draft.name,
+              status: 'pending_approval' as CompanyStatus,
+            },
+          },
+        },
+        include: { company: true },
+      });
+      await consumeVerifiedOtp(tx, otp.id, now);
+      await tx.otpCode.updateMany({
+        where: { id: otp.id },
+        data: { user_id: created.id },
+      });
+      return created;
+    });
+
+    if (!user.company) {
+      throw new Error('Company profile creation did not return the related company record.');
+    }
+
+    await deleteCompanyEnrollment(input.enrollment_token).catch((error) => {
+      logger.warn('company_enrollment_cleanup_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    return {
+      user_id: user.id,
+      company_id: user.company.id,
+      company_name: user.company.name,
+      status: user.company.status,
+      message: 'Hesabınız admin təsdiqini gözləyir.',
+    };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const target = String(error.meta?.target ?? '');
+      if (target.includes('phone')) {
+        throw Errors.conflict(
+          'Bu telefon nömrəsindən istifadə etmək mümkün deyil.',
+          'PHONE_ALREADY_REGISTERED',
+        );
+      }
+      throw Errors.conflict(
+        'Bu email ünvanından istifadə etmək mümkün deyil.',
+        'EMAIL_ALREADY_REGISTERED',
+      );
+    }
+    throw error;
+  }
 }
 
 export async function loginCompany(input: CompanyLoginInput, ip?: string) {
@@ -720,53 +759,6 @@ export async function loginCompany(input: CompanyLoginInput, ip?: string) {
   }
 
   return buildTokenResponse(user.id, user.role, ip);
-}
-
-/**
- * Re-opens only the narrow post-OTP enrollment session for a company that is
- * still waiting for approval. This deliberately does not create a normal web
- * session or bypass company approval; the returned registration token is
- * accepted only by requireEnrollmentAuth routes.
- */
-export async function resumeCompanyEnrollment(input: CompanyLoginInput) {
-  const email = normalizeEmail(input.email);
-  const user = await prisma.user.findUnique({ where: { email }, include: { company: true } });
-
-  if (!user || user.role !== 'company' || !user.company || !(await verifyPassword(input.password, user.password_hash))) {
-    await recordLoginFailed(null, 'company', 'company_enrollment', email, { reason: 'invalid_credentials' });
-    throw Errors.unauthorized('Email və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
-  }
-  if (!user.is_active || user.deleted_at || user.company.deleted_at) {
-    throw Errors.forbidden('Hesab aktiv deyil.', 'ACCOUNT_INACTIVE');
-  }
-  if (!user.password_set_at) {
-    throw Errors.conflict(
-      'Müəssisə qeydiyyatını əvvəlcə telefon OTP-si ilə tamamlayın.',
-      'COMPANY_REGISTRATION_INCOMPLETE',
-      { status: user.company.status },
-    );
-  }
-  if (user.company.status !== 'pending_approval') {
-    throw Errors.forbidden(
-      'Bu müəssisə hesabı qeydiyyat sənədi qəbul etmir.',
-      'COMPANY_ENROLLMENT_CLOSED',
-      { status: user.company.status },
-    );
-  }
-
-  return {
-    user_id: user.id,
-    company_id: user.company.id,
-    company_name: user.company.name,
-    status: user.company.status,
-    registration_access_token: signRegistrationToken({
-      sub: user.id,
-      role: user.role,
-      session_version: user.session_version,
-    }),
-    email_verified: Boolean(user.email_verified_at),
-    required_document_types: [],
-  };
 }
 
 export async function forgotCompanyPassword(input: CompanyForgotPasswordInput, ip?: string) {
@@ -846,7 +838,16 @@ export async function verifyOtp(input: VerifyOtpInput, ip?: string) {
     : normalizePhone(input.phone ?? '');
   const otp = await verifyOtpCode(target, input.otp_code, input.purpose);
   if (!otp.user_id) {
-    throw Errors.unauthorized('OTP hesabla uyğun gəlmir.', 'OTP_ACCOUNT_NOT_FOUND');
+    if (otp.purpose !== 'company_registration' || target.startsWith('email:')) {
+      throw Errors.unauthorized('OTP hesabla uyğun gəlmir.', 'OTP_ACCOUNT_NOT_FOUND');
+    }
+    return {
+      otp_verified: true,
+      password_required: true,
+      purpose: otp.purpose,
+      otp_challenge: signOtpChallenge(otp),
+      message: 'OTP təsdiqləndi. Qeydiyyatı tamamlamaq üçün şifrə yaradın.',
+    };
   }
   const user = await prisma.user.findFirst({
     where: otp.purpose === 'worker_phone_change'
@@ -1588,6 +1589,11 @@ function assertWorkerCanLogin(status?: WorkerStatus): void {
 
 function assertCompanyCanLogin(status?: CompanyStatus): void {
   if (status === 'approved') return;
+  if (status === 'pending_approval') {
+    throw Errors.forbidden('Hesabınız admin təsdiqini gözləyir.', 'PENDING_APPROVAL', {
+      status,
+    });
+  }
   throw Errors.forbidden('Müəssisə hesabı giriş üçün təsdiqlənməyib.', 'COMPANY_NOT_APPROVED', {
     status: status ?? 'unknown',
   });

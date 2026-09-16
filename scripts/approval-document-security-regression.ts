@@ -40,8 +40,8 @@ function main() {
   const company = read('src/modules/companies/companies.service.ts');
   const companyRouter = read('src/modules/companies/companies.router.ts');
   const authRouter = read('src/modules/auth/auth.router.ts');
+  const companyEnrollment = read('src/lib/company-enrollment.ts');
   const adminPage = read('apps/admin_panel/src/features/companies/CompanyDetailPage.tsx');
-  const companyEnrollmentPage = read('apps/company_dashboard/src/features/auth/RegistrationPage.tsx');
   const companyAuthService = read('apps/company_dashboard/src/features/auth/auth.service.ts');
   const companyHttp = read('apps/company_dashboard/src/shared/api/http.ts');
 
@@ -60,26 +60,36 @@ function main() {
   assert.ok(workerRouter.includes('work_history_summary:'));
   assert.ok(workerRouter.includes('work_history: z.array'));
   assert.ok(!company.includes("missing.push('document:registration_certificate')"));
-  assert.ok(company.includes("'verified_email'"));
+  const companyApprovalPrerequisites = company.slice(
+    company.indexOf('function companyApprovalPrerequisites'),
+    company.indexOf('function parseCompanyDocumentType'),
+  );
+  assert.ok(!companyApprovalPrerequisites.includes("'verified_email'"));
   assert.ok(company.includes("event: 'document_download_authorized'"));
   assert.ok(company.includes('object_key_hash: crypto.createHash'));
   assert.ok(!company.includes('docs_url: company.docs_url'));
   assert.ok(companyRouter.includes("router.post('/companies/me/documents'"));
   assert.ok(companyRouter.includes("router.get('/admin/companies/:id/documents/:type/download'"));
-  assert.ok(authRouter.includes("'/company/web-enrollment-login'"));
   assert.ok(authRouter.includes('requireTrustedWebOrigin'));
-  assert.ok(authRouter.includes("res.set('Cache-Control', 'private, no-store, max-age=0')"));
-  assert.ok(auth.includes('export async function resumeCompanyEnrollment'));
-  assert.ok(auth.includes("user.company.status !== 'pending_approval'"));
-  assert.ok(auth.includes("'COMPANY_ENROLLMENT_CLOSED'"));
-  assert.ok(auth.includes('required_document_types: []'));
-  assert.ok(companyAuthService.includes("'/auth/company/web-enrollment-login'"));
-  assert.ok(!companyAuthService.includes("body.set('type', 'registration_certificate')"));
-  assert.ok(!companyEnrollmentPage.includes('registration_certificate'));
-  assert.ok(companyEnrollmentPage.includes("setStage('complete')"));
-  assert.ok(companyHttp.includes('options.bearerToken'));
-  assert.ok(!companyEnrollmentPage.includes('localStorage'));
-  assert.ok(!companyEnrollmentPage.includes('sessionStorage'));
+  assert.ok(!authRouter.includes("'/company/confirm-registration-email'"));
+  assert.ok(!authRouter.includes("'/company/web-enrollment-login'"));
+  assert.ok(!auth.includes('resumeCompanyEnrollment'));
+  assert.ok(auth.includes('createCompanyEnrollment'));
+  assert.ok(auth.includes("stage: 'phone_otp_pending'"));
+  assert.ok(!auth.includes("stage: 'email_otp_pending'"));
+  assert.ok(auth.includes('completeCompanyRegistration'));
+  assert.ok(auth.includes('const created = await tx.user.create'));
+  assert.ok(auth.includes("status: 'pending_approval' as CompanyStatus"));
+  assert.ok(auth.includes("'PENDING_APPROVAL'"));
+  assert.ok(companyEnrollment.includes('COMPANY_ENROLLMENT_TTL_MS'));
+  assert.ok(companyEnrollment.includes("process.env.NODE_ENV === 'production'"));
+  assert.ok(!companyAuthService.includes('/auth/company/register'));
+  assert.ok(!companyAuthService.includes('resumeCompanyEnrollment'));
+  assert.ok(!companyHttp.includes('bearerToken'));
+  assert.equal(
+    fs.existsSync(path.join(process.cwd(), 'apps/company_dashboard/src/features/auth/RegistrationPage.tsx')),
+    false,
+  );
   assert.ok(!adminPage.includes('approvalBlockedByDocument'));
   assert.ok(!adminPage.includes('registrationCertificate'));
   assert.ok(!adminPage.includes('company.data.docs_url'));

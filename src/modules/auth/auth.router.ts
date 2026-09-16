@@ -112,7 +112,7 @@ router.post('/company/register', validate(CompanyRegisterSchema), async (req: Re
 
 router.post('/company/complete-registration', validate(CompanyCompleteRegistrationSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await AuthService.completeCompanyRegistration(req.body));
+    res.status(201).json(await AuthService.completeCompanyRegistration(req.body));
   } catch (e) { next(e); }
 });
 
@@ -121,19 +121,6 @@ router.post('/company/login', validate(CompanyLoginSchema), async (req: Request,
     res.json(await AuthService.loginCompany(req.body, clientIp(req)));
   } catch (e) { next(e); }
 });
-
-router.post(
-  '/company/web-enrollment-login',
-  requireTrustedWebOrigin,
-  validate(CompanyLoginSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      res.set('Cache-Control', 'private, no-store, max-age=0');
-      res.set('Pragma', 'no-cache');
-      res.json(await AuthService.resumeCompanyEnrollment(req.body));
-    } catch (e) { next(e); }
-  },
-);
 
 router.post(
   '/company/web-login',

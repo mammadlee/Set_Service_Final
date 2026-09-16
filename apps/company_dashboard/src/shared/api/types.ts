@@ -46,18 +46,6 @@ export interface TokenResponse {
   user: AuthUser;
 }
 
-export interface CompanyEnrollmentSession {
-  user_id: string;
-  company_id: string;
-  company_name?: string;
-  status: CompanyStatus;
-  registration_access_token: string;
-  email_verified: boolean;
-  required_document_types: string[];
-  password_set?: boolean;
-  message?: string;
-}
-
 export interface TaxonomyDepartment {
   id: string;
   slug: string;

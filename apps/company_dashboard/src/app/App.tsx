@@ -7,7 +7,6 @@ import { AttendancePage } from '../features/attendance/AttendancePage';
 import { QrTokensPage } from '../features/attendance/QrTokensPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { PendingApprovalPage } from '../features/auth/PendingApprovalPage';
-import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { NotificationsPage } from '../features/notifications/NotificationsPage';
 import { OrderDetailPage } from '../features/orders/OrderDetailPage';
@@ -17,7 +16,6 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegistrationPage />} />
       <Route path="/pending-approval" element={<PendingApprovalPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<CompanyLayout />}>

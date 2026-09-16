@@ -100,7 +100,7 @@ class AppStrings {
   static const companyLoginSubtitle =
       'Müəssisə hesabınıza e-poçt və şifrə ilə daxil olun.';
   static const companyPendingApprovalMessage =
-      'Müəssisə hesabınız admin təsdiqini gözləyir.';
+      'Hesabınız admin təsdiqini gözləyir.';
   static const companyApprovedMessage =
       'Müəssisə hesabınız təsdiqlənib. Sifariş yarada bilərsiniz.';
   static const companyRejectedMessage =
@@ -522,6 +522,7 @@ class AppStrings {
         'OTP ilə giriş artıq aktiv deyil. Şifrə ilə daxil olun.',
       'WORKER_NOT_APPROVED' => pendingApprovalMessage,
       'COMPANY_NOT_APPROVED' => companyPendingApprovalMessage,
+      'PENDING_APPROVAL' => companyPendingApprovalMessage,
       'ACCOUNT_NOT_APPROVED' => pendingApprovalMessage,
       'ACCOUNT_PENDING_APPROVAL' => pendingApprovalMessage,
       'ACCOUNT_REJECTED' => rejectedMessage,

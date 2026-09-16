@@ -720,6 +720,14 @@ function buildPendingCompanyWhere(filters: ReportQueryInput, dateRange?: Prisma.
   return {
     deleted_at: null,
     status: 'pending_approval',
+    user: {
+      password_set_at: { not: null },
+      is_active: true,
+      deleted_at: null,
+      otp_codes: {
+        some: { purpose: 'company_registration', consumed_at: { not: null } },
+      },
+    },
     ...(dateRange ? { created_at: dateRange } : {}),
     ...(filters.company_id ? { id: filters.company_id } : {}),
   };

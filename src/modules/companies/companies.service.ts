@@ -89,7 +89,24 @@ export async function listCompanies(filters: {
 }) {
   const page = filters.page;
   const limit = filters.limit;
-  const where: Record<string, unknown> = { deleted_at: null };
+  const where: Record<string, unknown> = {
+    deleted_at: null,
+    AND: [{
+      OR: [
+        { status: { not: 'pending_approval' } },
+        {
+          user: {
+            password_set_at: { not: null },
+            is_active: true,
+            deleted_at: null,
+            otp_codes: {
+              some: { purpose: 'company_registration', consumed_at: { not: null } },
+            },
+          },
+        },
+      ],
+    }],
+  };
 
   if (filters.status && !COMPANY_STATUSES.has(filters.status)) {
     throw Errors.badRequest('Invalid company status filter.', 'INVALID_COMPANY_STATUS');
@@ -97,11 +114,13 @@ export async function listCompanies(filters: {
 
   if (filters.status) where.status = filters.status;
   if (filters.search) {
-    where.OR = [
-      { name: { contains: filters.search, mode: 'insensitive' } },
-      { user: { name: { contains: filters.search, mode: 'insensitive' } } },
-      { user: { phone: { contains: filters.search } } },
-    ];
+    (where.AND as Record<string, unknown>[]).push({
+      OR: [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { user: { name: { contains: filters.search, mode: 'insensitive' } } },
+        { user: { phone: { contains: filters.search } } },
+      ],
+    });
   }
 
   const [total, data] = await prisma.$transaction([
@@ -169,7 +188,6 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
         deleted_at: null,
         user: {
           password_set_at: { not: null },
-          email_verified_at: { not: null },
           is_active: true,
           deleted_at: null,
           otp_codes: {
@@ -550,7 +568,6 @@ function companyApprovalPrerequisites(company: {
   if (!company.user.name.trim()) missing.push('contact_name');
   if (!company.user.phone.trim()) missing.push('phone');
   if (!company.name.trim()) missing.push('company_name');
-  if (!company.user.email || !company.user.email_verified_at) missing.push('verified_email');
   return missing;
 }
 

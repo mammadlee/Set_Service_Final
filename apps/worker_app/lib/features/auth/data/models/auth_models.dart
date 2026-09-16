@@ -94,12 +94,14 @@ class OtpStartResult {
     required this.otpSent,
     this.status,
     this.workerId,
+    this.enrollmentToken,
     this.retryAfterSeconds,
   });
 
   final bool otpSent;
   final String? status;
   final String? workerId;
+  final String? enrollmentToken;
   final int? retryAfterSeconds;
 
   factory OtpStartResult.fromJson(Map<String, dynamic> json) {
@@ -107,6 +109,7 @@ class OtpStartResult {
       otpSent: json['otp_sent'] == true,
       status: json['status'] as String?,
       workerId: json['worker_id'] as String?,
+      enrollmentToken: json['enrollment_token'] as String?,
       retryAfterSeconds: json['retry_after_seconds'] is int
           ? json['retry_after_seconds'] as int
           : null,

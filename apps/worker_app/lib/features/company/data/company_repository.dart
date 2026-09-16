@@ -45,7 +45,7 @@ class CompanyRepository {
   }
 
   Future<void> completeCompanyRegistration({
-    required String email,
+    required String enrollmentToken,
     String? otpCode,
     String? otpChallenge,
     required String password,
@@ -54,7 +54,7 @@ class CompanyRepository {
       await _dio.post<Map<String, dynamic>>(
         '/auth/company/complete-registration',
         data: {
-          'email': email,
+          'enrollment_token': enrollmentToken,
           if (otpCode != null) 'otp_code': otpCode,
           if (otpChallenge != null) 'otp_challenge': otpChallenge,
           'password': password,

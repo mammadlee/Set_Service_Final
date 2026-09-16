@@ -38,7 +38,6 @@ const publicOperations = new Set([
   'post /auth/company/register',
   'post /auth/company/complete-registration',
   'post /auth/company/login',
-  'post /auth/company/web-enrollment-login',
   'post /auth/company/web-login',
   'post /auth/company/web-refresh',
   'post /auth/company/web-logout',

@@ -132,11 +132,11 @@ export const CompanyLoginSchema = z.object({
 });
 
 export const CompanyCompleteRegistrationSchema = z.object({
-  email: EmailSchema,
+  enrollment_token: z.string().min(40).max(160),
   otp_code: OtpCodeSchema.optional(),
   otp_challenge: OtpChallengeSchema.optional(),
   password: PasswordSchema,
-}).superRefine(requireOtpProof);
+}).strict().superRefine(requireOtpProof);
 
 export const CompanyForgotPasswordSchema = z.object({
   method: z.enum(['phone', 'email']).optional(),

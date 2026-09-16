@@ -23,9 +23,6 @@ export function PendingApprovalPage() {
           <strong>{appStrings.accountState.currentStatus}</strong>
           <span>{statusLabel(status)}</span>
         </div>
-        {status === 'pending_approval' ? (
-          <Link className="btn secondary full" to="/register">{appStrings.auth.continueRegistration}</Link>
-        ) : null}
         <Link className="btn primary full" to="/login">{appStrings.accountState.backToLogin}</Link>
       </section>
     </main>

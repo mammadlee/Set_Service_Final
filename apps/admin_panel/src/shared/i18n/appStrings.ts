@@ -462,7 +462,6 @@ function readMissingPrerequisites(details: unknown): string[] {
     full_name: 'ad və soyad daxil edilməlidir',
     phone: 'telefon nömrəsi daxil edilməlidir',
     company_name: 'müəssisə adı daxil edilməlidir',
-    verified_email: 'e-poçt ünvanı təsdiqlənməlidir',
     position: 'ən azı bir vəzifə seçilməlidir',
     positions: 'ən azı bir vəzifə seçilməlidir',
     'document:health_certificate': 'sağlamlıq arayışı yüklənib yoxlamadan keçməlidir',

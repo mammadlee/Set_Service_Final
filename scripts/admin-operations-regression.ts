@@ -73,11 +73,11 @@ const approvalError = Object.assign(new Error('Company registration prerequisite
   code: 'APPROVAL_PREREQUISITES_MISSING',
   status: 409,
   details: {
-    missing: ['verified_email'],
+    missing: ['registration_otp_consumed'],
   },
 });
 const localizedApprovalError = apiErrorMessage(approvalError);
-assert.match(localizedApprovalError, /e-poçt ünvanı təsdiqlənməlidir/);
+assert.match(localizedApprovalError, /telefon\/OTP qeydiyyatı tamamlanmalıdır/);
 assert.doesNotMatch(localizedApprovalError, /qeydiyyat şəhadətnaməsi/);
 assert.doesNotMatch(localizedApprovalError, /prerequisites/i);
 

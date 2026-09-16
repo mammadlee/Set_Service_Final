@@ -311,23 +311,27 @@ components:
         email: { type: string, format: email, example: company@setservice.az }
         phone: { type: string, example: "+994501234568" }
 
-    CompanyEnrollmentSession:
+    CompanyEnrollmentStartResponse:
       type: object
-      required: [user_id, company_id, company_name, status, registration_access_token, email_verified, required_document_types]
+      description: Short-lived company enrollment session. No User or Company record exists yet.
+      required: [enrollment_token, status, otp_sent, retry_after_seconds]
+      properties:
+        enrollment_token:
+          type: string
+          description: Opaque token for the current in-app enrollment flow. It expires automatically and cannot authenticate protected company APIs.
+        status: { type: string, enum: [phone_otp_pending] }
+        otp_sent: { type: boolean }
+        retry_after_seconds: { type: integer, minimum: 1 }
+
+    CompanyRegistrationFinalizedResponse:
+      type: object
+      required: [user_id, company_id, company_name, status]
       properties:
         user_id: { type: string, format: uuid }
         company_id: { type: string, format: uuid }
         company_name: { type: string }
         status: { type: string, enum: [pending_approval] }
-        registration_access_token:
-          type: string
-          description: Short-lived token accepted only by enrollment-scoped routes.
-        email_verified: { type: boolean }
-        required_document_types:
-          type: array
-          description: Empty for company registration; company approval does not require documents.
-          maxItems: 0
-          items: { type: string }
+        message: { type: string }
 
     RequestOtpRequest:
       type: object
@@ -370,10 +374,10 @@ components:
 
     CompleteCompanyRegistrationRequest:
       type: object
-      required: [email, password]
-      description: Provide either otp_code for legacy direct completion or otp_challenge returned by /auth/verify-otp.
+      required: [enrollment_token, password]
+      description: Atomically creates the User and Company only after phone OTP verification and password creation. Email verification and company documents are not required.
       properties:
-        email: { type: string, format: email, example: company@setservice.az }
+        enrollment_token: { type: string }
         otp_code:
           type: string
           example: "123456"
@@ -1380,7 +1384,7 @@ paths:
                       properties:
                         role: { type: string, enum: [company] }
       responses:
-        '201': { description: Account created and OTP sent }
+        '201': { description: Worker account created or ephemeral company enrollment started; OTP sent }
 
   /auth/worker/register:
     post:
@@ -1554,14 +1558,20 @@ paths:
   /auth/company/register:
     post:
       tags: [Auth]
-      summary: Register company and send OTP
+      summary: Start ephemeral company registration and send phone OTP
+      description: No User or Company database record is created at this stage. The short-lived enrollment state is stored outside the company tables and expires automatically.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompanyRegisterRequest' }
       responses:
-        '201': { description: Company created with pending_approval status }
+        '201':
+          description: Ephemeral enrollment started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyEnrollmentStartResponse' }
+        '409': { description: Phone or email already belongs to a completed account }
 
   /auth/company/login:
     post:
@@ -1581,30 +1591,7 @@ paths:
         '200':
           description: JWT token pair
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
-        '403': { description: Company is not approved }
-
-  /auth/company/web-enrollment-login:
-    post:
-      tags: [Auth]
-      security: []
-      summary: Resume a pending company browser enrollment
-      description: |
-        Requires an exact trusted Origin and valid company credentials. Returns a short-lived
-        registration token only for a pending_approval company. It does not create an approved
-        web session and cannot access normal company APIs.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
-      responses:
-        '200':
-          description: Narrow enrollment session resumed
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/CompanyEnrollmentSession' }
-        '401': { description: Invalid credentials }
-        '403': { description: Origin is not trusted or enrollment is closed }
+        '403': { description: Account is pending approval, rejected, suspended, or inactive }
 
   /auth/company/web-login:
     post:
@@ -1671,15 +1658,21 @@ paths:
   /auth/company/complete-registration:
     post:
       tags: [Auth]
-      summary: Verify company registration OTP and create password
+      summary: Verify company phone OTP, create password, and finalize registration
+      description: This is the only registration step that creates the User and Company records. The company starts with pending_approval status and has no access until an admin approves it. Email verification and company documents are not required.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompleteCompanyRegistrationRequest' }
       responses:
-        '200': { description: Password set; company remains pending admin approval }
+        '201':
+          description: Company finalized with pending_approval status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyRegistrationFinalizedResponse' }
         '401': { description: Invalid or expired OTP }
+        '409': { description: Phone or email became unavailable before finalization }
 
   /auth/company/forgot-password:
     post:

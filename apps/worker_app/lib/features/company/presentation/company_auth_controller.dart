@@ -30,6 +30,7 @@ class CompanyAuthController extends ChangeNotifier {
   String? pendingEmail;
   String? pendingOtpCode;
   String? pendingOtpChallenge;
+  String? enrollmentToken;
   CompanyPendingOtpPurpose? pendingPurpose;
   String? blockedStatus;
   String? errorMessage;
@@ -98,6 +99,7 @@ class CompanyAuthController extends ChangeNotifier {
     pendingEmail = null;
     pendingOtpCode = null;
     pendingOtpChallenge = null;
+    enrollmentToken = null;
     pendingPurpose = null;
     blockedStatus = null;
     companyName = null;
@@ -121,12 +123,20 @@ class CompanyAuthController extends ChangeNotifier {
     required String phone,
   }) async {
     await _submit(() async {
-      await _repository.registerCompany(
+      final registration = await _repository.registerCompany(
         name: name,
         contactName: contactName,
         email: email,
         phone: phone,
       );
+      final token = registration.enrollmentToken?.trim();
+      if (token == null || token.isEmpty) {
+        throw const ApiException(
+          message: 'Qeydiyyat sessiyası yaradılmadı. Yenidən cəhd edin.',
+          code: 'COMPANY_ENROLLMENT_TOKEN_MISSING',
+        );
+      }
+      enrollmentToken = token;
       pendingPhone = phone;
       pendingEmail = email;
       pendingPurpose = CompanyPendingOtpPurpose.registration;
@@ -183,21 +193,25 @@ class CompanyAuthController extends ChangeNotifier {
 
     await _submit(() async {
       if (pendingPurpose == CompanyPendingOtpPurpose.registration) {
-        if (email == null || email.isEmpty) {
+        final token = enrollmentToken;
+        if (email == null || email.isEmpty || token == null || token.isEmpty) {
           errorMessage = AppStrings.otpSessionExpired;
           state = CompanyAuthState.unauthenticated;
           return;
         }
         await _repository.completeCompanyRegistration(
-          email: email,
+          enrollmentToken: token,
           otpCode: otpCode,
           otpChallenge: otpChallenge,
           password: password,
         );
         pendingOtpCode = null;
         pendingOtpChallenge = null;
+        enrollmentToken = null;
+        blockedStatus = 'pending_approval';
         errorMessage = null;
         state = CompanyAuthState.pendingApproval;
+        _notifySessionState(SessionState.blocked, code: 'PENDING_APPROVAL');
         return;
       }
       if (email == null && phone == null) {
@@ -266,6 +280,7 @@ class CompanyAuthController extends ChangeNotifier {
       pendingEmail = null;
       pendingOtpCode = null;
       pendingOtpChallenge = null;
+      enrollmentToken = null;
       pendingPurpose = null;
       blockedStatus = null;
       errorMessage = null;
@@ -283,6 +298,7 @@ class CompanyAuthController extends ChangeNotifier {
     pendingEmail = null;
     pendingOtpCode = null;
     pendingOtpChallenge = null;
+    enrollmentToken = null;
     pendingPurpose = null;
     blockedStatus = null;
     errorMessage = null;
@@ -310,7 +326,8 @@ class CompanyAuthController extends ChangeNotifier {
   }
 
   bool _applyApprovalError(ApiException error) {
-    if (error.code != 'COMPANY_NOT_APPROVED' &&
+    if (error.code != 'PENDING_APPROVAL' &&
+        error.code != 'COMPANY_NOT_APPROVED' &&
         error.code != 'ACCOUNT_NOT_APPROVED') {
       return false;
     }
