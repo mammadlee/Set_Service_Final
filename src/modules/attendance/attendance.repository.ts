@@ -6,6 +6,7 @@ import {
   markOrderInProgress,
   ORDER_ATTENDANCE_STATUSES,
 } from '../orders/orders.lifecycle';
+import { kioskEligibleOrderWhere } from './attendance.kiosk-eligibility';
 
 export type AttendanceQrContext = {
   tokenHash: string;
@@ -200,6 +201,7 @@ export function findOrderForKiosk(orderId: string) {
       title: true,
       status: true,
       company_id: true,
+      shift_end: true,
       deleted_at: true,
       _count: {
         select: {
@@ -209,6 +211,41 @@ export function findOrderForKiosk(orderId: string) {
         },
       },
     },
+  });
+}
+
+export function listKioskEligibleOrders(companyId?: string, now: Date = new Date()) {
+  return prisma.order.findMany({
+    where: kioskEligibleOrderWhere({ now, companyId }),
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      company_id: true,
+      shift_start: true,
+      shift_end: true,
+      location: true,
+      company: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      _count: {
+        select: {
+          assignments: {
+            where: { status: 'accepted', deleted_at: null },
+          },
+        },
+      },
+    },
+    orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+  });
+}
+
+export function countKioskEligibleOrders(companyId: string, now: Date = new Date()) {
+  return prisma.order.count({
+    where: kioskEligibleOrderWhere({ now, companyId }),
   });
 }
 

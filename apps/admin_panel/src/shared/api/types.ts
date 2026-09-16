@@ -410,6 +410,21 @@ export interface VenueKioskActiveSession {
   shift_end?: string | null;
 }
 
+export interface KioskEligibleOrder {
+  id: string;
+  title: string;
+  status: string;
+  company_id: string;
+  company: {
+    id: string;
+    name: string;
+  };
+  start_datetime: string;
+  end_datetime: string;
+  location: string;
+  accepted_assignment_count: number;
+}
+
 export interface VenueKioskResponse {
   id: string;
   kiosk_id: string;

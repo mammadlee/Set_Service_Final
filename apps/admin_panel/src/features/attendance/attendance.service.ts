@@ -1,6 +1,7 @@
 import { apiRequest } from '../../shared/api/http';
 import type {
   AttendanceLog,
+  KioskEligibleOrder,
   KioskSessionResponse,
   Paginated,
   QrTokenResponse,
@@ -49,6 +50,12 @@ export const attendanceService = {
 
   listVenueKiosks(companyId?: string) {
     return apiRequest<{ data: VenueKioskResponse[] }>('/attendance/venue-kiosks', {
+      query: companyId ? { company_id: companyId } : {},
+    });
+  },
+
+  listKioskEligibleOrders(companyId?: string) {
+    return apiRequest<{ data: KioskEligibleOrder[] }>('/attendance/venue-kiosks/eligible-orders', {
       query: companyId ? { company_id: companyId } : {},
     });
   },

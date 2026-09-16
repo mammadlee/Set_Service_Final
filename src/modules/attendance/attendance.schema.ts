@@ -37,6 +37,12 @@ export const ListVenueKiosksQuerySchema = z.object({
   company_id: z.string().uuid().optional(),
 });
 
+export const ListKioskEligibleOrdersQuerySchema = z
+  .object({
+    company_id: z.string().uuid().optional(),
+  })
+  .strict();
+
 export const ActivateVenueKioskSchema = z
   .object({
     order_id: z.string().uuid(),
@@ -92,6 +98,7 @@ export type GenerateQrTokenInput = z.infer<typeof GenerateQrTokenSchema>;
 export type CreateKioskSessionInput = z.infer<typeof CreateKioskSessionSchema>;
 export type CreateVenueKioskInput = z.infer<typeof CreateVenueKioskSchema>;
 export type ListVenueKiosksQueryInput = z.infer<typeof ListVenueKiosksQuerySchema>;
+export type ListKioskEligibleOrdersQueryInput = z.infer<typeof ListKioskEligibleOrdersQuerySchema>;
 export type ActivateVenueKioskInput = z.infer<typeof ActivateVenueKioskSchema>;
 export type CheckInInput = z.infer<typeof CheckInSchema>;
 export type CheckOutInput = z.infer<typeof CheckOutSchema>;

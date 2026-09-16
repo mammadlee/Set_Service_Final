@@ -18,10 +18,12 @@ import {
   CreateKioskSessionInput,
   CreateVenueKioskInput,
   GenerateQrTokenInput,
+  ListKioskEligibleOrdersQueryInput,
   ListVenueKiosksQueryInput,
   ListAttendanceQueryInput,
 } from './attendance.schema';
 import * as AttendanceRepository from './attendance.repository';
+import { isKioskEligibleOrder } from './attendance.kiosk-eligibility';
 
 type AttendanceRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findAttendanceById>>>;
 type AssignmentRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findAcceptedAssignmentById>>>;
@@ -29,6 +31,7 @@ type CompanyRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.
 type WorkerRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findWorkerByUserId>>>;
 type KioskSessionRecord = AttendanceRepository.KioskSessionWithContext;
 type VenueKioskRecord = AttendanceRepository.VenueKioskWithContext;
+type KioskOrderRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findOrderForKiosk>>>;
 
 const KIOSK_QR_REFRESH_SECONDS = 30;
 const KIOSK_TOKEN_BYTES = 32;
@@ -163,6 +166,9 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
   }
 
   const companyId = await resolveManageableCompanyId(userId, role, input.company_id);
+  if (await AttendanceRepository.countKioskEligibleOrders(companyId) === 0) {
+    throw Errors.conflict('QR yaratmaq üçün aktiv sifariş yoxdur.', 'NO_QR_ELIGIBLE_ORDERS');
+  }
   const name = input.name.trim();
   const locationLabel = input.location_label?.trim();
 
@@ -211,6 +217,36 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
   };
 }
 
+export async function listKioskEligibleOrders(
+  userId: string,
+  roleValue: string,
+  filters: ListKioskEligibleOrdersQueryInput,
+) {
+  const role = parseRole(roleValue);
+  if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
+    throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
+  }
+
+  let companyId = filters.company_id;
+  if (role === 'company') {
+    companyId = (await getApprovedCompanyForUser(userId)).id;
+  }
+
+  return {
+    data: (await AttendanceRepository.listKioskEligibleOrders(companyId)).map((order) => ({
+      id: order.id,
+      title: order.title,
+      status: order.status,
+      company_id: order.company_id,
+      company: order.company,
+      start_datetime: order.shift_start,
+      end_datetime: order.shift_end,
+      location: order.location,
+      accepted_assignment_count: order._count.assignments,
+    })),
+  };
+}
+
 export async function activateVenueKiosk(
   userId: string,
   roleValue: string,
@@ -234,12 +270,7 @@ export async function activateVenueKiosk(
   if (order.company_id !== kiosk.company_id) {
     throw Errors.forbidden('Kiosk yalnız öz müəssisəsinin sifarişləri üçün aktiv edilə bilər.', 'FORBIDDEN');
   }
-  if (!ORDER_ATTENDANCE_STATUSES.includes(order.status)) {
-    throw Errors.conflict('QR ekranı yalnız aktiv sifariş üçün aktiv edilə bilər.', 'ORDER_NOT_ACTIVE');
-  }
-  if (order._count.assignments < 1) {
-    throw Errors.conflict('Bu sifariş üzrə işi qəbul etmiş işçi yoxdur.', 'NO_ACCEPTED_ASSIGNMENTS');
-  }
+  assertKioskEligibleOrder(order);
 
   const activated = await AttendanceRepository.activateVenueKiosk({
     kioskId: kiosk.id,
@@ -514,6 +545,25 @@ async function resolveManageableCompanyId(
     throw Errors.badRequest('Company is required for venue kiosk creation.', 'COMPANY_REQUIRED');
   }
   return requestedCompanyId;
+}
+
+function assertKioskEligibleOrder(order: KioskOrderRecord, now: Date = new Date()): void {
+  if (isKioskEligibleOrder({
+    status: order.status,
+    shift_end: order.shift_end,
+    deleted_at: order.deleted_at,
+    acceptedAssignmentCount: order._count.assignments,
+  }, now)) {
+    return;
+  }
+
+  if (!ORDER_ATTENDANCE_STATUSES.includes(order.status)) {
+    throw Errors.conflict('QR ekranı yalnız aktiv sifariş üçün aktiv edilə bilər.', 'ORDER_NOT_ACTIVE');
+  }
+  if (order.shift_end.getTime() <= now.getTime()) {
+    throw Errors.conflict('Bitmiş sifariş üçün QR ekranı aktiv edilə bilməz.', 'ORDER_EXPIRED');
+  }
+  throw Errors.conflict('Bu sifariş üzrə işi qəbul etmiş işçi yoxdur.', 'NO_ACCEPTED_ASSIGNMENTS');
 }
 
 async function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {

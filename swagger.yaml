@@ -1108,6 +1108,27 @@ components:
         order_id: { type: string, format: uuid, example: "{{order_id}}" }
         expires_at: { type: string, format: date-time, nullable: true }
 
+    KioskEligibleOrder:
+      type: object
+      required: [id, title, status, company_id, company, start_datetime, end_datetime, location, accepted_assignment_count]
+      properties:
+        id: { type: string, format: uuid, example: "{{order_id}}" }
+        title: { type: string, example: "Hilton Baku banket xidməti" }
+        status:
+          type: string
+          enum: [active, published, partially_assigned, assigned, in_progress]
+        company_id: { type: string, format: uuid, example: "{{company_id}}" }
+        company:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid, example: "{{company_id}}" }
+            name: { type: string, example: "Hilton Baku" }
+        start_datetime: { type: string, format: date-time }
+        end_datetime: { type: string, format: date-time }
+        location: { type: string, example: "Hilton Baku, Bakı" }
+        accepted_assignment_count: { type: integer, minimum: 1, example: 4 }
+
     VenueKioskActiveSession:
       type: object
       properties:
@@ -3386,6 +3407,37 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VenueKioskCreateResponse' }
+        '409':
+          description: The company has no currently QR-eligible order
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /attendance/venue-kiosks/eligible-orders:
+    get:
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: List orders currently eligible for venue kiosk activation
+      description: |
+        Uses the same server-side attendance eligibility rules as kiosk activation:
+        an attendance-capable order status, a future shift end, and at least one
+        accepted, non-deleted assignment. Company accounts are always scoped to
+        their own company.
+      parameters:
+        - name: company_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: QR-eligible orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/KioskEligibleOrder' }
 
   /attendance/venue-kiosks/context:
     get:
@@ -3454,6 +3506,9 @@ paths:
         '200':
           description: Kiosk active session updated
           content: { application/json: { schema: { $ref: '#/components/schemas/VenueKiosk' } } }
+        '409':
+          description: Order is inactive, expired, or has no accepted assignment
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /attendance/venue-kiosks/{id}/active-session:
     delete:

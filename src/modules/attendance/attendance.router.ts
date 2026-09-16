@@ -12,6 +12,7 @@ import {
   GenerateQrTokenSchema,
   KioskSessionIdParamsSchema,
   KioskTokenParamsSchema,
+  ListKioskEligibleOrdersQuerySchema,
   ListVenueKiosksQuerySchema,
   VenueKioskIdParamsSchema,
   ListAttendanceQuerySchema,
@@ -111,6 +112,20 @@ if (legacyKioskPathsEnabled) {
 // LOCAL_ONLY_KIOSK_LEGACY_END
 
 router.use(requireAuth);
+
+router.get(
+  '/venue-kiosks/eligible-orders',
+  requireRoleOrPermission('manage_kiosks', 'company'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = ListKioskEligibleOrdersQuerySchema.parse(req.query);
+      res.json(await Service.listKioskEligibleOrders(req.user!.sub, req.user!.role, query));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 router.get(
   '/venue-kiosks',
