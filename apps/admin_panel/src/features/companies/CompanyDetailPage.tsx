@@ -19,6 +19,14 @@ export function CompanyDetailPage() {
   const canManageCompanies = hasPermission(user, 'manage_companies');
   const company = useAsync(() => companiesService.get(id), [id]);
   const documents = company.data?.documents ?? [];
+  const registrationCertificate = documents.find((document) => document.type === 'registration_certificate');
+  const registrationCertificateReady = Boolean(
+    registrationCertificate?.available
+    && registrationCertificate.status === 'ready'
+    && registrationCertificate.scan_status === 'clean',
+  );
+  const awaitingApproval = company.data?.status === 'pending_approval';
+  const approvalBlockedByDocument = awaitingApproval && !registrationCertificateReady;
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -77,10 +85,16 @@ export function CompanyDetailPage() {
               <dt>{appStrings.companies.email}</dt><dd>{company.data.email || appStrings.notAvailable}</dd>
               <dt>{appStrings.companies.rejectReason}</dt><dd>{company.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
+            {approvalBlockedByDocument ? (
+              <div className="form-warning" role="note">
+                <strong>{appStrings.companies.approvalDocumentRequired}</strong>
+                <span>{appStrings.companies.approvalDocumentHelp}</span>
+              </div>
+            ) : null}
             {canManageCompanies ? (
               <div className="action-row detail-actions">
-                <button className="btn primary" disabled={company.data.status === 'approved'} onClick={() => setAction('approve')}>{appStrings.companies.approve}</button>
-                <button className="btn danger" disabled={company.data.status === 'rejected'} onClick={() => setAction('reject')}>{appStrings.companies.reject}</button>
+                <button className="btn primary" disabled={!awaitingApproval || approvalBlockedByDocument} onClick={() => setAction('approve')}>{appStrings.companies.approve}</button>
+                <button className="btn danger" disabled={!awaitingApproval} onClick={() => setAction('reject')}>{appStrings.companies.reject}</button>
               </div>
             ) : null}
             {actionError ? <div className="form-error">{actionError}</div> : null}

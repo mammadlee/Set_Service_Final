@@ -1068,6 +1068,7 @@ td strong,
 .status-approved,
 .status-active,
 .status-accepted,
+.status-in_progress,
 .status-completed {
   background: var(--success-soft);
   color: var(--success);
@@ -1075,6 +1076,8 @@ td strong,
 
 .status-pending_approval,
 .status-pending_otp,
+.status-published,
+.status-partially_assigned,
 .status-assigned,
 .status-draft {
   background: var(--warning-soft);
@@ -1087,6 +1090,12 @@ td strong,
 .status-inactive {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.status-expired {
+  background: var(--panel-muted);
+  color: var(--graphite);
+  border: 1px solid var(--line);
 }
 
 .state-block {
@@ -1133,6 +1142,20 @@ td strong,
   color: var(--success);
   padding: 11px 12px;
   font-weight: 650;
+}
+
+.form-warning {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 75%, var(--line));
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--text);
+  padding: 11px 12px;
+}
+
+.form-warning span {
+  color: var(--muted);
 }
 
 .break-word {

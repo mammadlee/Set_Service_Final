@@ -11,6 +11,7 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { formatDateTime } from '../../shared/utils/format';
+import { orderDisplayStatus } from '../../shared/utils/orders';
 import { assignmentsService } from './assignments.service';
 
 export function AssignmentDetailPage() {
@@ -88,7 +89,7 @@ export function AssignmentDetailPage() {
               <dt>{appStrings.orders.orderTitle}</dt><dd>{assignment.data.order.title}</dd>
               <dt>{appStrings.orders.company}</dt><dd>{assignment.data.order.company.name}</dd>
               <dt>{appStrings.orders.category}</dt><dd>{assignment.data.order.category}</dd>
-              <dt>{appStrings.orders.status}</dt><dd><StatusBadge status={assignment.data.order.status} /></dd>
+              <dt>{appStrings.orders.status}</dt><dd><StatusBadge status={orderDisplayStatus(assignment.data.order)} /></dd>
               <dt>{appStrings.orders.location}</dt><dd>{assignment.data.order.location}</dd>
               <dt>{appStrings.orders.start}</dt><dd>{formatDateTime(assignment.data.order.start_datetime)}</dd>
               <dt>{appStrings.orders.end}</dt><dd>{formatDateTime(assignment.data.order.end_datetime)}</dd>
@@ -106,16 +107,13 @@ export function AssignmentDetailPage() {
               <QrCode size={22} />
             </div>
 
-            {assignment.data.status !== 'accepted' || assignment.data.order.status !== 'active' ? (
-              <div className="inline-note">
-                QR ekranını aktiv etmək üçün sifariş aktiv, təyinat isə qəbul edilmiş olmalıdır.
-              </div>
-            ) : (
-              <Link className="btn primary full" to="/attendance/qr-display">
-                <QrCode size={16} />
-                Məkan QR kiosklarına keç
-              </Link>
-            )}
+            <div className="inline-note">
+              QR ekranında yalnız backend tərəfindən uyğun hesab edilən aktiv sifarişlər göstərilir.
+            </div>
+            <Link className="btn primary full" to="/attendance/qr-display">
+              <QrCode size={16} />
+              Məkan QR kiosklarına keç
+            </Link>
           </div> : null}
         </section>
       ) : null}

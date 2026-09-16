@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
 import { prisma } from '../../lib/prisma';
 import { ReportQueryInput } from './reports.schema';
+import { ORDER_ATTENDANCE_STATUSES } from '../orders/orders.lifecycle';
 
 type ReportSummaryOptions = {
   includePendingWorkerApprovals?: boolean;
@@ -45,7 +46,7 @@ export async function getAdminReportSummary(
     prisma.order.count({
       where: {
         ...orderWhere,
-        status: 'active',
+        status: { in: ORDER_ATTENDANCE_STATUSES },
         shift_start: { lt: tomorrowStart },
         shift_end: { gte: todayStart },
       },

@@ -24,7 +24,16 @@ export type WorkerStatus =
   | 'inactive';
 
 export type CompanyStatus = 'pending_approval' | 'approved' | 'rejected' | 'suspended' | 'inactive';
-export type OrderStatus = 'draft' | 'active' | 'completed' | 'cancelled';
+export type OrderStatus =
+  | 'draft'
+  | 'active'
+  | 'published'
+  | 'partially_assigned'
+  | 'assigned'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled';
+export type OrderDisplayStatus = OrderStatus | 'expired';
 export type AssignmentStatus = 'assigned' | 'accepted' | 'rejected' | 'completed' | 'cancelled';
 export type WorkerClass = 'A' | 'B' | 'C';
 export type TaxonomyStatus = 'active' | 'inactive';

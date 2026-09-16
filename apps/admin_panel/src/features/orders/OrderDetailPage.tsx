@@ -8,6 +8,7 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { formatDateTime, formatMoney, shortId } from '../../shared/utils/format';
+import { orderDisplayStatus } from '../../shared/utils/orders';
 import { ordersService } from './orders.service';
 
 export function OrderDetailPage() {
@@ -31,7 +32,7 @@ export function OrderDetailPage() {
           <div className="panel">
             <div className="detail-title">
               <h2>{order.data.title}</h2>
-              <StatusBadge status={order.data.status} />
+              <StatusBadge status={orderDisplayStatus(order.data)} />
             </div>
             <p className="muted">{order.data.description}</p>
             <dl className="detail-list">

@@ -10,9 +10,20 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings, statusLabel } from '../../shared/i18n/appStrings';
 import { formatDateTime } from '../../shared/utils/format';
+import { orderDisplayStatus } from '../../shared/utils/orders';
 import { ordersService } from './orders.service';
 
-const statuses: Array<OrderStatus | ''> = ['', 'active', 'draft', 'completed', 'cancelled'];
+const statuses: Array<OrderStatus | ''> = [
+  '',
+  'published',
+  'partially_assigned',
+  'assigned',
+  'in_progress',
+  'active',
+  'draft',
+  'completed',
+  'cancelled',
+];
 
 export function OrdersPage() {
   const { user } = useAuth();
@@ -58,7 +69,7 @@ export function OrdersPage() {
                       <td data-label={appStrings.orders.orderTitle}><strong>{order.title}</strong></td>
                       <td data-label={appStrings.orders.company}>{order.company?.name || appStrings.notAvailable}</td>
                       <td data-label={appStrings.orders.category}>{formatCategoryItems(order)}</td>
-                      <td data-label={appStrings.orders.status}><StatusBadge status={order.status} /></td>
+                      <td data-label={appStrings.orders.status}><StatusBadge status={orderDisplayStatus(order)} /></td>
                       <td data-label={appStrings.orders.workers}>{order.assignment_count}/{order.required_count}</td>
                       <td data-label={appStrings.orders.start}>{formatDateTime(order.start_datetime)}</td>
                       <td className="mobile-card-action"><Link className="link-btn" to={`/orders/${order.id}`}>{appStrings.view}</Link></td>

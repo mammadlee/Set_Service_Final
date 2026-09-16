@@ -1,6 +1,6 @@
-import type { AssignmentStatus, CompanyStatus, OrderStatus, WorkerStatus } from '../api/types';
+import type { AssignmentStatus, CompanyStatus, OrderDisplayStatus, WorkerStatus } from '../api/types';
 
-type KnownStatus = WorkerStatus | CompanyStatus | OrderStatus | AssignmentStatus | 'open' | 'read' | 'unread' | 'checked_in' | 'waiting';
+type KnownStatus = WorkerStatus | CompanyStatus | OrderDisplayStatus | AssignmentStatus | 'open' | 'read' | 'unread' | 'checked_in' | 'waiting';
 
 export const appStrings = {
   brand: 'SET Service',
@@ -141,6 +141,8 @@ export const appStrings = {
     rejectReason: 'Rədd səbəbi',
     documents: 'Sənədlər',
     noDocuments: 'Sənəd yüklənməyib.',
+    approvalDocumentRequired: 'Təsdiq üçün qeydiyyat sənədi tələb olunur.',
+    approvalDocumentHelp: 'Qeydiyyat şəhadətnaməsi yüklənməli və təhlükəsizlik yoxlamasından uğurla keçməlidir.',
     approve: 'Müəssisəni təsdiqlə',
     reject: 'Müəssisəni rədd et',
     approveTitle: 'Müəssisə təsdiqlənsin?',
@@ -338,8 +340,12 @@ export function statusLabel(status: string): string {
       suspended: 'Dayandırılıb',
       inactive: 'Aktiv deyil',
       active: 'Aktiv',
+      published: 'Dərc olunub',
+      partially_assigned: 'Qismən təyin olunub',
+      in_progress: 'Davam edir',
       completed: 'Tamamlanıb',
       cancelled: 'Ləğv edilib',
+      expired: 'Vaxtı bitib',
       assigned: 'Təyin olunub',
       accepted: 'Qəbul edilib',
       checked_in: 'Giriş edilib',
@@ -354,7 +360,10 @@ export function statusLabel(status: string): string {
 export function apiErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return appStrings.unknownError;
 
-  const apiError = error as Error & { code?: string; status?: number };
+  const apiError = error as Error & { code?: string; status?: number; details?: unknown };
+  if (apiError.code === 'APPROVAL_PREREQUISITES_MISSING') {
+    return approvalPrerequisitesMessage(apiError.details);
+  }
   const mapped = apiError.code ? backendErrorMessage(apiError.code) : null;
   if (mapped) return mapped;
 
@@ -394,6 +403,7 @@ export function backendErrorMessage(code: string): string | null {
       ORDER_NOT_FOUND: 'Sifariş tapılmadı.',
       INVALID_WORKER_STATUS: 'İşçi statusu yanlışdır.',
       INVALID_COMPANY_STATUS: 'Müəssisə statusu yanlışdır.',
+      APPROVAL_PREREQUISITES_MISSING: 'Təsdiq üçün tələb olunan qeydiyyat şərtləri tamamlanmayıb.',
       INVALID_REFRESH_TOKEN: 'Sessiya yeniləmə tokeni yanlışdır və ya vaxtı bitib.',
       WORKER_NOT_APPROVED: 'İşçi hesabı hələ təsdiqlənməyib.',
       COMPANY_NOT_APPROVED: 'Müəssisə hesabı hələ təsdiqlənməyib.',
@@ -433,6 +443,42 @@ export function backendErrorMessage(code: string): string | null {
       NOTIFICATION_NOT_FOUND: 'Bildiriş tapılmadı.',
     } satisfies Record<string, string>
   )[code] ?? null;
+}
+
+function approvalPrerequisitesMessage(details: unknown): string {
+  const missing = readMissingPrerequisites(details);
+  if (missing.length === 0) {
+    return 'Təsdiq üçün tələb olunan qeydiyyat şərtləri tamamlanmayıb.';
+  }
+  return `Təsdiqdən əvvəl bunlar tamamlanmalıdır: ${missing.join('; ')}.`;
+}
+
+function readMissingPrerequisites(details: unknown): string[] {
+  if (!details || typeof details !== 'object') return [];
+  const missing = (details as { missing?: unknown }).missing;
+  if (!Array.isArray(missing)) return [];
+
+  const labels: Record<string, string> = {
+    status_pending_approval: 'hesab təsdiq gözləyən statusda olmalıdır',
+    password_set: 'şifrə təyin edilməlidir',
+    active_account: 'hesab aktiv olmalıdır',
+    registration_otp_consumed: 'telefon/OTP qeydiyyatı tamamlanmalıdır',
+    contact_name: 'əlaqədar şəxsin adı daxil edilməlidir',
+    full_name: 'ad və soyad daxil edilməlidir',
+    phone: 'telefon nömrəsi daxil edilməlidir',
+    company_name: 'müəssisə adı daxil edilməlidir',
+    verified_email: 'e-poçt ünvanı təsdiqlənməlidir',
+    position: 'ən azı bir vəzifə seçilməlidir',
+    positions: 'ən azı bir vəzifə seçilməlidir',
+    'document:registration_certificate': 'qeydiyyat şəhadətnaməsi yüklənib yoxlamadan keçməlidir',
+    'document:health_certificate': 'sağlamlıq arayışı yüklənib yoxlamadan keçməlidir',
+    'document:criminal_record': 'məhkumluq arayışı yüklənib yoxlamadan keçməlidir',
+  };
+
+  return missing.flatMap((value) => {
+    if (typeof value !== 'string') return [];
+    return [labels[value] ?? value.replaceAll('_', ' ')];
+  });
 }
 
 export function notificationTitle(type: string, fallback: string): string {
