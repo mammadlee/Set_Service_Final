@@ -48,16 +48,16 @@ export const UpdateWorkerSchema = z.object({
 }).strict();
 
 const WorkerDocumentUploadSchema = z.object({
-  type: z.enum(['health_certificate', 'criminal_record']),
+  type: z.enum(['health_certificate', 'criminal_record', 'cv']),
 }).strict();
 
 const WorkerDocumentDownloadParamsSchema = z.object({
   id: z.string().uuid(),
-  type: z.enum(['health_certificate', 'criminal_record']),
+  type: z.enum(['health_certificate', 'criminal_record', 'cv']),
 }).strict();
 
 const WorkerDocumentDeleteParamsSchema = z.object({
-  type: z.enum(['health_certificate', 'criminal_record']),
+  type: z.enum(['health_certificate', 'criminal_record', 'cv']),
 }).strict();
 
 export const WorkerAccountDeletionRequestSchema = z.object({

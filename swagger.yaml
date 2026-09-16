@@ -213,22 +213,26 @@ components:
 
     CompanyDocument:
       type: object
-      required: [type, url]
+      description: Safe metadata for a private company document. Object keys and permanent URLs are never returned.
+      required: [type, available, status, scan_status]
       properties:
-        type: { type: string, example: health_certificate }
-        url: { type: string, format: uri, example: https://cdn.example.com/documents/passport.pdf }
-        name: { type: string, example: Health certificate.pdf }
-        mime_type: { type: string, example: application/pdf }
+        type: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+        name: { type: string, example: registration-certificate.pdf }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
         size_bytes: { type: integer, example: 248000 }
         uploaded_at: { type: string, format: date-time }
-        company_visible: { type: boolean, example: true }
+        status: { type: string, enum: [ready, legacy] }
+        scan_status: { type: string, enum: [clean, unscanned] }
+        available:
+          type: boolean
+          description: True only when the private key belongs to this company and the document is ready with a clean scan result.
 
     WorkerDocumentMetadata:
       type: object
       description: Safe metadata for a private worker document. Object keys and permanent public URLs are never returned.
       required: [type, company_visible, available, status, scan_status]
       properties:
-        type: { type: string, enum: [health_certificate, criminal_record] }
+        type: { type: string, enum: [health_certificate, criminal_record, cv] }
         name: { type: string, example: Health-certificate.pdf }
         mime_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
         size_bytes: { type: integer, minimum: 1, maximum: 5242880 }
@@ -253,7 +257,7 @@ components:
       properties:
         status: { type: string, enum: [deleted] }
         worker_id: { type: string, format: uuid }
-        document_type: { type: string, enum: [health_certificate, criminal_record] }
+        document_type: { type: string, enum: [health_certificate, criminal_record, cv] }
         deleted_at: { type: string, format: date-time }
 
     WorkerAccountDeletionRequest:
@@ -306,10 +310,24 @@ components:
         contact_name: { type: string, example: Nigar Aliyeva }
         email: { type: string, format: email, example: company@setservice.az }
         phone: { type: string, example: "+994501234568" }
-        docs_url: { type: string, format: uri }
-        documents:
+
+    CompanyEnrollmentSession:
+      type: object
+      required: [user_id, company_id, company_name, status, registration_access_token, email_verified, required_document_types]
+      properties:
+        user_id: { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        company_name: { type: string }
+        status: { type: string, enum: [pending_approval] }
+        registration_access_token:
+          type: string
+          description: Short-lived token accepted only by enrollment-scoped routes.
+        email_verified: { type: boolean }
+        required_document_types:
           type: array
-          items: { $ref: '#/components/schemas/CompanyDocument' }
+          description: Empty for company registration; company approval does not require documents.
+          maxItems: 0
+          items: { type: string }
 
     RequestOtpRequest:
       type: object
@@ -744,10 +762,16 @@ components:
         contact_name: { type: string }
         phone: { type: string }
         email: { type: string, format: email, nullable: true }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        pending_email: { type: string, format: email, nullable: true }
+        email_verified: { type: boolean }
         status: { $ref: '#/components/schemas/CompanyStatus' }
-        docs_url: { type: string, nullable: true }
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/CompanyDocument' }
         reject_reason: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     RejectRequest:
       type: object
@@ -1559,6 +1583,29 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
         '403': { description: Company is not approved }
 
+  /auth/company/web-enrollment-login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Resume a pending company browser enrollment
+      description: |
+        Requires an exact trusted Origin and valid company credentials. Returns a short-lived
+        registration token only for a pending_approval company. It does not create an approved
+        web session and cannot access normal company APIs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
+      responses:
+        '200':
+          description: Narrow enrollment session resumed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyEnrollmentSession' }
+        '401': { description: Invalid credentials }
+        '403': { description: Origin is not trusted or enrollment is closed }
+
   /auth/company/web-login:
     post:
       tags: [Auth]
@@ -1962,7 +2009,7 @@ paths:
       tags: [Workers]
       security: [{ BearerAuth: [] }]
       summary: Upload worker document
-      description: Approved workers can upload PDF or image documents. Content is validated by extension, MIME, magic bytes, an image/PDF parser, and a malware scanner before promotion from quarantine to ready storage. `criminal_record` is private to worker/admin by default; `health_certificate` is company-visible.
+      description: Approved workers can upload PDF or image documents. Content is validated by extension, MIME, magic bytes, an image/PDF parser, and a malware scanner before promotion from quarantine to ready storage. `criminal_record` and optional `cv` documents are private to the worker/admin by default; `health_certificate` is company-visible. CV does not participate in worker approval prerequisites.
       requestBody:
         required: true
         content:
@@ -1973,7 +2020,7 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [health_certificate, criminal_record]
+                  enum: [health_certificate, criminal_record, cv]
                   example: health_certificate
                 file:
                   type: string
@@ -1998,7 +2045,7 @@ paths:
         - in: path
           name: type
           required: true
-          schema: { type: string, enum: [health_certificate, criminal_record] }
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
       responses:
         '200':
           description: Document soft-deleted
@@ -2088,7 +2135,7 @@ paths:
         - in: path
           name: type
           required: true
-          schema: { type: string, enum: [health_certificate, criminal_record] }
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
       responses:
         '200':
           description: Short-lived signed download URL

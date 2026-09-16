@@ -123,6 +123,19 @@ router.post('/company/login', validate(CompanyLoginSchema), async (req: Request,
 });
 
 router.post(
+  '/company/web-enrollment-login',
+  requireTrustedWebOrigin,
+  validate(CompanyLoginSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.set('Cache-Control', 'private, no-store, max-age=0');
+      res.set('Pragma', 'no-cache');
+      res.json(await AuthService.resumeCompanyEnrollment(req.body));
+    } catch (e) { next(e); }
+  },
+);
+
+router.post(
   '/company/web-login',
   requireTrustedWebOrigin,
   validate(CompanyLoginSchema),

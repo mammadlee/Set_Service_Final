@@ -159,6 +159,14 @@ class WorkerRepository {
     );
   }
 
+  Future<void> deleteDocument({required String type}) async {
+    try {
+      await _dio.delete<Map<String, dynamic>>('/workers/me/documents/$type');
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<Uri> getDocumentDownloadUrl({
     required String workerId,
     required String type,

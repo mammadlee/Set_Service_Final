@@ -40,6 +40,7 @@ const healthCertificateKey =
   `workers/${workerId}/documents/health_certificate/health-certificate.pdf`;
 const criminalRecordKey =
   `workers/${workerId}/documents/criminal_record/criminal-record.pdf`;
+const cvKey = `workers/${workerId}/documents/cv/worker-cv.pdf`;
 const leakedPublicUrl = 'https://public-bucket.invalid/workers/private-document.pdf';
 
 const documents = [
@@ -71,6 +72,20 @@ const documents = [
     scanner: 'regression-scanner',
     scanned_at: '2026-07-16T00:00:00.000Z',
     content_sha256: 'b'.repeat(64),
+  },
+  {
+    type: 'cv',
+    name: 'worker-cv.pdf',
+    key: cvKey,
+    mime_type: 'application/pdf',
+    size_bytes: 768,
+    uploaded_at: '2026-09-16T00:00:00.000Z',
+    company_visible: false,
+    status: 'ready',
+    scan_status: 'clean',
+    scanner: 'regression-scanner',
+    scanned_at: '2026-09-16T00:00:00.000Z',
+    content_sha256: 'c'.repeat(64),
   },
 ];
 
@@ -128,6 +143,7 @@ function assertProtectedDocumentMetadata(profile: any): void {
   assert.equal(serialized.includes(leakedPublicUrl), false);
   assert.equal(serialized.includes(healthCertificateKey), false);
   assert.equal(serialized.includes(criminalRecordKey), false);
+  assert.equal(serialized.includes(cvKey), false);
 
   const health = profile.documents.find((document: any) => document.type === 'health_certificate');
   assert.equal(health.available, true);
@@ -147,6 +163,13 @@ function assertProtectedDocumentMetadata(profile: any): void {
     criminal.download_url,
     `/v1/workers/${workerId}/documents/criminal_record/download`,
   );
+
+  const cv = profile.documents.find((document: any) => document.type === 'cv');
+  assert.equal(cv.available, true);
+  assert.equal(cv.company_visible, false);
+  assert.equal(cv.status, 'ready');
+  assert.equal(cv.scan_status, 'clean');
+  assert.equal(cv.download_url, `/v1/workers/${workerId}/documents/cv/download`);
 }
 
 async function withPrismaMethod<T>(
@@ -456,6 +479,42 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
           assert.equal(refreshedDocuments[0].name, 'health-certificate.pdf');
           assert.equal(refreshedDocuments[0].available, true);
 
+          const cvMutationResponse = await WorkersService.uploadMyDocument(
+            ownerUserId,
+            'cv',
+            uploadFile('worker-cv.pdf', 'application/pdf', pdf),
+          );
+          const storedCv = storedDocuments.find((document) => document.type === 'cv');
+          assert.ok(storedCv, 'CV metadata must be stored independently.');
+          assert.match(
+            storedCv.key,
+            new RegExp(`^workers/${workerId}/documents/cv/[0-9a-f-]+\\.pdf$`, 'i'),
+          );
+          assert.equal(storedCv.company_visible, false);
+          assert.equal(storedCv.status, 'ready');
+          assert.equal(storedCv.scan_status, 'clean');
+          assert.deepEqual(
+            await fs.readFile(path.resolve(privateRoot, storedCv.key)),
+            pdf,
+            'The CV object must exist in private storage.',
+          );
+
+          const cvMutationDocuments = cvMutationResponse.documents as any[];
+          const cvMetadata = cvMutationDocuments.find((document) => document.type === 'cv');
+          assert.equal(cvMetadata.key, undefined);
+          assert.equal(cvMetadata.company_visible, false);
+          assert.equal(cvMetadata.available, true);
+          assert.equal(
+            cvMetadata.download_url,
+            `/v1/workers/${workerId}/documents/cv/download`,
+          );
+
+          const profileAfterCvUpload = await WorkersService.getMyWorker(ownerUserId);
+          const persistedCv = (profileAfterCvUpload.documents as any[])
+            .find((document) => document.type === 'cv');
+          assert.equal(persistedCv.name, 'worker-cv.pdf');
+          assert.equal(persistedCv.available, true);
+
           const freshStorageService = createUploadService();
           const signedUrl = await freshStorageService.createSignedDownloadUrl(
             storedDocument.key,
@@ -546,6 +605,13 @@ async function testDocumentAuthorization(): Promise<void> {
       assert.equal(ownerDownload.expires_in_seconds, 300);
       assert.match(ownerDownload.url, /^\/v1\/private-worker-documents\//);
 
+      const ownerCvDownload = await WorkersService.getWorkerDocumentDownload(
+        { sub: ownerUserId, role: 'worker' },
+        workerId,
+        'cv',
+      );
+      assert.match(ownerCvDownload.url, /^\/v1\/private-worker-documents\//);
+
       await expectAppError(
         () => WorkersService.getWorkerDocumentDownload(
           { sub: otherWorkerUserId, role: 'worker' },
@@ -604,6 +670,16 @@ async function testDocumentAuthorization(): Promise<void> {
                 'WORKER_DOCUMENT_ACCESS_DENIED',
               );
 
+              await expectAppError(
+                () => WorkersService.getWorkerDocumentDownload(
+                  { sub: companyUserId, role: 'company' },
+                  workerId,
+                  'cv',
+                ),
+                403,
+                'WORKER_DOCUMENT_ACCESS_DENIED',
+              );
+
               const companyDownload = await WorkersService.getWorkerDocumentDownload(
                 { sub: companyUserId, role: 'company' },
                 workerId,
@@ -641,14 +717,14 @@ async function testDocumentAuthorization(): Promise<void> {
     ),
   );
 
-  assert.equal(auditEvents.length, 4);
+  assert.equal(auditEvents.length, 5);
   assert.deepEqual(
     auditEvents.map((event) => event.metadata.event),
-    Array(4).fill('document_download_authorized'),
+    Array(5).fill('document_download_authorized'),
   );
   assert.deepEqual(
     auditEvents.map((event) => event.actor_role),
-    ['worker', 'admin', 'super_admin', 'company'],
+    ['worker', 'worker', 'admin', 'super_admin', 'company'],
   );
   for (const event of auditEvents) {
     assert.equal(event.entity_type, 'worker_document');

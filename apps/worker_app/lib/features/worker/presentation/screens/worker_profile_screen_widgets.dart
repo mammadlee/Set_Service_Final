@@ -102,6 +102,7 @@ class _ProfileOverview extends StatelessWidget {
     required this.onEditPositions,
     required this.onEditSkills,
     required this.onEditExperience,
+    required this.onEditCv,
     required this.onEditDocuments,
   });
 
@@ -119,10 +120,22 @@ class _ProfileOverview extends StatelessWidget {
   final VoidCallback onEditPositions;
   final VoidCallback onEditSkills;
   final VoidCallback onEditExperience;
+  final VoidCallback onEditCv;
   final VoidCallback onEditDocuments;
 
   @override
   Widget build(BuildContext context) {
+    WorkerDocument? cv;
+    for (final document in worker.documents) {
+      if (document.type == 'cv') {
+        cv = document;
+        break;
+      }
+    }
+    final regularDocumentCount = worker.documents
+        .where((document) => document.type != 'cv')
+        .length;
+
     return PremiumCard(
       padding: EdgeInsets.zero,
       child: Column(
@@ -230,13 +243,23 @@ class _ProfileOverview extends StatelessWidget {
             onTap: onEditExperience,
           ),
           _ProfileMenuRow(
+            title: 'CV',
+            summary: uploading
+                ? 'Yüklənir...'
+                : cv == null
+                ? 'CV yüklənməyib.'
+                : _documentName(cv),
+            icon: Icons.description_outlined,
+            onTap: onEditCv,
+          ),
+          _ProfileMenuRow(
             title: 'Sənədlər',
             summary: uploading
                 ? 'Yüklənir...'
-                : worker.documents.isEmpty
+                : regularDocumentCount == 0
                 ? 'Sənəd yüklənməyib'
-                : '${worker.documents.length} sənəd yüklənib',
-            icon: Icons.description_outlined,
+                : '$regularDocumentCount sənəd yüklənib',
+            icon: Icons.folder_copy_outlined,
             onTap: onEditDocuments,
             isLast: true,
           ),

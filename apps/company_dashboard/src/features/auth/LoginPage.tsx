@@ -1,6 +1,6 @@
 import { Building2, Clock, ShieldAlert } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../../app/auth/AuthProvider';
 import { getAccountStatus, getErrorMessage } from '../../shared/api/http';
 import { accountState, appStrings, statusLabel } from '../../shared/i18n/appStrings';
@@ -87,6 +87,13 @@ export function LoginPage() {
             {loading ? appStrings.auth.wait : appStrings.auth.loginButton}
           </button>
         </form>
+
+        <div className="auth-secondary-actions">
+          <Link className="btn secondary full" to="/register">{appStrings.auth.createAccount}</Link>
+          {blockedStatus === 'pending_approval' ? (
+            <Link className="btn ghost full" to="/register">{appStrings.auth.continueRegistration}</Link>
+          ) : null}
+        </div>
       </section>
     </main>
   );

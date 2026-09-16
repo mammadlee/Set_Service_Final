@@ -138,6 +138,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                   onEditPositions: _openPositionsSheet,
                   onEditSkills: _openSkillsSheet,
                   onEditExperience: _openExperienceSheet,
+                  onEditCv: () => _openCvSheet(worker),
                   onEditDocuments: () => _openDocumentsSheet(worker),
                 ),
                 const SizedBox(height: 14),
@@ -1147,6 +1148,110 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       ),
       onSave: () async => true,
     );
+  }
+
+  Future<void> _openCvSheet(WorkerMe worker) {
+    var sheetWorker = worker;
+    var sheetUploading = false;
+    var sheetDeleting = false;
+    double? sheetProgress;
+
+    return _showEditSheet(
+      title: 'CV',
+      icon: Icons.description_outlined,
+      saveLabel: 'Bağla',
+      builder: (setSheetState) => WorkerCvSection(
+        worker: sheetWorker,
+        uploading: sheetUploading,
+        deleting: sheetDeleting,
+        uploadProgress: sheetProgress,
+        errorMessage: _error,
+        successMessage: _success,
+        onUpload: () async {
+          setSheetState(() {
+            sheetUploading = true;
+            sheetProgress = null;
+          });
+          await _pickAndUploadDocument(
+            'cv',
+            onProgress: (value) {
+              setSheetState(() => sheetProgress = value);
+            },
+          );
+          if (!mounted) return;
+          setSheetState(() {
+            sheetWorker = context.read<AuthController>().worker ?? sheetWorker;
+            sheetUploading = false;
+            sheetProgress = null;
+          });
+        },
+        onOpen: (document) async {
+          await _openDocument(sheetWorker, document);
+          setSheetState(() {});
+        },
+        onDelete: () async {
+          final confirmed = await _confirmCvDeletion();
+          if (!confirmed || !mounted) return;
+          setSheetState(() => sheetDeleting = true);
+          final refreshed = await _deleteCv();
+          if (!mounted) return;
+          setSheetState(() {
+            if (refreshed != null) sheetWorker = refreshed;
+            sheetDeleting = false;
+          });
+        },
+      ),
+      onSave: () async => true,
+    );
+  }
+
+  Future<bool> _confirmCvDeletion() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('CV silinsin?'),
+        content: const Text(
+          'Yüklənmiş CV profilinizdən silinəcək. İş təcrübəsi məlumatlarınız dəyişməyəcək.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Ləğv et'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sil'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<WorkerMe?> _deleteCv() async {
+    setState(() {
+      _error = null;
+      _success = null;
+    });
+    try {
+      await context.read<WorkerRepository>().deleteDocument(type: 'cv');
+      if (!mounted) return null;
+      final refreshed = await context
+          .read<AuthController>()
+          .refreshWorkerProfile();
+      if (!mounted) return refreshed;
+      setState(() {
+        _hydrated = false;
+        _future = Future<WorkerMe>.value(refreshed);
+        _success = 'CV silindi.';
+      });
+      return refreshed;
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'CV silinmədi. Yenidən cəhd edin.');
+    }
+    return null;
   }
 
   Future<void> _openDocument(WorkerMe worker, WorkerDocument document) async {

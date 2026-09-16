@@ -388,6 +388,201 @@ class _ExperienceEditorSection extends StatelessWidget {
   }
 }
 
+class WorkerCvSection extends StatelessWidget {
+  const WorkerCvSection({
+    required this.worker,
+    required this.uploading,
+    required this.deleting,
+    required this.uploadProgress,
+    required this.errorMessage,
+    required this.successMessage,
+    required this.onUpload,
+    required this.onOpen,
+    required this.onDelete,
+    super.key,
+  });
+
+  final WorkerMe worker;
+  final bool uploading;
+  final bool deleting;
+  final double? uploadProgress;
+  final String? errorMessage;
+  final String? successMessage;
+  final Future<void> Function() onUpload;
+  final Future<void> Function(WorkerDocument document) onOpen;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    WorkerDocument? cv;
+    for (final document in worker.documents) {
+      if (document.type == 'cv') {
+        cv = document;
+        break;
+      }
+    }
+    final cvDocument = cv;
+    final busy = uploading || deleting;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionTitle(icon: Icons.description_outlined, title: 'CV'),
+        const SizedBox(height: 10),
+        Text(
+          'İş təcrübəniz və peşəkar məlumatlarınız olan CV faylını yükləyin.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: BrandColors.mutedBrown,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (uploading) ...[
+          Semantics(
+            label: 'CV yüklənir',
+            value: uploadProgress == null
+                ? null
+                : '${(uploadProgress! * 100).round()} faiz',
+            child: LinearProgressIndicator(value: uploadProgress),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            uploadProgress == null
+                ? 'CV yüklənir...'
+                : 'CV ${(uploadProgress! * 100).round()}% yüklənib',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: BrandColors.mutedBrown,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (deleting) ...[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+          Text(
+            'CV silinir...',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: BrandColors.mutedBrown,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (errorMessage != null) ...[
+          InlineMessage(message: errorMessage!, kind: InlineMessageKind.error),
+          const SizedBox(height: 12),
+        ],
+        if (successMessage != null) ...[
+          InlineMessage(
+            message: successMessage!,
+            kind: InlineMessageKind.success,
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (cvDocument == null) ...[
+          const InlineMessage(
+            key: ValueKey('worker-cv-empty'),
+            message: 'CV yüklənməyib.',
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: busy ? null : onUpload,
+              icon: const Icon(Icons.upload_file_outlined),
+              label: const Text('CV yüklə'),
+            ),
+          ),
+        ] else ...[
+          PremiumCard(
+            key: const ValueKey('worker-cv-card'),
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: BrandColors.primaryBurgundy.withValues(
+                          alpha: 0.08,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        cvDocument.mimeType == 'application/pdf'
+                            ? Icons.picture_as_pdf_outlined
+                            : Icons.description_outlined,
+                        color: BrandColors.primaryBurgundy,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'CV',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            _documentName(cvDocument),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 7),
+                          _DocumentStateBadge(document: cvDocument),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed:
+                          !busy &&
+                              cvDocument.available &&
+                              cvDocument.effectiveDownloadPath != null
+                          ? () => onOpen(cvDocument)
+                          : null,
+                      icon: const Icon(Icons.open_in_new_outlined),
+                      label: const Text('Bax'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: busy ? null : onUpload,
+                      icon: const Icon(Icons.refresh_outlined),
+                      label: const Text('Yenilə'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: busy ? null : onDelete,
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('Sil'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: BrandColors.primaryBurgundy,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class WorkerDocumentsSection extends StatelessWidget {
   const WorkerDocumentsSection({
     required this.worker,
@@ -412,6 +607,10 @@ class WorkerDocumentsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final documents = worker.documents
+        .where((document) => document.type != 'cv')
+        .toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -479,13 +678,13 @@ class WorkerDocumentsSection extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        if (worker.documents.isEmpty)
+        if (documents.isEmpty)
           const InlineMessage(
             key: ValueKey('worker-documents-empty'),
             message: 'Hələ sənəd yüklənməyib.',
           )
         else
-          ...worker.documents.map(
+          ...documents.map(
             (document) => Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: PremiumCard(

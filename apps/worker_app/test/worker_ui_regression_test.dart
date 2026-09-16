@@ -92,6 +92,37 @@ void main() {
     expect(worker.documents.last.effectiveDownloadPath, isNull);
   });
 
+  test('CV metadata is parsed independently without exposing storage keys', () {
+    final worker = WorkerMe.fromJson({
+      ..._workerJson(),
+      'documents': [
+        {
+          'type': 'cv',
+          'name': 'Rena-Aliyeva-CV.pdf',
+          'key': 'workers/worker-1/documents/cv/private-object.pdf',
+          'mime_type': 'application/pdf',
+          'size_bytes': 512000,
+          'uploaded_at': '2026-09-16T08:30:00.000Z',
+          'company_visible': false,
+          'status': 'ready',
+          'scan_status': 'clean',
+          'available': true,
+          'download_url': '/v1/workers/worker-1/documents/cv/download',
+        },
+      ],
+    });
+
+    expect(worker.documents, hasLength(1));
+    expect(worker.documents.single.type, 'cv');
+    expect(worker.documents.single.name, 'Rena-Aliyeva-CV.pdf');
+    expect(worker.documents.single.companyVisible, isFalse);
+    expect(
+      worker.documents.single.effectiveDownloadPath,
+      '/v1/workers/worker-1/documents/cv/download',
+    );
+    expect(worker.toString(), isNot(contains('private-object.pdf')));
+  });
+
   testWidgets('avatar follows worker photo changes and has safe fallbacks', (
     tester,
   ) async {
@@ -224,6 +255,122 @@ void main() {
     expect(find.text('Müəssisəyə görünür'), findsOneWidget);
     expect(find.text('Açmaq üçün toxunun'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'CV section is optional and exposes view replace delete actions',
+    (tester) async {
+      var uploads = 0;
+      var opens = 0;
+      var deletes = 0;
+
+      await tester.pumpWidget(
+        _testApp(
+          WorkerCvSection(
+            worker: _worker(),
+            uploading: false,
+            deleting: false,
+            uploadProgress: null,
+            errorMessage: null,
+            successMessage: null,
+            onUpload: () async => uploads += 1,
+            onOpen: (_) async => opens += 1,
+            onDelete: () async => deletes += 1,
+          ),
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('worker-cv-empty')), findsOneWidget);
+      expect(find.text('CV yüklənməyib.'), findsOneWidget);
+      expect(
+        find.text(
+          'İş təcrübəniz və peşəkar məlumatlarınız olan CV faylını yükləyin.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('CV yüklə'));
+      await tester.pump();
+      expect(uploads, 1);
+
+      final withCv = _worker(
+        documents: const [
+          WorkerDocument(
+            type: 'cv',
+            name: 'Rena-Aliyeva-CV.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 512000,
+            uploadedAt: '2026-09-16T08:30:00.000Z',
+            companyVisible: false,
+            status: 'ready',
+            scanStatus: 'clean',
+            available: true,
+            downloadUrl: '/v1/workers/worker-1/documents/cv/download',
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        _testApp(
+          WorkerCvSection(
+            worker: withCv,
+            uploading: false,
+            deleting: false,
+            uploadProgress: null,
+            errorMessage: null,
+            successMessage: null,
+            onUpload: () async => uploads += 1,
+            onOpen: (_) async => opens += 1,
+            onDelete: () async => deletes += 1,
+          ),
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('worker-cv-card')), findsOneWidget);
+      expect(find.text('Rena-Aliyeva-CV.pdf'), findsOneWidget);
+      expect(find.text('Yüklənib'), findsOneWidget);
+      await tester.tap(find.text('Bax'));
+      await tester.tap(find.text('Yenilə'));
+      await tester.tap(find.text('Sil'));
+      await tester.pump();
+      expect(opens, 1);
+      expect(uploads, 2);
+      expect(deletes, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('CV stays out of the existing arayis document list', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _testApp(
+        WorkerDocumentsSection(
+          worker: _worker(
+            documents: const [
+              WorkerDocument(
+                type: 'cv',
+                name: 'Rena-Aliyeva-CV.pdf',
+                status: 'ready',
+                scanStatus: 'clean',
+                available: true,
+              ),
+            ],
+          ),
+          uploading: false,
+          uploadProgress: null,
+          errorMessage: null,
+          successMessage: null,
+          onUploadHealthCertificate: _noopAsync,
+          onUploadCriminalRecord: _noopAsync,
+          onOpenDocument: (_) async {},
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('worker-documents-empty')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('worker-document-cv')), findsNothing);
   });
 
   testWidgets('selectable skill chip keeps geometry and wraps when narrow', (

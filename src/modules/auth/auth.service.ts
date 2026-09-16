@@ -653,6 +653,7 @@ export async function registerCompany(input: CompanyRegisterInput, ip?: string) 
   return {
     user_id: user.id,
     company_id: user.company.id,
+    company_name: user.company.name,
     status: user.company.status,
     otp_sent: true,
   };
@@ -693,7 +694,7 @@ export async function completeCompanyRegistration(input: CompanyCompleteRegistra
       session_version: user.session_version,
     }),
     email_verified: Boolean(user.email_verified_at),
-    required_document_types: ['registration_certificate'],
+    required_document_types: [],
     message: 'OTP təsdiqləndi. Müəssisə admin təsdiqini gözləyir.',
   };
 }
@@ -719,6 +720,53 @@ export async function loginCompany(input: CompanyLoginInput, ip?: string) {
   }
 
   return buildTokenResponse(user.id, user.role, ip);
+}
+
+/**
+ * Re-opens only the narrow post-OTP enrollment session for a company that is
+ * still waiting for approval. This deliberately does not create a normal web
+ * session or bypass company approval; the returned registration token is
+ * accepted only by requireEnrollmentAuth routes.
+ */
+export async function resumeCompanyEnrollment(input: CompanyLoginInput) {
+  const email = normalizeEmail(input.email);
+  const user = await prisma.user.findUnique({ where: { email }, include: { company: true } });
+
+  if (!user || user.role !== 'company' || !user.company || !(await verifyPassword(input.password, user.password_hash))) {
+    await recordLoginFailed(null, 'company', 'company_enrollment', email, { reason: 'invalid_credentials' });
+    throw Errors.unauthorized('Email və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
+  }
+  if (!user.is_active || user.deleted_at || user.company.deleted_at) {
+    throw Errors.forbidden('Hesab aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
+  if (!user.password_set_at) {
+    throw Errors.conflict(
+      'Müəssisə qeydiyyatını əvvəlcə telefon OTP-si ilə tamamlayın.',
+      'COMPANY_REGISTRATION_INCOMPLETE',
+      { status: user.company.status },
+    );
+  }
+  if (user.company.status !== 'pending_approval') {
+    throw Errors.forbidden(
+      'Bu müəssisə hesabı qeydiyyat sənədi qəbul etmir.',
+      'COMPANY_ENROLLMENT_CLOSED',
+      { status: user.company.status },
+    );
+  }
+
+  return {
+    user_id: user.id,
+    company_id: user.company.id,
+    company_name: user.company.name,
+    status: user.company.status,
+    registration_access_token: signRegistrationToken({
+      sub: user.id,
+      role: user.role,
+      session_version: user.session_version,
+    }),
+    email_verified: Boolean(user.email_verified_at),
+    required_document_types: [],
+  };
 }
 
 export async function forgotCompanyPassword(input: CompanyForgotPasswordInput, ip?: string) {

@@ -531,7 +531,6 @@ function companyApprovalPrerequisites(company: {
   id: string;
   name: string;
   status: string;
-  documents: unknown;
   user: {
     name: string;
     phone: string;
@@ -552,13 +551,6 @@ function companyApprovalPrerequisites(company: {
   if (!company.user.phone.trim()) missing.push('phone');
   if (!company.name.trim()) missing.push('company_name');
   if (!company.user.email || !company.user.email_verified_at) missing.push('verified_email');
-  const required = normalizeCompanyDocuments(company.documents).find((item) => item.type === 'registration_certificate');
-  if (
-    !required?.key
-    || required.status !== 'ready'
-    || required.scan_status !== 'clean'
-    || !privateDocumentKeyBelongsToCompany(required.key, company.id, 'registration_certificate')
-  ) missing.push('document:registration_certificate');
   return missing;
 }
 

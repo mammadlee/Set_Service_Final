@@ -12,6 +12,7 @@ interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined | null>;
   auth?: boolean;
   retry?: boolean;
+  bearerToken?: string;
 }
 
 let onUnauthorized: (() => void) | undefined;
@@ -47,15 +48,22 @@ async function send(path: string, options: RequestOptions) {
   });
 
   const headers = new Headers({ accept: 'application/json' });
+  const requestBody: BodyInit | undefined = options.body === undefined
+    ? undefined
+    : JSON.stringify(options.body);
   if (options.body !== undefined) headers.set('content-type', 'application/json');
 
   const token = tokenStore.getAccessToken();
-  if (options.auth !== false && token) headers.set('authorization', `Bearer ${token}`);
+  if (options.bearerToken) {
+    headers.set('authorization', `Bearer ${options.bearerToken}`);
+  } else if (options.auth !== false && token) {
+    headers.set('authorization', `Bearer ${token}`);
+  }
 
   return fetch(url, {
     method: options.method ?? 'GET',
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: requestBody,
     cache: 'no-store',
     credentials: 'include',
     referrerPolicy: 'no-referrer',

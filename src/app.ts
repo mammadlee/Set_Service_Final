@@ -100,6 +100,7 @@ app.use('/v1/auth/email-verification/confirm', authLimiter);
 app.use('/v1/auth/company/register', authLimiter);
 app.use('/v1/auth/company/complete-registration', authLimiter);
 app.use('/v1/auth/company/login', authLimiter);
+app.use('/v1/auth/company/web-enrollment-login', authLimiter);
 app.use('/v1/auth/company/web-login', authLimiter);
 app.use('/v1/auth/company/web-refresh', authLimiter);
 app.use('/v1/auth/company/forgot-password', authLimiter);

@@ -73,21 +73,21 @@ const approvalError = Object.assign(new Error('Company registration prerequisite
   code: 'APPROVAL_PREREQUISITES_MISSING',
   status: 409,
   details: {
-    missing: ['verified_email', 'document:registration_certificate'],
+    missing: ['verified_email'],
   },
 });
 const localizedApprovalError = apiErrorMessage(approvalError);
 assert.match(localizedApprovalError, /e-poçt ünvanı təsdiqlənməlidir/);
-assert.match(localizedApprovalError, /qeydiyyat şəhadətnaməsi/);
+assert.doesNotMatch(localizedApprovalError, /qeydiyyat şəhadətnaməsi/);
 assert.doesNotMatch(localizedApprovalError, /prerequisites/i);
 
 const read = (relativePath: string) => fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 const companyPage = read('apps/admin_panel/src/features/companies/CompanyDetailPage.tsx');
 const reportsService = read('src/modules/reports/reports.service.ts');
 
-assert.ok(companyPage.includes('approvalBlockedByDocument'));
-assert.ok(companyPage.includes("registrationCertificate.status === 'ready'"));
-assert.ok(companyPage.includes("registrationCertificate.scan_status === 'clean'"));
+assert.ok(!companyPage.includes('approvalBlockedByDocument'));
+assert.ok(!companyPage.includes('registrationCertificate'));
+assert.ok(companyPage.includes('disabled={!awaitingApproval}'));
 assert.ok(reportsService.includes('status: { in: ORDER_ATTENDANCE_STATUSES }'));
 
 console.log('admin-operations-regression: OK');

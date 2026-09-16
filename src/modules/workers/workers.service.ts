@@ -1349,7 +1349,7 @@ async function getDocumentEnrollmentWorkerRecord(userId: string) {
   return worker;
 }
 
-type WorkerDocumentType = 'health_certificate' | 'criminal_record';
+type WorkerDocumentType = 'health_certificate' | 'criminal_record' | 'cv';
 
 type WorkerDocument = {
   type: string;
@@ -1374,7 +1374,7 @@ type StoredObjectCleanup = {
 };
 
 function parseWorkerDocumentType(value: string | undefined): WorkerDocumentType {
-  if (value === 'health_certificate' || value === 'criminal_record') return value;
+  if (value === 'health_certificate' || value === 'criminal_record' || value === 'cv') return value;
   throw Errors.badRequest('Invalid worker document type.', 'INVALID_DOCUMENT_TYPE');
 }
 
