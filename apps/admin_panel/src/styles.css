@@ -1326,6 +1326,80 @@ td strong,
 }
 
 @media (max-width: 768px) {
+  .auth-page {
+    min-height: 100dvh;
+    place-items: start center;
+    background: var(--bg);
+    padding: calc(env(safe-area-inset-top) + 32px) max(18px, env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 24px) max(18px, env(safe-area-inset-left));
+  }
+
+  .auth-card {
+    width: min(420px, 100%);
+    min-width: 0;
+    margin: 0 auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .login-brand {
+    gap: 10px;
+    margin-bottom: 30px;
+  }
+
+  .login-brand .brand-mark {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    font-size: 0.72rem;
+  }
+
+  .login-brand strong {
+    font-size: 0.95rem;
+  }
+
+  .login-brand span {
+    font-size: 0.78rem;
+  }
+
+  .auth-heading {
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+
+  .auth-heading > svg {
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    margin-top: 2px;
+  }
+
+  .auth-heading h1 {
+    font-size: 1.4rem;
+    line-height: 1.2;
+  }
+
+  .auth-heading p {
+    max-width: 36ch;
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .auth-card .form-stack {
+    gap: 16px;
+  }
+
+  .auth-card .field input,
+  .auth-card .btn {
+    min-height: 48px;
+  }
+
+  .auth-card .field input {
+    font-size: 1rem;
+  }
+
   .admin-shell {
     display: block;
     min-height: 100dvh;
@@ -1677,6 +1751,102 @@ td strong,
     font-weight: 800;
     letter-spacing: 0.02em;
     text-transform: uppercase;
+  }
+
+  .entity-card-table .mobile-identity-card {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px 14px;
+  }
+
+  .entity-card-table .mobile-identity-card > td {
+    grid-column: 1 / -1;
+  }
+
+  .entity-card-table .mobile-card-primary {
+    display: block;
+    order: 1;
+    padding: 3px 0 12px;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .entity-card-table .mobile-card-primary::before {
+    display: none;
+  }
+
+  .mobile-card-title {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 1.03rem;
+    font-weight: 800;
+    line-height: 1.35;
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
+    text-wrap: pretty;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .mobile-card-tag {
+    margin-top: 8px;
+  }
+
+  .entity-card-table .mobile-card-select {
+    order: 0;
+    min-height: 44px;
+    align-items: center;
+    padding: 0 0 8px;
+  }
+
+  .entity-card-table .mobile-card-select .checkbox-touch-target {
+    justify-self: end;
+  }
+
+  .entity-card-table .mobile-card-status {
+    order: 2;
+  }
+
+  .entity-card-table .mobile-card-phone {
+    order: 3;
+  }
+
+  .worker-card-table .mobile-card-position,
+  .company-card-table .mobile-card-contact {
+    order: 4;
+  }
+
+  .worker-card-table .mobile-card-class,
+  .company-card-table .mobile-card-action {
+    order: 5;
+  }
+
+  .worker-card-table .mobile-card-availability {
+    order: 6;
+  }
+
+  .worker-card-table .mobile-card-action {
+    order: 7;
+  }
+
+  .mobile-card-value,
+  .mobile-card-status-value {
+    min-width: 0;
+  }
+
+  .mobile-card-natural-value {
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
+  }
+
+  .mobile-card-phone-value {
+    white-space: nowrap;
+  }
+
+  .mobile-card-status-value .badge {
+    max-width: 100%;
   }
 
   .responsive-table td:last-child {

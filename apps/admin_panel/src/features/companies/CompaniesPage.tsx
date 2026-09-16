@@ -38,15 +38,23 @@ export function CompaniesPage() {
         <section className="panel">
           {companies.data.data.length === 0 ? <EmptyState message={appStrings.companies.empty} /> : (
             <div className="table-wrap">
-              <table className="responsive-table">
+              <table className="responsive-table entity-card-table company-card-table">
                 <thead><tr><th>{appStrings.companies.name}</th><th>{appStrings.companies.contact}</th><th>{appStrings.companies.phone}</th><th>{appStrings.companies.status}</th><th /></tr></thead>
                 <tbody>
                   {companies.data.data.map((company) => (
-                    <tr key={company.id}>
-                      <td data-label={appStrings.companies.name}><strong>{company.name}</strong></td>
-                      <td data-label={appStrings.companies.contact}>{company.contact_name || appStrings.notAvailable}</td>
-                      <td data-label={appStrings.companies.phone}>{company.phone}</td>
-                      <td data-label={appStrings.companies.status}><StatusBadge status={company.status} /></td>
+                    <tr className="mobile-identity-card" key={company.id}>
+                      <td className="mobile-card-primary" data-label={appStrings.companies.name}>
+                        <strong className="mobile-card-title">{company.name}</strong>
+                      </td>
+                      <td className="mobile-card-contact" data-label={appStrings.companies.contact}>
+                        <span className="mobile-card-value mobile-card-natural-value">{company.contact_name || appStrings.notAvailable}</span>
+                      </td>
+                      <td className="mobile-card-phone" data-label={appStrings.companies.phone}>
+                        <span className="mobile-card-value mobile-card-phone-value">{company.phone}</span>
+                      </td>
+                      <td className="mobile-card-status" data-label={appStrings.companies.status}>
+                        <span className="mobile-card-status-value"><StatusBadge status={company.status} /></span>
+                      </td>
                       <td className="mobile-card-action"><Link className="link-btn" to={`/companies/${company.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}

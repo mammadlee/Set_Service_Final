@@ -122,7 +122,7 @@ export function WorkersPage() {
             <EmptyState message={appStrings.workers.empty} />
           ) : (
             <div className="table-wrap">
-              <table className="responsive-table">
+              <table className="responsive-table entity-card-table worker-card-table">
                 <thead>
                   <tr>
                     {canManageWorkers ? (
@@ -141,23 +141,33 @@ export function WorkersPage() {
                 </thead>
                 <tbody>
                   {workers.data.data.map((worker) => (
-                    <tr key={worker.id}>
+                    <tr className="mobile-identity-card" key={worker.id}>
                       {canManageWorkers ? (
-                        <td data-label="Seç">
+                        <td className="mobile-card-select" data-label="Seç">
                           <label className="checkbox-touch-target">
                             <input type="checkbox" checked={selectedIds.includes(worker.id)} onChange={() => toggleSelected(worker.id)} aria-label={`${worker.name} seç`} />
                           </label>
                         </td>
                       ) : null}
-                      <td data-label={appStrings.workers.name}>
-                        <strong>{worker.name}</strong>
-                        {worker.is_foc_training ? <span className="foc-badge">F.O.C. təlim</span> : null}
+                      <td className="mobile-card-primary" data-label={appStrings.workers.name}>
+                        <strong className="mobile-card-title">{worker.name}</strong>
+                        {worker.is_foc_training ? <span className="foc-badge mobile-card-tag">F.O.C. təlim</span> : null}
                       </td>
-                      <td data-label={appStrings.workers.phone}>{worker.phone}</td>
-                      <td data-label={appStrings.workers.position}>{worker.position || appStrings.notAvailable}</td>
-                      <td data-label={appStrings.workers.workerClass}>{worker.worker_class || appStrings.workers.noWorkerClass}</td>
-                      <td data-label={appStrings.workers.status}><StatusBadge status={worker.status} /></td>
-                      <td data-label={appStrings.workers.availability}>{worker.availability ? appStrings.yes : appStrings.no}</td>
+                      <td className="mobile-card-phone" data-label={appStrings.workers.phone}>
+                        <span className="mobile-card-value mobile-card-phone-value">{worker.phone}</span>
+                      </td>
+                      <td className="mobile-card-position" data-label={appStrings.workers.position}>
+                        <span className="mobile-card-value mobile-card-natural-value">{worker.position || appStrings.notAvailable}</span>
+                      </td>
+                      <td className="mobile-card-class" data-label={appStrings.workers.workerClass}>
+                        <span className="mobile-card-value">{worker.worker_class || appStrings.workers.noWorkerClass}</span>
+                      </td>
+                      <td className="mobile-card-status" data-label={appStrings.workers.status}>
+                        <span className="mobile-card-status-value"><StatusBadge status={worker.status} /></span>
+                      </td>
+                      <td className="mobile-card-availability" data-label={appStrings.workers.availability}>
+                        <span className="mobile-card-value">{worker.availability ? appStrings.yes : appStrings.no}</span>
+                      </td>
                       <td className="mobile-card-action"><Link className="link-btn" to={`/workers/${worker.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}

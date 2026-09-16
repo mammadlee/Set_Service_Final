@@ -48,8 +48,8 @@ export const appStrings = {
   },
 
   auth: {
-    title: 'SET Service admin paneli',
-    subtitle: 'İşçi qüvvəsi əməliyyat paneli',
+    title: 'SET Service',
+    subtitle: 'Admin paneli',
     loginTitle: 'Admin girişi',
     loginDescription: 'Davam etmək üçün daxili admin e-poçtunu və şifrəsini daxil edin.',
     email: 'E-poçt',
