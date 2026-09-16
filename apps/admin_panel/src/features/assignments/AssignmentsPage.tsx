@@ -321,7 +321,7 @@ export function AssignmentsPage() {
             <>
               {assignments.data.data.length === 0 ? <EmptyState message={appStrings.assignments.empty} /> : (
                 <div className="table-wrap">
-                  <table>
+                  <table className="responsive-table">
                     <thead>
                       <tr>
                         <th>{appStrings.assignments.worker}</th>
@@ -335,15 +335,15 @@ export function AssignmentsPage() {
                     <tbody>
                       {assignments.data.data.map((assignment) => (
                         <tr key={assignment.id}>
-                          <td>
+                          <td data-label={appStrings.assignments.worker}>
                             <strong>{assignment.worker.name}</strong>
                             <span className="table-subtext">{assignment.worker.phone}</span>
                           </td>
-                          <td>{assignment.order.title}</td>
-                          <td>{assignment.order.company.name}</td>
-                          <td><StatusBadge status={assignment.status} /></td>
-                          <td>{formatDateTime(assignment.assigned_at)}</td>
-                          <td>
+                          <td data-label={appStrings.assignments.order}>{assignment.order.title}</td>
+                          <td data-label={appStrings.assignments.company}>{assignment.order.company.name}</td>
+                          <td data-label={appStrings.assignments.status}><StatusBadge status={assignment.status} /></td>
+                          <td data-label={appStrings.assignments.assignedAt}>{formatDateTime(assignment.assigned_at)}</td>
+                          <td className="mobile-card-action">
                             <div className="table-actions">
                               <Link className="link-btn" to={`/assignments/${assignment.id}`}>{appStrings.view}</Link>
                               {canManageAssignments ? (

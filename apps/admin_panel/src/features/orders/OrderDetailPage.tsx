@@ -1,5 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../../app/auth/AuthProvider';
+import { hasPermission } from '../../shared/auth/permissions';
 import { PageHeader } from '../../shared/components/PageHeader';
 import { ErrorState, LoadingState } from '../../shared/components/StateBlock';
 import { StatusBadge } from '../../shared/components/StatusBadge';
@@ -10,6 +12,8 @@ import { ordersService } from './orders.service';
 
 export function OrderDetailPage() {
   const { id = '' } = useParams();
+  const { user } = useAuth();
+  const canViewAssignments = hasPermission(user, 'view_assignments');
   const order = useAsync(() => ordersService.get(id), [id]);
 
   return (
@@ -42,7 +46,7 @@ export function OrderDetailPage() {
             </dl>
             <h3>{appStrings.orders.categoryRequirements}</h3>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>{appStrings.orders.category}</th>
@@ -61,9 +65,9 @@ export function OrderDetailPage() {
                       }]
                   ).map((item) => (
                     <tr key={item.id ?? item.category}>
-                      <td>{item.category}</td>
-                      <td>{item.required_count}</td>
-                      <td>{item.assigned_count ?? 0}</td>
+                      <td data-label={appStrings.orders.category}>{item.category}</td>
+                      <td data-label={appStrings.orders.requiredWorkers}>{item.required_count}</td>
+                      <td data-label={appStrings.orders.assigned}>{item.assigned_count ?? 0}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -75,15 +79,20 @@ export function OrderDetailPage() {
             <h2>{appStrings.orders.assignments}</h2>
             {order.data.assignments && order.data.assignments.length > 0 ? (
               <div className="table-wrap">
-                <table>
-                  <thead><tr><th>ID</th><th>{appStrings.orders.worker}</th><th>{appStrings.orders.category}</th><th>{appStrings.orders.status}</th></tr></thead>
+                <table className="responsive-table">
+                  <thead><tr><th>ID</th><th>{appStrings.orders.worker}</th><th>{appStrings.orders.category}</th><th>{appStrings.orders.status}</th>{canViewAssignments ? <th /> : null}</tr></thead>
                   <tbody>
                     {order.data.assignments.map((assignment) => (
                       <tr key={assignment.id}>
-                        <td>{shortId(assignment.id)}</td>
-                        <td>{shortId(assignment.worker_id)}</td>
-                        <td>{assignment.assigned_category ?? assignment.category ?? appStrings.notAvailable}</td>
-                        <td><StatusBadge status={assignment.status} /></td>
+                        <td data-label="ID">{shortId(assignment.id)}</td>
+                        <td data-label={appStrings.orders.worker}>{shortId(assignment.worker_id)}</td>
+                        <td data-label={appStrings.orders.category}>{assignment.assigned_category ?? assignment.category ?? appStrings.notAvailable}</td>
+                        <td data-label={appStrings.orders.status}><StatusBadge status={assignment.status} /></td>
+                        {canViewAssignments ? (
+                          <td className="mobile-card-action">
+                            <Link className="link-btn" to={`/assignments/${assignment.id}`}>{appStrings.view}</Link>
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>

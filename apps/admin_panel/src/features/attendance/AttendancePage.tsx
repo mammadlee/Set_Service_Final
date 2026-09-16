@@ -1,6 +1,8 @@
-import { Search } from 'lucide-react';
+import { QrCode, Search } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../app/auth/AuthProvider';
+import { hasPermission } from '../../shared/auth/permissions';
 import { PageHeader } from '../../shared/components/PageHeader';
 import { EmptyState, ErrorState, LoadingState } from '../../shared/components/StateBlock';
 import { StatusBadge } from '../../shared/components/StatusBadge';
@@ -11,6 +13,8 @@ import { attendanceService } from './attendance.service';
 import type { AttendanceLog } from '../../shared/api/types';
 
 export function AttendancePage() {
+  const { user } = useAuth();
+  const canManageKiosks = hasPermission(user, 'manage_kiosks');
   const [page, setPage] = useState(1);
   const [assignmentId, setAssignmentId] = useState('');
   const [orderId, setOrderId] = useState('');
@@ -33,6 +37,12 @@ export function AttendancePage() {
       <PageHeader
         title={appStrings.attendance.title}
         description={appStrings.attendance.description}
+        actions={canManageKiosks ? (
+          <Link className="btn secondary" to="/attendance/qr-display">
+            <QrCode size={17} />
+            {appStrings.nav.qrDisplay}
+          </Link>
+        ) : null}
       />
 
       <div className="toolbar">
@@ -61,7 +71,7 @@ export function AttendancePage() {
         <section className="panel">
           {attendance.data.data.length === 0 ? <EmptyState message={appStrings.attendance.empty} /> : (
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     <th>{appStrings.attendance.worker}</th>
@@ -76,19 +86,19 @@ export function AttendancePage() {
                 <tbody>
                   {attendance.data.data.map((record) => (
                     <tr key={record.id}>
-                      <td>
+                      <td data-label={appStrings.attendance.worker}>
                         <strong>{record.assignment.worker.name}</strong>
                         <span className="table-subtext">{record.assignment.worker.phone}</span>
                       </td>
-                      <td>
+                      <td data-label={appStrings.attendance.order}>
                         {record.assignment.order.title}
                         <span className="table-subtext">{record.assignment.order.company.name}</span>
                       </td>
-                      <td>{shortId(record.assignment_id)}</td>
-                      <td><StatusBadge status={attendanceStatus(record)} /></td>
-                      <td>{formatDateTime(record.checkin_time)}</td>
-                      <td>{formatDateTime(record.checkout_time)}</td>
-                      <td><Link className="link-btn" to={`/attendance/${record.id}`}>{appStrings.view}</Link></td>
+                      <td data-label={appStrings.attendance.assignment}>{shortId(record.assignment_id)}</td>
+                      <td data-label={appStrings.attendance.status}><StatusBadge status={attendanceStatus(record)} /></td>
+                      <td data-label={appStrings.attendance.checkIn}>{formatDateTime(record.checkin_time)}</td>
+                      <td data-label={appStrings.attendance.checkOut}>{formatDateTime(record.checkout_time)}</td>
+                      <td className="mobile-card-action"><Link className="link-btn" to={`/attendance/${record.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}
                 </tbody>

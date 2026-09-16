@@ -122,7 +122,7 @@ export function WorkersPage() {
             <EmptyState message={appStrings.workers.empty} />
           ) : (
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table">
                 <thead>
                   <tr>
                     {canManageWorkers ? (
@@ -143,20 +143,22 @@ export function WorkersPage() {
                   {workers.data.data.map((worker) => (
                     <tr key={worker.id}>
                       {canManageWorkers ? (
-                        <td>
-                          <input type="checkbox" checked={selectedIds.includes(worker.id)} onChange={() => toggleSelected(worker.id)} aria-label={`${worker.name} seç`} />
+                        <td data-label="Seç">
+                          <label className="checkbox-touch-target">
+                            <input type="checkbox" checked={selectedIds.includes(worker.id)} onChange={() => toggleSelected(worker.id)} aria-label={`${worker.name} seç`} />
+                          </label>
                         </td>
                       ) : null}
-                      <td>
+                      <td data-label={appStrings.workers.name}>
                         <strong>{worker.name}</strong>
                         {worker.is_foc_training ? <span className="foc-badge">F.O.C. təlim</span> : null}
                       </td>
-                      <td>{worker.phone}</td>
-                      <td>{worker.position || appStrings.notAvailable}</td>
-                      <td>{worker.worker_class || appStrings.workers.noWorkerClass}</td>
-                      <td><StatusBadge status={worker.status} /></td>
-                      <td>{worker.availability ? appStrings.yes : appStrings.no}</td>
-                      <td><Link className="link-btn" to={`/workers/${worker.id}`}>{appStrings.view}</Link></td>
+                      <td data-label={appStrings.workers.phone}>{worker.phone}</td>
+                      <td data-label={appStrings.workers.position}>{worker.position || appStrings.notAvailable}</td>
+                      <td data-label={appStrings.workers.workerClass}>{worker.worker_class || appStrings.workers.noWorkerClass}</td>
+                      <td data-label={appStrings.workers.status}><StatusBadge status={worker.status} /></td>
+                      <td data-label={appStrings.workers.availability}>{worker.availability ? appStrings.yes : appStrings.no}</td>
+                      <td className="mobile-card-action"><Link className="link-btn" to={`/workers/${worker.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}
                 </tbody>

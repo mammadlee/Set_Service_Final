@@ -38,16 +38,16 @@ export function CompaniesPage() {
         <section className="panel">
           {companies.data.data.length === 0 ? <EmptyState message={appStrings.companies.empty} /> : (
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table">
                 <thead><tr><th>{appStrings.companies.name}</th><th>{appStrings.companies.contact}</th><th>{appStrings.companies.phone}</th><th>{appStrings.companies.status}</th><th /></tr></thead>
                 <tbody>
                   {companies.data.data.map((company) => (
                     <tr key={company.id}>
-                      <td>{company.name}</td>
-                      <td>{company.contact_name || appStrings.notAvailable}</td>
-                      <td>{company.phone}</td>
-                      <td><StatusBadge status={company.status} /></td>
-                      <td><Link className="link-btn" to={`/companies/${company.id}`}>{appStrings.view}</Link></td>
+                      <td data-label={appStrings.companies.name}><strong>{company.name}</strong></td>
+                      <td data-label={appStrings.companies.contact}>{company.contact_name || appStrings.notAvailable}</td>
+                      <td data-label={appStrings.companies.phone}>{company.phone}</td>
+                      <td data-label={appStrings.companies.status}><StatusBadge status={company.status} /></td>
+                      <td className="mobile-card-action"><Link className="link-btn" to={`/companies/${company.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}
                 </tbody>

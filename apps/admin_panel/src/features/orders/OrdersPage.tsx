@@ -1,4 +1,6 @@
-import { Search } from 'lucide-react';
+import { ClipboardList, Search } from 'lucide-react';
+import { useAuth } from '../../app/auth/AuthProvider';
+import { hasPermission } from '../../shared/auth/permissions';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order, OrderStatus } from '../../shared/api/types';
@@ -13,6 +15,8 @@ import { ordersService } from './orders.service';
 const statuses: Array<OrderStatus | ''> = ['', 'active', 'draft', 'completed', 'cancelled'];
 
 export function OrdersPage() {
+  const { user } = useAuth();
+  const canViewAssignments = hasPermission(user, 'view_assignments');
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<OrderStatus | ''>('');
   const [search, setSearch] = useState('');
@@ -20,7 +24,16 @@ export function OrdersPage() {
 
   return (
     <>
-      <PageHeader title={appStrings.orders.title} description={appStrings.orders.description} />
+      <PageHeader
+        title={appStrings.orders.title}
+        description={appStrings.orders.description}
+        actions={canViewAssignments ? (
+          <Link className="btn secondary" to="/assignments">
+            <ClipboardList size={17} />
+            Təyinatlara bax
+          </Link>
+        ) : null}
+      />
       <div className="toolbar">
         <label className="search-box">
           <Search size={17} />
@@ -37,18 +50,18 @@ export function OrdersPage() {
         <section className="panel">
           {orders.data.data.length === 0 ? <EmptyState message={appStrings.orders.empty} /> : (
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table">
                 <thead><tr><th>{appStrings.orders.orderTitle}</th><th>{appStrings.orders.company}</th><th>{appStrings.orders.category}</th><th>{appStrings.orders.status}</th><th>{appStrings.orders.workers}</th><th>{appStrings.orders.start}</th><th /></tr></thead>
                 <tbody>
                   {orders.data.data.map((order) => (
                     <tr key={order.id}>
-                      <td>{order.title}</td>
-                      <td>{order.company?.name || appStrings.notAvailable}</td>
-                      <td>{formatCategoryItems(order)}</td>
-                      <td><StatusBadge status={order.status} /></td>
-                      <td>{order.assignment_count}/{order.required_count}</td>
-                      <td>{formatDateTime(order.start_datetime)}</td>
-                      <td><Link className="link-btn" to={`/orders/${order.id}`}>{appStrings.view}</Link></td>
+                      <td data-label={appStrings.orders.orderTitle}><strong>{order.title}</strong></td>
+                      <td data-label={appStrings.orders.company}>{order.company?.name || appStrings.notAvailable}</td>
+                      <td data-label={appStrings.orders.category}>{formatCategoryItems(order)}</td>
+                      <td data-label={appStrings.orders.status}><StatusBadge status={order.status} /></td>
+                      <td data-label={appStrings.orders.workers}>{order.assignment_count}/{order.required_count}</td>
+                      <td data-label={appStrings.orders.start}>{formatDateTime(order.start_datetime)}</td>
+                      <td className="mobile-card-action"><Link className="link-btn" to={`/orders/${order.id}`}>{appStrings.view}</Link></td>
                     </tr>
                   ))}
                 </tbody>

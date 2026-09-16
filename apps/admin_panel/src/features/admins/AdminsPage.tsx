@@ -153,7 +153,7 @@ export function AdminsPage() {
               <EmptyState message="Hələ admin yaradılmayıb." />
             ) : (
               <div className="table-wrap">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>Ad</th>
@@ -166,18 +166,18 @@ export function AdminsPage() {
                   <tbody>
                     {admins.data.data.map((admin) => (
                       <tr key={admin.id}>
-                        <td>
+                        <td data-label="Ad">
                           <strong>{admin.name}</strong>
                           <span className="table-subtext">Admin paneli</span>
                         </td>
-                        <td>{admin.email}</td>
-                        <td>
+                        <td data-label="E-poçt">{admin.email}</td>
+                        <td data-label="Status">
                           <span className={`badge ${admin.is_active ? 'status-approved' : 'status-inactive'}`}>
                             {admin.is_active ? 'Aktiv' : 'Deaktiv'}
                           </span>
                         </td>
-                        <td>{admin.permissions.length}</td>
-                        <td>
+                        <td data-label="İcazə sayı">{admin.permissions.length}</td>
+                        <td className="mobile-card-action">
                           <button className="link-btn" type="button" onClick={() => startEdit(admin)}>
                             Redaktə et
                           </button>

@@ -383,7 +383,7 @@ function DepartmentTab({
 
       <TaxonomyTableTitle title="Şöbələr" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
               <th>Azərbaycan dilində adı</th>
@@ -395,10 +395,10 @@ function DepartmentTab({
           <tbody>
             {items.map((department) => (
               <tr key={department.id}>
-                <td><strong>{department.name_az}</strong></td>
-                <td>{department.name_en || '-'}</td>
-                <td><StatusBadge status={department.status} /></td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{department.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{department.name_en || '-'}</td>
+                <td data-label="Status"><StatusBadge status={department.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={department.status}
                     disabled={saving}
@@ -456,7 +456,7 @@ function SubdepartmentTab({
 
       <TaxonomyTableTitle title="Departamentlər" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
               <th>Azərbaycan dilində adı</th>
@@ -469,11 +469,11 @@ function SubdepartmentTab({
           <tbody>
             {items.map((subdepartment) => (
               <tr key={subdepartment.id}>
-                <td><strong>{subdepartment.name_az}</strong></td>
-                <td>{subdepartment.name_en || '-'}</td>
-                <td>{subdepartment.department.name_az}</td>
-                <td><StatusBadge status={subdepartment.status} /></td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{subdepartment.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{subdepartment.name_en || '-'}</td>
+                <td data-label="Şöbə">{subdepartment.department.name_az}</td>
+                <td data-label="Status"><StatusBadge status={subdepartment.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={subdepartment.status}
                     disabled={saving}
@@ -533,7 +533,7 @@ function PositionTab({
 
       <TaxonomyTableTitle title="Vəzifələr" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
               <th>Azərbaycan dilində adı</th>
@@ -546,14 +546,14 @@ function PositionTab({
           <tbody>
             {items.map((position) => (
               <tr key={position.id}>
-                <td><strong>{position.name_az}</strong></td>
-                <td>{position.name_en || '-'}</td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{position.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{position.name_en || '-'}</td>
+                <td data-label="Departament">
                   {position.department.name_az}
                   <span className="table-subtext">{position.subdepartment.name_az}</span>
                 </td>
-                <td><StatusBadge status={position.status} /></td>
-                <td>
+                <td data-label="Status"><StatusBadge status={position.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={position.status}
                     disabled={saving}

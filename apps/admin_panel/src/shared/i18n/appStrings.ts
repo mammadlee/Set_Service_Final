@@ -76,9 +76,6 @@ export const appStrings = {
     pendingCompanies: 'Təsdiq gözləyən müəssisələr',
     assignments: 'Təyinatlar',
     openAttendance: 'Açıq girişlər',
-    verifiedTitle: 'Əsas axın təsdiqlənib',
-    verifiedBody:
-      'Giriş, işçi təsdiqi, müəssisə sifarişi, admin təyinatı, işçi qəbulu və QR ilə giriş-çıxış axını təsdiq sınağından keçirilib.',
   },
 
   workers: {

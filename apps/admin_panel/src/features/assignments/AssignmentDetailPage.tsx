@@ -66,7 +66,7 @@ export function AssignmentDetailPage() {
               <dt>{appStrings.assignments.assignedAt}</dt><dd>{formatDateTime(assignment.data.assigned_at)}</dd>
             </dl>
             {canManageAssignments ? (
-              <div className="action-row">
+              <div className="action-row detail-actions destructive-only-actions">
                 <button
                   className="btn danger"
                   type="button"

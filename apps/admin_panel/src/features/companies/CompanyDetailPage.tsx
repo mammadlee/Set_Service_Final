@@ -78,7 +78,7 @@ export function CompanyDetailPage() {
               <dt>{appStrings.companies.rejectReason}</dt><dd>{company.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
             {canManageCompanies ? (
-              <div className="action-row">
+              <div className="action-row detail-actions">
                 <button className="btn primary" disabled={company.data.status === 'approved'} onClick={() => setAction('approve')}>{appStrings.companies.approve}</button>
                 <button className="btn danger" disabled={company.data.status === 'rejected'} onClick={() => setAction('reject')}>{appStrings.companies.reject}</button>
               </div>

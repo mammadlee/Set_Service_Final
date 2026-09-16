@@ -132,7 +132,7 @@ export function WorkerDetailPage() {
               <dt>{appStrings.workers.rejectReason}</dt><dd>{worker.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
             {canManageWorkers ? (
-              <div className="action-row">
+              <div className="action-row detail-actions">
                 <button className="btn primary" type="button" onClick={() => setAction('approve')} disabled={worker.data.status === 'approved'}>
                   {appStrings.workers.approve}
                 </button>
@@ -171,7 +171,7 @@ export function WorkerDetailPage() {
             {ratings.data && ratings.data.data.length === 0 ? <p className="muted">{appStrings.workers.noRatings}</p> : null}
             {ratings.data && ratings.data.data.length > 0 ? (
               <div className="table-wrap">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>{appStrings.workers.ratingScore}</th>
@@ -183,10 +183,10 @@ export function WorkerDetailPage() {
                   <tbody>
                     {ratings.data.data.map((rating) => (
                       <tr key={rating.id}>
-                        <td>{rating.score}/5</td>
-                        <td>{rating.order?.title || rating.order_id}</td>
-                        <td>{rating.feedback || rating.comment || appStrings.notAvailable}</td>
-                        <td>{formatDateTime(rating.created_at)}</td>
+                        <td data-label={appStrings.workers.ratingScore}>{rating.score}/5</td>
+                        <td data-label={appStrings.workers.ratingOrder}>{rating.order?.title || rating.order_id}</td>
+                        <td data-label={appStrings.workers.ratingFeedback}>{rating.feedback || rating.comment || appStrings.notAvailable}</td>
+                        <td data-label={appStrings.workers.ratingDate}>{formatDateTime(rating.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>
