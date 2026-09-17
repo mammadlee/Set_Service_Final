@@ -8,6 +8,7 @@ import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import '../controllers/auth_controller.dart';
+import 'enrollment_documents_section.dart';
 
 class PendingApprovalScreen extends StatelessWidget {
   const PendingApprovalScreen({super.key});
@@ -59,6 +60,13 @@ class PendingApprovalScreen extends StatelessWidget {
                       kind: InlineMessageKind.info,
                     ),
                     const SizedBox(height: 24),
+                    if (auth.documentSessionToken case final token?) ...[
+                      EnrollmentDocumentsSection(
+                        key: ValueKey(token),
+                        token: token,
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(

@@ -590,6 +590,13 @@ td strong,
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.detail-title > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .detail-title h2 {
@@ -672,6 +679,19 @@ td strong,
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
+}
+
+.document-description,
+.document-actions {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.document-actions {
+  display: grid;
+  gap: 8px;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .form-stack {
@@ -1924,6 +1944,11 @@ td strong,
 
   .document-list li > a,
   .document-list li > button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .document-actions > * {
     width: 100%;
     min-height: 44px;
   }

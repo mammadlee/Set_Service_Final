@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
+import { Errors } from '../../lib/errors';
 import { OrderStatus, Role } from '../../types/prisma';
 import {
   completeOrderWhenFinished,
@@ -70,6 +71,7 @@ export const kioskSessionInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true } },
     },
   },
   order: {
@@ -109,6 +111,7 @@ export const venueKioskInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true } },
     },
   },
   active_sessions: {
@@ -139,14 +142,14 @@ export type VenueKioskWithContext = Prisma.VenueKioskGetPayload<{
 export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: { id: true, status: true, deleted_at: true, user: { select: { is_active: true, deleted_at: true } } },
   });
 }
 
 export function findWorkerByUserId(userId: string) {
   return prisma.worker.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: { id: true, status: true, deleted_at: true, user: { select: { is_active: true, deleted_at: true } } },
   });
 }
 
@@ -161,6 +164,7 @@ export function findAcceptedAssignmentById(id: string) {
           title: true,
           status: true,
           company_id: true,
+          shift_end: true,
           deleted_at: true,
           company: { select: { id: true, name: true, status: true, user_id: true } },
         },
@@ -185,6 +189,7 @@ export function findAcceptedAssignmentForWorkerOrder(workerId: string, orderId: 
           title: true,
           status: true,
           company_id: true,
+          shift_end: true,
           deleted_at: true,
           company: { select: { id: true, name: true, status: true, user_id: true } },
         },
@@ -203,13 +208,6 @@ export function findOrderForKiosk(orderId: string) {
       company_id: true,
       shift_end: true,
       deleted_at: true,
-      _count: {
-        select: {
-          assignments: {
-            where: { status: 'accepted', deleted_at: null },
-          },
-        },
-      },
     },
   });
 }
@@ -300,6 +298,9 @@ export function activateVenueKiosk(input: {
   expiresAt?: Date;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Match attendance/cancellation lock order: order first, kiosk second.
+    // Recheck lifecycle, ownership and approval after acquiring the order lock.
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${input.orderId} FOR UPDATE`;
     const locked = await tx.$queryRaw<Array<{ id: string }>>`
       SELECT id
       FROM "venue_kiosks"
@@ -313,6 +314,32 @@ export function activateVenueKiosk(input: {
     if (locked.length !== 1) return null;
 
     const now = new Date();
+    const order = await tx.order.findFirst({
+      where: kioskEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
+      select: { id: true },
+    });
+    if (!order) {
+      throw Errors.conflict('QR üçün sifariş artıq uyğun deyil.', 'ORDER_NOT_QR_ELIGIBLE');
+    }
+    const existing = await tx.kioskActiveSession.findFirst({
+      where: {
+        kiosk_id: input.kioskId,
+        company_id: input.companyId,
+        order_id: input.orderId,
+        status: 'active',
+        revoked_at: null,
+        deleted_at: null,
+        OR: [{ expires_at: null }, { expires_at: { gt: now } }],
+      },
+      select: { id: true, expires_at: true },
+    });
+    // Retrying the same activation must not revoke the QR workers are scanning.
+    if (existing && (input.expiresAt === undefined || existing.expires_at?.getTime() === input.expiresAt.getTime())) {
+      return tx.venueKiosk.findFirstOrThrow({
+        where: { id: input.kioskId, deleted_at: null },
+        include: venueKioskInclude,
+      });
+    }
     await tx.kioskActiveSession.updateMany({
       where: {
         kiosk_id: input.kioskId,
@@ -731,19 +758,28 @@ export function createCheckInWithAudit(input: {
         worker_id: input.workerId,
         status: 'accepted',
         deleted_at: null,
+        worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+        order: kioskEligibleOrderWhere({ now: new Date() }),
       },
       select: {
         id: true,
         worker_id: true,
         order_id: true,
-        order: { select: { id: true, status: true, deleted_at: true } },
+        worker: { select: { status: true, deleted_at: true } },
+        order: { select: { id: true, status: true, shift_end: true, deleted_at: true,
+          company: { select: { status: true, deleted_at: true } } } },
       },
     });
 
     if (
       !assignment ||
       !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
-      assignment.order.deleted_at !== null
+      assignment.order.deleted_at !== null ||
+      assignment.order.shift_end.getTime() <= Date.now() ||
+      assignment.order.company.status !== 'approved' ||
+      assignment.order.company.deleted_at !== null ||
+      assignment.worker.status !== 'approved' ||
+      assignment.worker.deleted_at !== null
     ) {
       return { kind: 'assignment_not_accepted' as const };
     }
@@ -860,7 +896,8 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: { in: ORDER_ATTENDANCE_STATUSES }, deleted_at: null },
+          worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+          order: kioskEligibleOrderWhere({ now: new Date() }),
         },
       },
       select: {
@@ -876,7 +913,9 @@ export function checkOutWithAudit(input: {
         select: {
           status: true,
           deleted_at: true,
-          order: { select: { status: true, deleted_at: true } },
+          worker: { select: { status: true, deleted_at: true } },
+          order: { select: { status: true, shift_end: true, deleted_at: true,
+            company: { select: { status: true, deleted_at: true } } } },
         },
       });
       if (isAssignmentBlockedForAttendance(assignment)) {
@@ -902,7 +941,8 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: { in: ORDER_ATTENDANCE_STATUSES }, deleted_at: null },
+          worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+          order: kioskEligibleOrderWhere({ now: new Date() }),
         },
       },
       data: {
@@ -918,7 +958,9 @@ export function checkOutWithAudit(input: {
         select: {
           status: true,
           deleted_at: true,
-          order: { select: { status: true, deleted_at: true } },
+          worker: { select: { status: true, deleted_at: true } },
+          order: { select: { status: true, shift_end: true, deleted_at: true,
+            company: { select: { status: true, deleted_at: true } } } },
         },
       });
       if (isAssignmentBlockedForAttendance(assignment)) {
@@ -1029,7 +1071,9 @@ function isAssignmentBlockedForAttendance(
   assignment: {
     status: string;
     deleted_at: Date | null;
-    order: { status: string; deleted_at: Date | null };
+    worker: { status: string; deleted_at: Date | null };
+    order: { status: string; deleted_at: Date | null; shift_end: Date;
+      company: { status: string; deleted_at: Date | null } };
   } | null
 ): boolean {
   return (
@@ -1037,7 +1081,12 @@ function isAssignmentBlockedForAttendance(
     assignment.status !== 'accepted' ||
     assignment.deleted_at !== null ||
     !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
-    assignment.order.deleted_at !== null
+    assignment.order.deleted_at !== null ||
+    assignment.order.shift_end.getTime() <= Date.now() ||
+    assignment.order.company.status !== 'approved' ||
+    assignment.order.company.deleted_at !== null ||
+    assignment.worker.status !== 'approved' ||
+    assignment.worker.deleted_at !== null
   );
 }
 

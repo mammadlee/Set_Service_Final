@@ -411,8 +411,11 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
   let storedDocuments: any[] = [];
   let persistedRecord = {
     ...fullWorkerRecord,
+    status: 'pending_approval',
     documents: storedDocuments,
   };
+  const originalHistory = JSON.stringify(persistedRecord.work_history);
+  const cleanupEvents: any[] = [];
 
   await fs.rm(privateRoot, { recursive: true, force: true });
   try {
@@ -426,7 +429,8 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
         async (operation: (tx: any) => Promise<any>) => operation({
           $queryRaw: async () => [],
           worker: {
-            findUniqueOrThrow: async () => ({ documents: storedDocuments }),
+            findFirst: async () => ({ id: workerId }),
+            findUniqueOrThrow: async () => ({ id: workerId, documents: storedDocuments }),
             update: async (query: any) => {
               storedDocuments = query.data.documents;
               persistedRecord = {
@@ -439,6 +443,12 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
           },
           auditLog: {
             create: async () => ({ id: 'document-upload-audit' }),
+          },
+          outboxEvent: {
+            createMany: async ({ data }: any) => {
+              cleanupEvents.push(...data);
+              return { count: data.length };
+            },
           },
         }),
         async () => {
@@ -473,11 +483,17 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
           assert.equal(mutationDocuments[0].download_url,
             `/v1/workers/${workerId}/documents/health_certificate/download`);
 
-          const refreshed = await WorkersService.getMyWorker(ownerUserId);
+          const refreshed = await WorkersService.getMyEnrollmentProfile(ownerUserId);
           const refreshedDocuments = refreshed.documents as any[];
           assert.equal(refreshedDocuments.length, 1, 'getMe must return persisted document metadata.');
           assert.equal(refreshedDocuments[0].name, 'health-certificate.pdf');
           assert.equal(refreshedDocuments[0].available, true);
+          await expectAppError(() => WorkersService.getMyWorker(ownerUserId), 403, 'ACCOUNT_NOT_APPROVED');
+          await WorkersService.uploadMyDocument(ownerUserId, 'criminal_record',
+            uploadFile('criminal-record.pdf', 'application/pdf', pdf));
+          const enrollment = await WorkersService.getMyEnrollmentProfile(ownerUserId);
+          assert.equal((enrollment.documents as any[]).filter((doc) => doc.available).length, 2);
+          persistedRecord.status = 'approved';
 
           const cvMutationResponse = await WorkersService.uploadMyDocument(
             ownerUserId,
@@ -514,6 +530,21 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
             .find((document) => document.type === 'cv');
           assert.equal(persistedCv.name, 'worker-cv.pdf');
           assert.equal(persistedCv.available, true);
+          await WorkersService.uploadMyDocument(ownerUserId, 'cv',
+            uploadFile('updated-cv.pdf', 'application/pdf', pdf));
+          const replacement = storedDocuments.find((doc) => doc.type === 'cv');
+          assert.notEqual(replacement.key, storedCv.key);
+          assert.equal(replacement.name, 'updated-cv.pdf');
+          assert.equal(storedDocuments.filter((doc) => doc.type === 'cv').length, 1);
+          assert.equal(cleanupEvents.length, 1, 'Replaced CV cleanup must be scheduled transactionally.');
+          await WorkersService.deleteMyDocument(ownerUserId, 'cv');
+          const afterDelete = await WorkersService.getMyWorker(ownerUserId);
+          const deletedCv = (afterDelete.documents as any[]).find((doc) => doc.type === 'cv');
+          assert.ok(!deletedCv || !deletedCv.available);
+          assert.equal(cleanupEvents.length, 2, 'Deleted CV cleanup must be scheduled.');
+          assert.equal(JSON.stringify(persistedRecord.work_history), originalHistory);
+          assert.equal((afterDelete.documents as any[]).filter((doc) => doc.available).length, 2,
+            'Deleting optional CV must preserve both required documents.');
 
           const freshStorageService = createUploadService();
           const signedUrl = await freshStorageService.createSignedDownloadUrl(
@@ -765,6 +796,67 @@ async function testSignedUrlExpiryAndTamperResistance(): Promise<void> {
   } finally {
     Date.now = originalNow;
   }
+}
+
+async function testCvIsPrivateEvenWithIncorrectStoredVisibility(): Promise<void> {
+  const unsafeRecord = {
+    ...fullWorkerRecord,
+    documents: documents.map((doc) => ({ ...doc, company_visible: true })),
+  };
+  await withPrismaMethod(prisma.company as any, 'findUnique', async () => ({
+    id: companyId, status: 'approved', deleted_at: null,
+  }), async () => withPrismaMethod(prisma.worker as any, 'findFirst', async () => unsafeRecord, async () => {
+    const profile = await WorkersService.getCompanyVisibleWorkerProfile(companyUserId, workerId);
+    const exposed = profile.documents as any[];
+    assert.deepEqual(exposed.map((doc) => doc.type), ['health_certificate']);
+    assert.equal(JSON.stringify(exposed).includes('worker-cv.pdf'), false);
+    await expectAppError(() => WorkersService.getWorkerDocumentDownload(
+      { sub: companyUserId, role: 'company' }, workerId, 'cv',
+    ), 403, 'WORKER_DOCUMENT_ACCESS_DENIED');
+  }));
+}
+
+async function testPendingWorkerDocumentSessionCannotOpenApp(): Promise<void> {
+  const auth = require('../src/modules/auth/auth.service') as typeof import('../src/modules/auth/auth.service');
+  const { hashPassword } = require('../src/lib/password') as typeof import('../src/lib/password');
+  const { verifyRegistrationToken, verifyAccessToken } = require('../src/lib/jwt') as typeof import('../src/lib/jwt');
+  const pendingWorker = { ...fullWorkerRecord, status: 'pending_approval' };
+  const pendingUser = {
+    id: ownerUserId, role: 'worker', phone: fullWorkerRecord.user.phone,
+    password_hash: await hashPassword('WorkerDocument123!'), password_set_at: new Date(),
+    is_active: true, deleted_at: null, session_version: 0, worker: pendingWorker,
+  };
+  await withPrismaMethod(prisma.user as any, 'findUnique', async () => pendingUser, async () => {
+    const result = await auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WorkerDocument123!' });
+    assert.equal(verifyRegistrationToken(result.registration_access_token).sub, ownerUserId);
+    assert.throws(() => verifyAccessToken(result.registration_access_token));
+    assert.equal('access_token' in result, false);
+    assert.equal('refresh_token' in result, false);
+    await expectAppError(() => auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WrongPassword!' }), 401, 'INVALID_CREDENTIALS');
+
+    const { default: app } = require('../src/app') as typeof import('../src/app');
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
+    const headers = { authorization: `Bearer ${result.registration_access_token}` };
+    try {
+      await withPrismaMethod(prisma.worker as any, 'findUnique', async () => pendingWorker, async () => {
+        const ownProfile = await fetch(`${base}/workers/me/enrollment`, { headers });
+        assert.equal(ownProfile.status, 200);
+        assert.equal((await ownProfile.json() as any).id, workerId);
+        for (const endpoint of ['/workers/me', '/orders', '/assignments', '/admin/workers', '/attendance/venue-kiosks']) {
+          const protectedResponse = await fetch(`${base}${endpoint}`, { headers });
+          assert.equal(protectedResponse.status, 401, `registration token must not access ${endpoint}`);
+        }
+      });
+      pendingWorker.status = 'rejected';
+      const rejected = await fetch(`${base}/workers/me/enrollment`, { headers });
+      assert.equal(rejected.status, 403);
+      await expectAppError(() => auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WorkerDocument123!' }), 403, 'WORKER_ENROLLMENT_CLOSED');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 }
 
 async function testLegacyAndForeignObjectKeysAreNotDownloadable(): Promise<void> {
@@ -1122,6 +1214,8 @@ async function main(): Promise<void> {
   await testDocumentUploadStorageDatabaseAndProfileLifecycle();
   await testMetadataDoesNotLeakPublicDocumentUrls();
   await testDocumentAuthorization();
+  await testCvIsPrivateEvenWithIncorrectStoredVisibility();
+  await testPendingWorkerDocumentSessionCannotOpenApp();
   await testSignedUrlExpiryAndTamperResistance();
   await testLegacyAndForeignObjectKeysAreNotDownloadable();
   await testRejectedAndUnscannedDocumentsAreNotDownloadable();

@@ -105,6 +105,23 @@ router.get('/workers/me', requireAuth, requireRole('worker'), requireApprovedAcc
   try { res.json(await Service.getMyWorker(req.user!.sub)); } catch (e) { next(e); }
 });
 
+router.get('/workers/me/enrollment', requireEnrollmentAuth, requireRole('worker'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await Service.getMyEnrollmentProfile(req.user!.sub));
+  } catch (e) { next(e); }
+});
+
+router.get('/workers/me/documents/:type/download', requireEnrollmentAuth, requireRole('worker'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { type } = WorkerDocumentDeleteParamsSchema.parse(req.params);
+    const worker = await Service.getMyEnrollmentProfile(req.user!.sub);
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Referrer-Policy', 'no-referrer');
+    res.json(await Service.getWorkerDocumentDownload(req.user!, worker.id, type));
+  } catch (e) { next(e); }
+});
+
 router.patch('/workers/me', requireAuth, requireRole('worker'), requireApprovedAccount, validate(UpdateWorkerSchema), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.updateMyWorker(req.user!.sub, req.body)); } catch (e) { next(e); }
 });

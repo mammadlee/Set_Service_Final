@@ -12,7 +12,6 @@ const now = new Date('2030-01-15T12:00:00.000Z');
 const base = {
   deleted_at: null,
   shift_end: new Date('2030-01-15T13:00:00.000Z'),
-  acceptedAssignmentCount: 1,
 };
 
 for (const status of ORDER_ATTENDANCE_STATUSES) {
@@ -23,14 +22,15 @@ for (const status of ['draft', 'completed', 'cancelled'] satisfies OrderStatus[]
   assert.equal(isKioskEligibleOrder({ ...base, status }, now), false, `${status} must not be QR-eligible`);
 }
 
-assert.equal(isKioskEligibleOrder({ ...base, status: 'active', acceptedAssignmentCount: 0 }, now), false);
+assert.equal(isKioskEligibleOrder({ ...base, status: 'active' }, now), true, 'No assignment is needed to prepare venue QR');
 assert.equal(isKioskEligibleOrder({ ...base, status: 'active', shift_end: now }, now), false);
 assert.equal(isKioskEligibleOrder({ ...base, status: 'active', deleted_at: now }, now), false);
 
 const where = kioskEligibleOrderWhere({ now, companyId: 'company-id', orderId: 'order-id' });
 assert.deepEqual(where.status, { in: ORDER_ATTENDANCE_STATUSES });
 assert.deepEqual(where.shift_end, { gt: now });
-assert.deepEqual(where.assignments, { some: { status: 'accepted', deleted_at: null } });
+assert.equal(where.assignments, undefined);
+assert.deepEqual(where.company, { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } });
 assert.equal(where.company_id, 'company-id');
 assert.equal(where.id, 'order-id');
 

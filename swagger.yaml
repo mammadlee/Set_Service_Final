@@ -1455,6 +1455,32 @@ paths:
         '200': { description: Password set and worker moved to pending_approval }
         '401': { description: Invalid or expired OTP }
 
+  /auth/worker/document-session:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Open a narrow document session for a pending worker
+      description: Valid phone/password and pending_approval status are required. Returns only a short-lived registration token; no access or refresh token. This token cannot access jobs, assignments, attendance or other protected app screens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerLoginRequest' }
+      responses:
+        '200':
+          description: Worker document session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  worker_id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending_approval] }
+                  registration_access_token: { type: string }
+                  required_document_types: { type: array, items: { type: string, enum: [health_certificate, criminal_record] } }
+        '401': { description: Invalid credentials }
+        '403': { description: Worker is not pending approval or account is inactive }
+
   /auth/worker/forgot-password:
     post:
       tags: [Auth]
@@ -1938,6 +1964,42 @@ paths:
         '204': { description: FCM token deactivated }
         '400': { description: Invalid token payload, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /workers/me/enrollment:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Read own worker profile and document metadata during enrollment
+      description: Accepts a short-lived worker registration token or approved worker access token. Ownership comes from the token. Pending workers still cannot access normal app APIs; rejected, deleted and inactive enrollments are denied.
+      responses:
+        '200': { description: Own profile with safe private document metadata, content: { application/json: { schema: { $ref: '#/components/schemas/WorkerProfile' } } } }
+        '401': { description: Invalid or expired registration token }
+        '403': { description: Enrollment closed or wrong role }
+
+  /workers/me/documents/{type}/download:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Download own verified private document during enrollment
+      description: Worker registration token is accepted only for the authenticated worker's own documents. No worker ID can be supplied. CV remains private to the worker and authorized admins.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
+      responses:
+        '200':
+          description: Short-lived signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  expires_in_seconds: { type: integer }
+        '403': { description: Enrollment closed or wrong role }
+        '404': { description: Document not found }
+        '410': { description: Document deleted or not clean and ready }
 
   /workers/me:
     get:
@@ -3435,7 +3497,12 @@ paths:
       tags: [Attendance]
       security: [{ BearerAuth: [] }]
       summary: Create persistent venue kiosk link
-      description: Creates a stable venue/tablet kiosk URL. Admin later activates the current order/shift on this kiosk.
+      description: |
+        Creates a stable venue/tablet kiosk URL. An approved company can create and activate
+        kiosks for its own active orders immediately after order creation, before staffing.
+        Admins with manage_kiosks can manage kiosks for any approved company.
+        Multiple physical venue/tablet kiosks are supported; clients should reuse an existing
+        kiosk for an order when another physical display is not needed.
       requestBody:
         required: true
         content:
@@ -3457,10 +3524,12 @@ paths:
       security: [{ BearerAuth: [] }]
       summary: List orders currently eligible for venue kiosk activation
       description: |
-        Uses the same server-side attendance eligibility rules as kiosk activation:
-        an attendance-capable order status, a future shift end, and at least one
-        accepted, non-deleted assignment. Company accounts are always scoped to
-        their own company.
+        Uses the same server-side order eligibility rules as kiosk activation:
+        an approved, non-deleted company, an active/published/partially_assigned/assigned/in_progress
+        order, and a future shift end. Deleted, draft, cancelled, completed and expired orders
+        are excluded. Accepted assignments are NOT required to create or activate venue QR.
+        Company accounts must be approved and are restricted to their own company.
+        Actual attendance still requires the authenticated worker's accepted assignment.
       parameters:
         - name: company_id
           in: query
@@ -3532,6 +3601,12 @@ paths:
       tags: [Attendance]
       security: [{ BearerAuth: [] }]
       summary: Activate an order/shift on a persistent venue kiosk
+      description: |
+        Approved companies may activate only their own kiosk with their own eligible order.
+        Admins require manage_kiosks. Ownership, company approval and order eligibility are
+        rechecked in the activation transaction. Repeating the same kiosk/order activation
+        without changing expiry returns the existing active session. Accepted assignments
+        are not required for activation; worker check-in/out still validates them.
       parameters:
         - name: id
           in: path
@@ -3547,7 +3622,7 @@ paths:
           description: Kiosk active session updated
           content: { application/json: { schema: { $ref: '#/components/schemas/VenueKiosk' } } }
         '409':
-          description: Order is inactive, expired, or has no accepted assignment
+          description: Order is inactive, expired, or its company is no longer approved
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /attendance/venue-kiosks/{id}/active-session:

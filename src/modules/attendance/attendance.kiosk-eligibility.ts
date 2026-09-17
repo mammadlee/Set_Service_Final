@@ -6,7 +6,6 @@ export type KioskEligibleOrderCandidate = {
   status: OrderStatus;
   shift_end: Date;
   deleted_at: Date | null;
-  acceptedAssignmentCount: number;
 };
 
 export function kioskEligibleOrderWhere(input: {
@@ -18,11 +17,10 @@ export function kioskEligibleOrderWhere(input: {
     deleted_at: null,
     status: { in: ORDER_ATTENDANCE_STATUSES },
     shift_end: { gt: input.now },
-    assignments: {
-      some: {
-        status: 'accepted',
-        deleted_at: null,
-      },
+    company: {
+      status: 'approved',
+      deleted_at: null,
+      user: { is_active: true, deleted_at: null },
     },
     ...(input.companyId ? { company_id: input.companyId } : {}),
     ...(input.orderId ? { id: input.orderId } : {}),
@@ -35,6 +33,5 @@ export function isKioskEligibleOrder(
 ): boolean {
   return order.deleted_at === null
     && ORDER_ATTENDANCE_STATUSES.includes(order.status)
-    && order.shift_end.getTime() > now.getTime()
-    && order.acceptedAssignmentCount > 0;
+    && order.shift_end.getTime() > now.getTime();
 }

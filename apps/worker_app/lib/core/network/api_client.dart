@@ -35,6 +35,10 @@ class ApiClient {
     RequestOptions options,
     RequestInterceptorHandler handler,
   ) async {
+    if (options.extra['enrollmentSession'] == true) {
+      handler.next(options);
+      return;
+    }
     if (_isPublicAuthEndpoint(options.path)) {
       handler.next(options);
       return;
@@ -68,6 +72,10 @@ class ApiClient {
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
+    if (error.requestOptions.extra['enrollmentSession'] == true) {
+      handler.next(error);
+      return;
+    }
     final status = error.response?.statusCode;
     final alreadyRetried = error.requestOptions.extra['retried'] == true;
     final skipRefresh = error.requestOptions.extra['skipAuthRefresh'] == true;

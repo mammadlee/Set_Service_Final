@@ -333,6 +333,31 @@ export async function completeWorkerRegistration(input: WorkerCompleteRegistrati
   };
 }
 
+export async function createWorkerDocumentSession(input: WorkerLoginInput) {
+  const user = await prisma.user.findUnique({
+    where: { phone: normalizePhone(input.phone) },
+    include: { worker: true },
+  });
+  if (!user || user.role !== 'worker' || !user.worker
+    || !(await verifyPassword(input.password, user.password_hash))) {
+    throw Errors.unauthorized('Telefon nömrəsi və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
+  }
+  if (!user.is_active || user.deleted_at || user.worker.deleted_at
+    || !user.password_set_at || user.worker.status !== 'pending_approval') {
+    throw Errors.forbidden('Sənəd yükləmə sessiyası bu hesab üçün açıq deyil.', 'WORKER_ENROLLMENT_CLOSED');
+  }
+  return {
+    worker_id: user.worker.id,
+    status: user.worker.status,
+    registration_access_token: signRegistrationToken({
+      sub: user.id,
+      role: user.role,
+      session_version: user.session_version,
+    }),
+    required_document_types: ['health_certificate', 'criminal_record'],
+  };
+}
+
 export async function forgotWorkerPassword(input: WorkerForgotPasswordInput, ip?: string) {
   const identity = await findPasswordResetUser('worker', input);
   if (!identity.user || !identity.worker) return genericOtpResponse();

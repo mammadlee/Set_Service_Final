@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test:release-config": "node --test ../../scripts/validate-web-env.test.mjs",
     "test:security": "node --test ../../scripts/web-security-regression.test.mjs",
+    "test:regression": "node --test tests/*.test.mjs",
     "prebuild": "node ../../scripts/validate-web-env.mjs kiosk",
     "build": "tsc && vite build",
     "postbuild": "node ../../scripts/verify-built-security-headers.mjs dist"

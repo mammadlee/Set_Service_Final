@@ -11,6 +11,7 @@ import '../../attendance/data/models/attendance.dart';
 import '../../attendance/data/models/kiosk_session.dart';
 import '../../auth/data/models/auth_models.dart';
 import '../../notifications/data/models/notification_item.dart';
+import 'company_kiosk.dart';
 
 class CompanyRepository {
   CompanyRepository({
@@ -21,6 +22,87 @@ class CompanyRepository {
 
   final Dio _dio;
   final TokenStorage _tokenStorage;
+  final Map<String, Future<CompanyVenueKiosk>> _qrCreations = {};
+  final Map<String, CompanyVenueKiosk> _unactivatedKiosks = {};
+
+  Future<CompanyOrderQrState> getOrderQrState(String orderId) async {
+    try {
+      final responses = await Future.wait([
+        _dio.get<Map<String, dynamic>>(
+          '/attendance/venue-kiosks/eligible-orders',
+        ),
+        _dio.get<Map<String, dynamic>>('/attendance/venue-kiosks'),
+      ]);
+      final eligible = (responses[0].data?['data'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .any((order) => order['id'] == orderId);
+      final kiosks = (responses[1].data?['data'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(CompanyVenueKiosk.fromJson)
+          .where(
+            (kiosk) => kiosk.status == 'active' && kiosk.orderId == orderId,
+          )
+          .toList(growable: false);
+      return CompanyOrderQrState(eligible: eligible, kiosks: kiosks);
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  /// Reuse an existing active screen and coalesce double taps for this order.
+  /// Activation is still authorized and revalidated by the backend.
+  Future<CompanyVenueKiosk> createOrderQr(MobileOrder order) {
+    return _qrCreations.putIfAbsent(order.id, () async {
+      try {
+        final state = await getOrderQrState(order.id);
+        if (!state.eligible) {
+          throw const ApiException(
+            message: 'Bu sifariş üçün QR yaratmaq mümkün deyil.',
+          );
+        }
+        if (state.kiosks.isNotEmpty) return state.kiosks.first;
+        var kiosk = _unactivatedKiosks[order.id];
+        if (kiosk == null) {
+          final response = await _dio.post<Map<String, dynamic>>(
+            '/attendance/venue-kiosks',
+            data: {
+              'name': 'Sifariş QR: ${order.title}'.substring(
+                0,
+                ('Sifariş QR: ${order.title}').length.clamp(0, 120),
+              ),
+              if (order.location.trim().isNotEmpty)
+                'location_label': order.location.trim().substring(
+                  0,
+                  order.location.trim().length.clamp(0, 180),
+                ),
+            },
+          );
+          kiosk = CompanyVenueKiosk.fromJson(response.data ?? const {});
+          _unactivatedKiosks[order.id] = kiosk;
+        }
+        final activated = await _dio.post<Map<String, dynamic>>(
+          '/attendance/venue-kiosks/${kiosk.id}/activate',
+          data: {'order_id': order.id},
+        );
+        _unactivatedKiosks.remove(order.id);
+        return CompanyVenueKiosk.fromJson(activated.data ?? const {});
+      } catch (error) {
+        throw mapDioException(error);
+      } finally {
+        _qrCreations.remove(order.id);
+      }
+    });
+  }
+
+  Future<void> deactivateOrderQr(String kioskId) async {
+    try {
+      await _dio.delete<void>(
+        '/attendance/venue-kiosks/$kioskId/active-session',
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
 
   Future<OtpStartResult> registerCompany({
     required String name,

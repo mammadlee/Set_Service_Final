@@ -10,7 +10,7 @@ import { hasPermission } from '../../shared/auth/permissions';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { useAuth } from '../../app/auth/AuthProvider';
 import { useAsync } from '../../shared/hooks/useAsync';
-import { normalizeDocuments, resolveAssetUrl } from '../../shared/utils/documents';
+import { documentLabel, documentStatusLabel, normalizeDocuments, resolveAssetUrl, type DisplayDocument } from '../../shared/utils/documents';
 import { formatDateTime } from '../../shared/utils/format';
 import type { WorkerClass } from '../../shared/api/types';
 import { workersService } from './workers.service';
@@ -150,18 +150,24 @@ export function WorkerDetailPage() {
 
           <div className="panel">
             <h2>{appStrings.workers.documents}</h2>
-            {documents.length > 0 ? (
+            <p className="muted">Təsdiq üçün sağlamlıq və məhkumluq arayışları yoxlamadan keçməlidir.</p>
+            {documents.some((document) => document.type !== 'cv') ? (
               <ul className="document-list">
-                {documents.map((doc, index) => (
-                  <li key={`${doc.url}-${index}`}>
-                    <span>{doc.name || doc.type || appStrings.workers.document}</span>
-                    {doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : null}
-                  </li>
+                {documents.filter((document) => document.type !== 'cv').map((doc) => (
+                  <WorkerDocumentItem key={doc.type} workerId={id} document={doc} />
                 ))}
               </ul>
             ) : (
               <p className="muted">{appStrings.workers.noDocuments}</p>
             )}
+            <h3>CV <span className="muted">(istəyə bağlı)</span></h3>
+            {documents.some((document) => document.type === 'cv') ? (
+              <ul className="document-list">
+                {documents.filter((document) => document.type === 'cv').map((doc) => (
+                  <WorkerDocumentItem key={doc.type} workerId={id} document={doc} />
+                ))}
+              </ul>
+            ) : <p className="muted">CV yüklənməyib. İşçinin təsdiqinə mane olmur.</p>}
           </div>
 
           <div className="panel">
@@ -231,6 +237,47 @@ export function WorkerDetailPage() {
         onConfirm={() => void confirmFocTraining()}
       />
     </>
+  );
+}
+
+function WorkerDocumentItem({ workerId, document }: { workerId: string; document: DisplayDocument }) {
+  const [loading, setLoading] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function openDocument() {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    setUrl(null);
+    try {
+      const signedUrl = await workersService.documentUrl(workerId, document.type);
+      setUrl(signedUrl);
+      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <li>
+      <div className="document-description">
+        <strong>{documentLabel(document.type)}</strong>
+        {document.name ? <span className="table-subtext">{document.name}</span> : null}
+        <span className="table-subtext">{documentStatusLabel(document)}</span>
+        {error ? <div className="form-error" role="alert">{error}</div> : null}
+      </div>
+      {document.canDownload ? (
+        <div className="document-actions">
+          <button className="btn secondary compact" type="button" disabled={loading} onClick={() => void openDocument()}>
+            {loading ? 'Açılır…' : appStrings.workers.openDocument}
+          </button>
+          {url ? <a className="link-btn" href={url} target="_blank" rel="noopener noreferrer">Açılmadısa, buraya toxunun</a> : null}
+        </div>
+      ) : null}
+    </li>
   );
 }
 

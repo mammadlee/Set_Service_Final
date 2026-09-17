@@ -88,6 +88,8 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            itemHeight: null,
                             value: _workerId,
                             decoration: const InputDecoration(
                               labelText: AppStrings.worker,
@@ -101,7 +103,7 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                               ...workers.map(
                                 (worker) => DropdownMenuItem(
                                   value: worker.id,
-                                  child: Text(worker.name),
+                                  child: Text(worker.name, softWrap: true),
                                 ),
                               ),
                             ],
@@ -112,6 +114,8 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                           ),
                           const SizedBox(height: 10),
                           DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            itemHeight: null,
                             value: _category,
                             decoration: const InputDecoration(
                               labelText: AppStrings.category,
@@ -125,7 +129,7 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
                               ...categories.map(
                                 (category) => DropdownMenuItem(
                                   value: category,
-                                  child: Text(category),
+                                  child: Text(category, softWrap: true),
                                 ),
                               ),
                             ],

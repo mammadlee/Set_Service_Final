@@ -33,6 +33,7 @@ const publicOperations = new Set([
   'post /auth/worker/request-otp',
   'post /auth/worker/complete-registration',
   'post /auth/worker/login',
+  'post /auth/worker/document-session',
   'post /auth/worker/forgot-password',
   'post /auth/worker/reset-password',
   'post /auth/company/register',

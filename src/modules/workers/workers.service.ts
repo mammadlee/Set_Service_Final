@@ -70,6 +70,18 @@ export async function getMyWorker(userId: string) {
   return toWorkerProfile(worker);
 }
 
+export async function getMyEnrollmentProfile(userId: string) {
+  const worker = await prisma.worker.findUnique({
+    where: { user_id: userId },
+    include: workerProfileInclude,
+  });
+  if (!worker || worker.deleted_at) throw Errors.notFound('Worker profile not found.', 'WORKER_NOT_FOUND');
+  if (!['pending_approval', 'approved'].includes(worker.status)) {
+    throw Errors.forbidden('Worker registration does not accept documents.', 'WORKER_ENROLLMENT_CLOSED');
+  }
+  return toWorkerProfile(worker);
+}
+
 export async function updateMyWorker(
   userId: string,
   data: {
@@ -329,7 +341,7 @@ export async function uploadMyDocument(
   file: Express.Multer.File | undefined
 ) {
   const documentType = parseWorkerDocumentType(type);
-  const worker = await getApprovedWorkerRecord(userId);
+  const worker = await getDocumentEnrollmentWorkerRecord(userId);
   const upload = await putWorkerUpload({
     workerId: worker.id,
     file,
@@ -615,6 +627,9 @@ export async function getWorkerDocumentDownload(
   type: string
 ) {
   const documentType = parseWorkerDocumentType(type);
+  if (actor.role === 'company' && documentType !== 'health_certificate') {
+    throw Errors.forbidden('This document is not visible to companies.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+  }
   const worker = await prisma.worker.findFirst({
     where: { id: workerId, deleted_at: null },
     select: {
@@ -1459,7 +1474,7 @@ function normalizeDocuments(value: unknown): WorkerDocument[] {
         mime_type: typeof document.mime_type === 'string' ? document.mime_type : undefined,
         size_bytes: typeof document.size_bytes === 'number' ? document.size_bytes : undefined,
         uploaded_at: typeof document.uploaded_at === 'string' ? document.uploaded_at : undefined,
-        company_visible: document.company_visible === true,
+        company_visible: type === 'health_certificate' && document.company_visible === true,
         status,
         scan_status: isScanStatus(document.scan_status) ? document.scan_status : undefined,
         scanner: typeof document.scanner === 'string' ? document.scanner : undefined,

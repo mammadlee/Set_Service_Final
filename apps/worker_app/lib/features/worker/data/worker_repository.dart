@@ -16,6 +16,23 @@ class WorkerRepository {
 
   final Dio _dio;
 
+  Options _enrollmentOptions(String token) => Options(
+    headers: {'authorization': 'Bearer $token'},
+    extra: const {'enrollmentSession': true, 'skipAuthRefresh': true},
+  );
+
+  Future<WorkerMe> getEnrollmentProfile(String token) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/workers/me/enrollment',
+        options: _enrollmentOptions(token),
+      );
+      return WorkerMe.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<WorkerMe> getMe() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>('/workers/me');
@@ -145,6 +162,7 @@ class WorkerRepository {
     int? fileSize,
     ProgressCallback? onSendProgress,
     CancelToken? cancelToken,
+    String? enrollmentToken,
   }) async {
     return _uploadFile(
       '/workers/me/documents',
@@ -156,12 +174,21 @@ class WorkerRepository {
       type: type,
       onSendProgress: onSendProgress,
       cancelToken: cancelToken,
+      enrollmentToken: enrollmentToken,
     );
   }
 
-  Future<void> deleteDocument({required String type}) async {
+  Future<void> deleteDocument({
+    required String type,
+    String? enrollmentToken,
+  }) async {
     try {
-      await _dio.delete<Map<String, dynamic>>('/workers/me/documents/$type');
+      await _dio.delete<Map<String, dynamic>>(
+        '/workers/me/documents/$type',
+        options: enrollmentToken == null
+            ? null
+            : _enrollmentOptions(enrollmentToken),
+      );
     } catch (error) {
       throw mapDioException(error);
     }
@@ -170,11 +197,16 @@ class WorkerRepository {
   Future<Uri> getDocumentDownloadUrl({
     required String workerId,
     required String type,
+    String? enrollmentToken,
   }) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/workers/$workerId/documents/$type/download',
-        options: Options(headers: const {'Cache-Control': 'no-store'}),
+        enrollmentToken == null
+            ? '/workers/$workerId/documents/$type/download'
+            : '/workers/me/documents/$type/download',
+        options: enrollmentToken == null
+            ? Options(headers: const {'Cache-Control': 'no-store'})
+            : _enrollmentOptions(enrollmentToken),
       );
       final value = response.data?['url'];
       final uri = resolveDocumentDownloadUrl(
@@ -241,6 +273,7 @@ class WorkerRepository {
     String? type,
     ProgressCallback? onSendProgress,
     CancelToken? cancelToken,
+    String? enrollmentToken,
   }) async {
     try {
       if ((path == null || path.isEmpty) && bytes == null) {
@@ -288,6 +321,12 @@ class WorkerRepository {
         endpoint,
         data: formData,
         options: Options(
+          headers: enrollmentToken == null
+              ? null
+              : {'authorization': 'Bearer $enrollmentToken'},
+          extra: enrollmentToken == null
+              ? null
+              : const {'enrollmentSession': true, 'skipAuthRefresh': true},
           contentType: 'multipart/form-data',
           sendTimeout: const Duration(seconds: 60),
           receiveTimeout: const Duration(seconds: 60),

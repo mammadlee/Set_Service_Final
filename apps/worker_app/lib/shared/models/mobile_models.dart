@@ -103,6 +103,9 @@ class MobileOrderCategoryItem {
     required this.assignedCount,
     required this.remainingCount,
     required this.notes,
+    this.departmentName,
+    this.subdepartmentName,
+    this.positionName,
   });
 
   final String? id;
@@ -111,6 +114,9 @@ class MobileOrderCategoryItem {
   final int assignedCount;
   final int remainingCount;
   final String? notes;
+  final String? departmentName;
+  final String? subdepartmentName;
+  final String? positionName;
 
   factory MobileOrderCategoryItem.fromJson(Map<String, dynamic> json) {
     return MobileOrderCategoryItem(
@@ -120,6 +126,13 @@ class MobileOrderCategoryItem {
       assignedCount: _int(json['assigned_count'], 0),
       remainingCount: _int(json['remaining_count'], 0),
       notes: json['notes'] as String?,
+      departmentName:
+          (json['department'] as Map<String, dynamic>?)?['name_az'] as String?,
+      subdepartmentName:
+          (json['subdepartment'] as Map<String, dynamic>?)?['name_az']
+              as String?,
+      positionName:
+          (json['position'] as Map<String, dynamic>?)?['name_az'] as String?,
     );
   }
 }

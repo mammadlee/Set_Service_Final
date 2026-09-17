@@ -1,13 +1,13 @@
 part of 'company_home_shell.dart';
 
-class _CreateOrderScreen extends StatefulWidget {
-  const _CreateOrderScreen();
+class CompanyCreateOrderScreen extends StatefulWidget {
+  const CompanyCreateOrderScreen({super.key});
 
   @override
-  State<_CreateOrderScreen> createState() => _CreateOrderScreenState();
+  State<CompanyCreateOrderScreen> createState() => _CreateOrderScreenState();
 }
 
-class _CreateOrderScreenState extends State<_CreateOrderScreen> {
+class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
   final _formKey = GlobalKey<FormState>();
   final _title = TextEditingController();
   final _description = TextEditingController();
@@ -21,6 +21,7 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
   int _stepIndex = 0;
   int _activeCategoryIndex = 0;
   bool _loading = false;
+  bool _taxonomyLoading = true;
   String? _error;
 
   @override
@@ -55,52 +56,63 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             children: [
               if (_error != null) ...[
                 InlineMessage(message: _error!, kind: InlineMessageKind.error),
                 const SizedBox(height: 12),
               ],
               _OrderStepHeader(stepIndex: _stepIndex),
-              const SizedBox(height: 40),
+              const SizedBox(height: 20),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     _stepTitle(_stepIndex),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
-                  const SizedBox(height: 22),
-                  _stepContent(draft),
+                  const SizedBox(height: 8),
+                  Text(_stepHelp(_stepIndex)),
+                  const SizedBox(height: 20),
+                  if (_taxonomyLoading)
+                    const LinearProgressIndicator()
+                  else if (_taxonomy.isEmpty)
+                    OutlinedButton.icon(
+                      onPressed: _loadTaxonomy,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Vəzifələri yenidən yüklə'),
+                    )
+                  else
+                    AbsorbPointer(
+                      absorbing: _loading,
+                      child: _stepContent(draft),
+                    ),
                   const SizedBox(height: 18),
-                  Row(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_stepIndex > 0)
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _loading
-                                ? null
-                                : () => setState(() => _stepIndex -= 1),
-                            icon: const Icon(Icons.arrow_back_outlined),
-                            label: const Text('Geri'),
-                          ),
-                        ),
-                      if (_stepIndex > 0) const SizedBox(width: 10),
-                      Expanded(
-                        child: LoadingButton(
-                          label: _stepIndex == 6 ? AppStrings.save : 'Davam et',
-                          icon: _stepIndex == 6
-                              ? Icons.save_outlined
-                              : Icons.arrow_forward_outlined,
-                          loading: _loading,
-                          onPressed: _canContinue(draft)
-                              ? (_stepIndex == 6
-                                    ? _submit
-                                    : () => setState(() => _stepIndex += 1))
-                              : null,
-                        ),
+                      LoadingButton(
+                        label: _stepIndex == 6
+                            ? AppStrings.createOrder
+                            : 'Davam et',
+                        icon: _stepIndex == 6
+                            ? Icons.save_outlined
+                            : Icons.arrow_forward_outlined,
+                        loading: _loading,
+                        onPressed: !_taxonomyLoading && _canContinue(draft)
+                            ? (_stepIndex == 6 ? _submit : _continue)
+                            : null,
                       ),
+                      if (_stepIndex > 0) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _loading
+                              ? null
+                              : () => setState(() => _stepIndex -= 1),
+                          icon: const Icon(Icons.arrow_back_outlined),
+                          label: const Text('Geri'),
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -114,14 +126,50 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
 
   String _stepTitle(int step) {
     return switch (step) {
-      0 => 'Şöbə',
-      1 => 'Departament',
-      2 => 'Vəzifə',
+      0 => CompanyStrings.department,
+      1 => CompanyStrings.subdepartment,
+      2 => CompanyStrings.position,
       3 => 'İşçi sayı',
       4 => 'Tarix və saat',
-      5 => 'Ünvan',
-      _ => 'Yekun təsdiq',
+      5 => CompanyStrings.workplace,
+      _ => CompanyStrings.orderInformation,
     };
+  }
+
+  String _stepHelp(int step) => switch (step) {
+    0 => 'İşçilərin çalışacağı xidmət şöbəsini seçin.',
+    1 => 'Seçilmiş şöbə daxilində iş istiqamətini seçin.',
+    2 => 'Sifariş üçün lazım olan vəzifəni seçin.',
+    3 => 'Bu vəzifə üzrə işçi sayını və qeydi daxil edin.',
+    4 => 'İşin başlama və bitmə vaxtını seçin.',
+    5 => CompanyStrings.addressHint,
+    _ => 'Sifarişin adını, təsvirini və seçdiyiniz məlumatları yoxlayın.',
+  };
+
+  void _continue() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_stepIndex == 4 && !_validateDates()) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _error = null;
+      _stepIndex += 1;
+    });
+  }
+
+  bool _validateDates() {
+    if (_startDateTime == null || _endDateTime == null) {
+      setState(() => _error = AppStrings.dateRequired);
+      return false;
+    }
+    if (_startDateTime!.isBefore(DateTime.now())) {
+      setState(() => _error = AppStrings.startDateFuture);
+      return false;
+    }
+    if (!_endDateTime!.isAfter(_startDateTime!)) {
+      setState(() => _error = AppStrings.endDateAfterStart);
+      return false;
+    }
+    return true;
   }
 
   bool _canContinue(_CategoryDraft draft) {
@@ -186,7 +234,8 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
       ),
       5 => _Field(
         controller: _location,
-        label: AppStrings.location,
+        label: CompanyStrings.address,
+        maxLines: 4,
         min: 2,
         onChanged: (_) => setState(() => _error = null),
       ),
@@ -198,6 +247,9 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
         onChanged: () => setState(() => _error = null),
         onAddCategory: _addCategory,
         onRemoveCategory: _removeCategory,
+        start: _startDateTime,
+        end: _endDateTime,
+        location: _location.text.trim(),
       ),
     };
   }
@@ -226,7 +278,7 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
     final positionIds = <String>{};
     for (final category in _categories) {
       if (category.positionId == null) {
-        setState(() => _error = 'Şöbə, departament və vəzifə seçilməlidir.');
+        setState(() => _error = CompanyStrings.taxonomyRequired);
         return;
       }
       if (positionIds.contains(category.positionId)) {
@@ -242,7 +294,7 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
     try {
       final repo = context.read<CompanyRepository>();
       final navigator = Navigator.of(context);
-      await repo.createOrder(
+      final created = await repo.createOrder(
         title: _title.text.trim(),
         description: _description.text.trim(),
         categoryItems: _categories
@@ -263,7 +315,7 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
         end: end,
         location: _location.text.trim(),
       );
-      if (mounted) navigator.pop(true);
+      if (mounted) navigator.pop(created);
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() => _error = error.message);
@@ -276,13 +328,23 @@ class _CreateOrderScreenState extends State<_CreateOrderScreen> {
   }
 
   Future<void> _loadTaxonomy() async {
+    setState(() {
+      _taxonomyLoading = true;
+      _error = null;
+    });
     try {
       final taxonomy = await context.read<TaxonomyRepository>().list();
       if (!mounted) return;
-      setState(() => _taxonomy = taxonomy);
+      setState(() {
+        _taxonomy = taxonomy;
+        _taxonomyLoading = false;
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = 'Vəzifələr yüklənmədi.');
+      setState(() {
+        _error = 'Vəzifələr yüklənmədi.';
+        _taxonomyLoading = false;
+      });
     }
   }
 
@@ -450,8 +512,6 @@ Future<T?> _showOrderOptionSheet<T>({
                   onTap: () => Navigator.of(context).pop(item),
                   title: Text(
                     label(item),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
@@ -481,12 +541,14 @@ class _OrderSelectorTile extends StatelessWidget {
     return Material(
       color: BrandColors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(32),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: InputDecorator(
-          isEmpty: displayValue.isEmpty,
+          isEmpty: false,
           decoration: InputDecoration(
             labelText: label,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            enabled: onTap != null,
             suffixIcon: Icon(
               Icons.keyboard_arrow_down_rounded,
               color: BrandColors.darkText,
@@ -494,8 +556,7 @@ class _OrderSelectorTile extends StatelessWidget {
           ),
           child: Text(
             displayValue.isEmpty ? placeholder : displayValue,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               color: displayValue.isEmpty
                   ? BrandColors.mutedBrown
@@ -554,7 +615,7 @@ class _DepartmentStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final selected = _findDepartment(taxonomy, draft.departmentId);
     return _OrderSelectorTile(
-      label: 'Şöbə',
+      label: CompanyStrings.department,
       value: selected?.nameAz,
       placeholder: taxonomy.isEmpty ? 'Şöbə tapılmadı' : 'Şöbə seçin',
       onTap: taxonomy.isEmpty
@@ -593,17 +654,17 @@ class _SubdepartmentStep extends StatelessWidget {
     final items = _subdepartmentsFor(taxonomy, draft.departmentId);
     final selected = _findSubdepartment(items, draft.subdepartmentId);
     return _OrderSelectorTile(
-      label: 'Departament',
+      label: CompanyStrings.subdepartment,
       value: selected?.nameAz,
       placeholder: draft.departmentId == null
-          ? 'Əvvəlcə şöbə seç'
-          : 'Departament seç',
+          ? 'Əvvəlcə şöbə seçin'
+          : CompanyStrings.chooseSubdepartment,
       onTap: draft.departmentId == null
           ? null
           : () async {
               final value = await _showOrderOptionSheet<TaxonomySubdepartment>(
                 context: context,
-                title: 'Departament seçin',
+                title: CompanyStrings.chooseSubdepartment,
                 items: items,
                 label: (item) => item.nameAz,
               );
@@ -640,8 +701,8 @@ class _PositionStep extends StatelessWidget {
       label: 'Vəzifə',
       value: selected?.nameAz,
       placeholder: draft.subdepartmentId == null
-          ? 'Əvvəlcə departament seç'
-          : 'Vəzifə seç',
+          ? 'Əvvəlcə alt şöbə seçin'
+          : CompanyStrings.choosePosition,
       onTap: draft.subdepartmentId == null
           ? null
           : () async {
@@ -669,6 +730,9 @@ class _OrderSummaryStep extends StatelessWidget {
     required this.onChanged,
     required this.onAddCategory,
     required this.onRemoveCategory,
+    required this.start,
+    required this.end,
+    required this.location,
   });
 
   final TextEditingController title;
@@ -678,6 +742,9 @@ class _OrderSummaryStep extends StatelessWidget {
   final VoidCallback onChanged;
   final VoidCallback onAddCategory;
   final ValueChanged<int> onRemoveCategory;
+  final DateTime? start;
+  final DateTime? end;
+  final String location;
 
   @override
   Widget build(BuildContext context) {
@@ -704,11 +771,7 @@ class _OrderSummaryStep extends StatelessWidget {
           return ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.room_service_outlined),
-            title: Text(
-              position?.nameAz ?? draft.category,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+            title: Text(position?.nameAz ?? draft.category),
             subtitle: Text('${AppStrings.requiredWorkers}: ${draft.count}'),
             trailing: categories.length > 1
                 ? IconButton(
@@ -719,6 +782,15 @@ class _OrderSummaryStep extends StatelessWidget {
           );
         }),
         const SizedBox(height: 8),
+        _CompanyDetailField(
+          label: AppStrings.starts,
+          value: _companyDateTime(start),
+        ),
+        _CompanyDetailField(
+          label: AppStrings.ends,
+          value: _companyDateTime(end),
+        ),
+        _CompanyDetailField(label: CompanyStrings.address, value: location),
         OutlinedButton.icon(
           onPressed: onAddCategory,
           icon: const Icon(Icons.add),
@@ -797,11 +869,17 @@ class _Field extends StatelessWidget {
         controller: controller,
         maxLines: maxLines,
         onChanged: onChanged,
-        decoration: InputDecoration(labelText: label),
+        decoration: InputDecoration(
+          labelText: label,
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          alignLabelWithHint: true,
+          errorMaxLines: 3,
+        ),
         validator: (value) {
           final text = value?.trim() ?? '';
           if (!required && text.isEmpty) return null;
-          if (text.length < min) return AppStrings.requiredField;
+          if (text.isEmpty) return AppStrings.requiredField;
+          if (text.length < min) return 'Ən azı $min simvol daxil edin.';
           return null;
         },
       ),
@@ -830,6 +908,8 @@ class _DateTimeField extends StatelessWidget {
         onTap: onTap,
         decoration: InputDecoration(
           labelText: label,
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          errorMaxLines: 3,
           hintText: AppStrings.dateRequired,
           prefixIcon: const Icon(Icons.hourglass_bottom_rounded),
           suffixIcon: const Icon(Icons.expand_more),
@@ -862,22 +942,13 @@ class _OrderCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    order.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                StatusPill(status: order.status),
-              ],
+            StatusPill(status: order.status),
+            const SizedBox(height: 12),
+            Text(
+              order.title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 18),
             Text(

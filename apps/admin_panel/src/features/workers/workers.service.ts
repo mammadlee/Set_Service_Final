@@ -1,5 +1,6 @@
 import { apiRequest } from '../../shared/api/http';
 import type { Paginated, RatingSummary, WorkerClass, WorkerProfile, WorkerStatus } from '../../shared/api/types';
+import { isWorkerDocumentType, resolveSignedDocumentUrl, type DisplayDocument } from '../../shared/utils/documents';
 
 export type FocTrainingFilter = '' | 'foc' | 'non_foc';
 
@@ -19,6 +20,14 @@ export const workersService = {
 
   get(id: string) {
     return apiRequest<WorkerProfile>(`/admin/workers/${id}`);
+  },
+
+  async documentUrl(id: string, type: DisplayDocument['type']) {
+    if (!isWorkerDocumentType(type)) throw new Error('Sənəd növü dəstəklənmir.');
+    const response = await apiRequest<{ url: string }>(
+      `/workers/${encodeURIComponent(id)}/documents/${type}/download`,
+    );
+    return resolveSignedDocumentUrl(response.url);
   },
 
   approve(id: string) {

@@ -23,20 +23,13 @@ class _AssignmentCardState extends State<_AssignmentCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    assignment.worker.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-                StatusPill(status: assignment.status),
-              ],
+            StatusPill(status: assignment.status),
+            const SizedBox(height: 10),
+            Text(
+              assignment.worker.name,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(
@@ -68,7 +61,7 @@ class _AssignmentCardState extends State<_AssignmentCard> {
                   OutlinedButton.icon(
                     onPressed: () => _showKioskInfo(context),
                     icon: const Icon(Icons.tablet_mac_outlined),
-                    label: const Text('QR ekranı yarat'),
+                    label: const Text('Sifarişin QR ekranı'),
                   ),
                   OutlinedButton.icon(
                     onPressed: () => _openWorkerProfile(context),
@@ -137,13 +130,10 @@ class _AssignmentCardState extends State<_AssignmentCard> {
   }
 
   Future<void> _showKioskInfo(BuildContext context) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => const AlertDialog(
-        title: Text('QR ekranı'),
-        content: Text(
-          'Məkan üçün kiosk linkləri admin panelindən yaradılır və sifarişə və ya növbəyə əsasən aktiv edilir. Bu ekranda yalnız birdəfəlik QR tokeni göstərilir.',
-        ),
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) =>
+            CompanyOrderDetailRoute(orderId: widget.assignment.orderId),
       ),
     );
   }
@@ -453,6 +443,7 @@ class _RateWorkerDialogState extends State<_RateWorkerDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text(AppStrings.rateWorker),
+      scrollable: true,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

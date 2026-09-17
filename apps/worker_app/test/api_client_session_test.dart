@@ -9,6 +9,44 @@ import 'package:worker_app/core/storage/token_storage.dart';
 
 void main() {
   group('ApiClient session hardening', () {
+    test(
+      'document enrollment bearer is isolated from the normal session',
+      () async {
+        final access = _jwt(role: 'worker');
+        final storage = _MemoryTokenStorage(access, 'normal-refresh');
+        final coordinator = SessionCoordinator();
+        addTearDown(coordinator.dispose);
+        var refreshCalls = 0;
+        final client = ApiClient(
+          baseUrl: 'https://example.test',
+          tokenStorage: storage,
+          expectedRole: 'worker',
+          sessionCoordinator: coordinator,
+          dioOverride: _dioWithAdapter((options, _) async {
+            expect(options.headers['authorization'], 'Bearer document-only');
+            return _jsonResponse(401, {'code': 'ENROLLMENT_TOKEN_INVALID'});
+          }),
+          refreshDioOverride: _dioWithAdapter((_, __) async {
+            refreshCalls++;
+            return _jsonResponse(500, {});
+          }),
+        );
+        await expectLater(
+          client.dio.get<dynamic>(
+            '/workers/me/enrollment',
+            options: Options(
+              headers: {'authorization': 'Bearer document-only'},
+              extra: {'enrollmentSession': true, 'skipAuthRefresh': true},
+            ),
+          ),
+          throwsA(isA<DioException>()),
+        );
+        expect(refreshCalls, 0);
+        expect(storage.cachedAccessToken, access);
+        expect(storage.clearCount, 0);
+      },
+    );
+
     test('parallel 401 responses share one refresh and retry once', () async {
       final oldAccess = _jwt(role: 'worker');
       final newAccess = _jwt(role: 'worker');

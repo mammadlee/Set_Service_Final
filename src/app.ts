@@ -93,6 +93,7 @@ app.use('/v1/auth/worker/register', authLimiter);
 app.use('/v1/auth/worker/request-otp', authLimiter);
 app.use('/v1/auth/worker/complete-registration', authLimiter);
 app.use('/v1/auth/worker/login', authLimiter);
+app.use('/v1/auth/worker/document-session', authLimiter);
 app.use('/v1/auth/worker/forgot-password', authLimiter);
 app.use('/v1/auth/worker/reset-password', authLimiter);
 app.use('/v1/auth/email-verification/request', authLimiter);

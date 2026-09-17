@@ -28,6 +28,7 @@ class AuthController extends ChangeNotifier {
 
   AuthViewState state = AuthViewState.splash;
   WorkerMe? worker;
+  String? documentSessionToken;
   int workerPhotoRevision = 0;
   String? pendingPhone;
   String? pendingEmail;
@@ -94,6 +95,7 @@ class AuthController extends ChangeNotifier {
   }
 
   void _handleSessionInvalidation(SessionInvalidation event) {
+    documentSessionToken = null;
     worker = null;
     workerPhotoRevision = 0;
     pendingPhone = null;
@@ -144,7 +146,22 @@ class AuthController extends ChangeNotifier {
     required String password,
   }) async {
     await _submit(() async {
-      await _repository.loginWorker(phone: phone, password: password);
+      try {
+        await _repository.loginWorker(phone: phone, password: password);
+      } on ApiException catch (error) {
+        if (_applyAccountApprovalError(error) &&
+            blockedStatus == 'pending_approval') {
+          final session = await _repository.createDocumentSession(
+            phone: phone,
+            password: password,
+          );
+          documentSessionToken = session.registrationAccessToken;
+          _notifySessionState(SessionState.blocked, code: error.code);
+          return;
+        }
+        rethrow;
+      }
+      documentSessionToken = null;
       worker = await _repository.getWorkerProfile();
       errorMessage = null;
       state = _stateForWorkerStatus(worker?.status);
@@ -179,6 +196,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingOtpCode = null;
       pendingOtpChallenge = null;
+      documentSessionToken = result.registrationAccessToken;
       errorMessage = null;
       state = _stateForWorkerStatus(result.status);
     });
@@ -293,6 +311,7 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    documentSessionToken = null;
     isSubmitting = true;
     notifyListeners();
     try {
@@ -317,6 +336,7 @@ class AuthController extends ChangeNotifier {
   }
 
   void backToLogin() {
+    documentSessionToken = null;
     pendingPhone = null;
     pendingEmail = null;
     pendingOtpCode = null;

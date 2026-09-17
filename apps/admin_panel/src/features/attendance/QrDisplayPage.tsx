@@ -133,8 +133,12 @@ export function QrDisplayPage() {
 
   async function copyKioskLink() {
     if (!kioskUrl) return;
-    await navigator.clipboard.writeText(kioskUrl);
-    setMessage('QR ekranı linki köçürüldü.');
+    try {
+      await navigator.clipboard.writeText(kioskUrl);
+      setMessage('QR ekranı linki köçürüldü.');
+    } catch {
+      setError('Link avtomatik köçürülmədi. Aşağıdakı keçidi seçib köçürün.');
+    }
   }
 
   function openKioskLink() {
@@ -159,7 +163,7 @@ export function QrDisplayPage() {
     <>
       <PageHeader
         title="Məkan QR kioskları"
-        description="Hər tablet üçün sabit kiosk linki yaradın. Admin yalnız həmin kioskda hansı aktiv sifarişin göstəriləcəyini dəyişir."
+        description="Hər tablet üçün sabit kiosk linki yaradın və göstəriləcək aktiv sifarişi seçin. Müəssisə də mobil tətbiqdən öz sifarişinin QR ekranını idarə edə bilər."
       />
 
       {!eligibleOrders.loading && !eligibleOrders.error && eligibleOrders.data?.data.length === 0 ? (
@@ -226,7 +230,7 @@ export function QrDisplayPage() {
           <div className="panel-heading">
             <div>
               <h2>QR ekranını aktiv et</h2>
-              <p>Bu QR ekranı seçilmiş sifariş üzrə təyin olunmuş və işi qəbul etmiş işçilər üçün aktiv olacaq.</p>
+              <p>Aktiv sifariş üçün QR əvvəlcədən yaradıla bilər. Giriş-çıxış yalnız həmin sifarişə təyin olunmuş və işi qəbul etmiş işçilər üçün mümkündür.</p>
             </div>
             <QrCode size={20} />
           </div>
@@ -305,7 +309,7 @@ export function QrDisplayPage() {
             <dl className="detail-list">
               <dt>Müəssisə</dt><dd>{result?.company_name || selectedKiosk?.company_name || selectedCompany?.name || appStrings.notAvailable}</dd>
               <dt>Kiosk</dt><dd>{result?.kiosk_name || result?.name || selectedKiosk?.kiosk_name || selectedKiosk?.name}</dd>
-              <dt>Sifariş</dt><dd>{result?.active_session?.order_title || selectedOrder?.title || selectedKiosk?.active_session?.order_title || 'Admin tərəfindən aktiv ediləcək'}</dd>
+              <dt>Sifariş</dt><dd>{result?.active_session?.order_title || selectedOrder?.title || selectedKiosk?.active_session?.order_title || 'Aktiv sifariş seçilməlidir'}</dd>
               <dt>Link</dt><dd className="break-word">{kioskUrl || 'Link yalnız kiosk yaradıldıqdan sonra göstərilir.'}</dd>
             </dl>
 

@@ -97,11 +97,13 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
   }
 
   Future<void> _openCreateOrder() async {
-    final created = await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const _CreateOrderScreen()));
-    if (created == true) {
-      await _refresh();
+    final created = await Navigator.of(context).push<MobileOrder>(
+      MaterialPageRoute(builder: (_) => const CompanyCreateOrderScreen()),
+    );
+    if (created != null && mounted) {
+      // Start the list refresh immediately; the new detail has its own fetch.
+      setState(() => _future = _load());
+      await _showOrderDetail(context, created.id);
     }
   }
 
@@ -122,7 +124,7 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
     return switch (_filter) {
       _OrderHistoryFilter.all => orders,
       _OrderHistoryFilter.active =>
-        orders.where((order) => order.status == 'active').toList(),
+        orders.where((order) => _companyOrderIsCurrent(order, now)).toList(),
       _OrderHistoryFilter.past =>
         orders
             .where(
@@ -155,6 +157,8 @@ class _CompanyOrderDetailScreen extends StatefulWidget {
 
 class _CompanyOrderDetailScreenState extends State<_CompanyOrderDetailScreen> {
   late Future<_CompanyOrderDetailData> _future;
+  bool _cancelling = false;
+  String? _actionError;
 
   @override
   void initState() {
@@ -204,10 +208,18 @@ class _CompanyOrderDetailScreenState extends State<_CompanyOrderDetailScreen> {
             builder: (data) => RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
                 children: [
                   _OrderCard(order: data.order),
                   const SizedBox(height: 12),
+                  _CompanyOrderInformation(
+                    order: data.order,
+                    assignments: data.assignments,
+                  ),
+                  const SizedBox(height: 12),
+                  CompanyOrderQrCard(order: data.order),
+                  const SizedBox(height: 24),
                   Text(
                     AppStrings.assignedWorkers,
                     style: Theme.of(context).textTheme.titleMedium,
@@ -225,25 +237,63 @@ class _CompanyOrderDetailScreenState extends State<_CompanyOrderDetailScreen> {
                       ),
                     ),
                   const SizedBox(height: 20),
-                  if (data.order.status == 'active')
+                  if (_actionError != null) ...[
+                    InlineMessage(
+                      message: _actionError!,
+                      kind: InlineMessageKind.error,
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (_companyOrderIsCurrent(data.order, DateTime.now()))
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: () async {
-                          final confirmed = await _confirmAction(
-                            context,
-                            AppStrings.cancelOrderConfirm,
-                          );
-                          if (!confirmed || !context.mounted) {
-                            return;
-                          }
-                          final repo = context.read<CompanyRepository>();
-                          final navigator = Navigator.of(context);
-                          await repo.cancelOrder(data.order.id);
-                          if (mounted) navigator.pop();
-                        },
+                        onPressed: _cancelling
+                            ? null
+                            : () async {
+                                final confirmed = await _confirmAction(
+                                  context,
+                                  AppStrings.cancelOrderConfirm,
+                                );
+                                if (!confirmed || !context.mounted) {
+                                  return;
+                                }
+                                final repo = context.read<CompanyRepository>();
+                                setState(() {
+                                  _cancelling = true;
+                                  _actionError = null;
+                                });
+                                try {
+                                  await repo.cancelOrder(data.order.id);
+                                  if (mounted) await _refresh();
+                                } on ApiException catch (error) {
+                                  if (mounted) {
+                                    setState(
+                                      () => _actionError = error.message,
+                                    );
+                                  }
+                                } catch (_) {
+                                  if (mounted) {
+                                    setState(
+                                      () => _actionError =
+                                          AppStrings.actionFailed,
+                                    );
+                                  }
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _cancelling = false);
+                                  }
+                                }
+                              },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: BrandColors.error,
+                        ),
                         icon: const Icon(Icons.cancel_outlined),
-                        label: const Text(AppStrings.cancelOrder),
+                        label: Text(
+                          _cancelling
+                              ? AppStrings.working
+                              : AppStrings.cancelOrder,
+                        ),
                       ),
                     ),
                 ],
@@ -254,4 +304,121 @@ class _CompanyOrderDetailScreenState extends State<_CompanyOrderDetailScreen> {
       ),
     );
   }
+}
+
+bool _companyOrderIsCurrent(MobileOrder order, DateTime now) =>
+    {
+      'active',
+      'published',
+      'partially_assigned',
+      'assigned',
+      'in_progress',
+    }.contains(order.status) &&
+    (order.endDatetime == null || order.endDatetime!.isAfter(now));
+
+String _companyDateTime(DateTime? value) => value == null
+    ? AppStrings.noData
+    : DateFormat('dd.MM.yyyy, HH:mm').format(value.toLocal());
+
+class _CompanyDetailField extends StatelessWidget {
+  const _CompanyDetailField({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(color: BrandColors.mutedBrown),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value.trim().isEmpty ? AppStrings.noData : value,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
+      ],
+    ),
+  );
+}
+
+class _CompanyOrderInformation extends StatelessWidget {
+  const _CompanyOrderInformation({
+    required this.order,
+    required this.assignments,
+  });
+  final MobileOrder order;
+  final List<Assignment> assignments;
+
+  @override
+  Widget build(BuildContext context) => PremiumCard(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SectionHeader(title: CompanyStrings.orderInformation),
+        _CompanyDetailField(
+          label: AppStrings.starts,
+          value: _companyDateTime(order.startDatetime),
+        ),
+        _CompanyDetailField(
+          label: AppStrings.ends,
+          value: _companyDateTime(order.endDatetime),
+        ),
+        _CompanyDetailField(
+          label: AppStrings.requiredWorkers,
+          value: '${order.requiredCount}',
+        ),
+        _CompanyDetailField(
+          label: CompanyStrings.assignedWorkers,
+          value: '${order.assignmentCount}',
+        ),
+        _CompanyDetailField(
+          label: CompanyStrings.acceptedWorkers,
+          value:
+              '${assignments.where((item) => item.status == 'accepted' || item.status == 'completed').length}',
+        ),
+        for (final item in order.categoryItems) ...[
+          const Divider(height: 24),
+          _CompanyDetailField(
+            label: CompanyStrings.position,
+            value: item.positionName ?? item.category,
+          ),
+          if (item.departmentName != null)
+            _CompanyDetailField(
+              label: CompanyStrings.department,
+              value: item.departmentName!,
+            ),
+          if (item.subdepartmentName != null)
+            _CompanyDetailField(
+              label: CompanyStrings.subdepartment,
+              value: item.subdepartmentName!,
+            ),
+          _CompanyDetailField(
+            label: AppStrings.requiredWorkers,
+            value: '${item.assignedCount}/${item.requiredCount}',
+          ),
+          if (item.notes?.trim().isNotEmpty == true)
+            _CompanyDetailField(
+              label: AppStrings.categoryNotes,
+              value: item.notes!,
+            ),
+        ],
+        const SectionHeader(title: CompanyStrings.workplace),
+        _CompanyDetailField(
+          label: CompanyStrings.address,
+          value: order.location,
+        ),
+        const SectionHeader(title: CompanyStrings.additionalInformation),
+        _CompanyDetailField(
+          label: AppStrings.description,
+          value: order.description,
+        ),
+      ],
+    ),
+  );
 }

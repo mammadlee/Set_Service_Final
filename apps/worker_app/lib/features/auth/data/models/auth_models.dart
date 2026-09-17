@@ -146,17 +146,20 @@ class WorkerRegistrationVerification {
     required this.workerId,
     required this.status,
     required this.message,
+    this.registrationAccessToken,
   });
 
   final String workerId;
   final String status;
   final String message;
+  final String? registrationAccessToken;
 
   factory WorkerRegistrationVerification.fromJson(Map<String, dynamic> json) {
     return WorkerRegistrationVerification(
       workerId: json['worker_id'] as String? ?? '',
       status: json['status'] as String? ?? '',
       message: json['message'] as String? ?? '',
+      registrationAccessToken: json['registration_access_token'] as String?,
     );
   }
 }

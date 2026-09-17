@@ -2,17 +2,166 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:worker_app/core/network/api_client.dart';
 import 'package:worker_app/core/push/push_notification_service.dart';
 import 'package:worker_app/core/push/push_registration_service.dart';
 import 'package:worker_app/core/session/session_coordinator.dart';
 import 'package:worker_app/core/storage/token_storage.dart';
+import 'package:worker_app/core/theme/app_theme.dart';
 import 'package:worker_app/features/auth/data/auth_repository.dart';
 import 'package:worker_app/features/auth/data/models/auth_models.dart';
 import 'package:worker_app/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:worker_app/features/auth/presentation/screens/enrollment_documents_section.dart';
+import 'package:worker_app/features/worker/data/worker_repository.dart';
 
 void main() {
+  for (final width in [360.0, 430.0]) {
+    testWidgets('pending documents load from API after reopening at $width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 820);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final storage = _MemoryTokenStorage();
+      final coordinator = SessionCoordinator();
+      addTearDown(coordinator.dispose);
+      var reads = 0;
+      final dio = Dio(BaseOptions(baseUrl: 'https://example.test/v1'));
+      dio.httpClientAdapter = _CallbackAdapter((options) async {
+        expect(options.path, '/workers/me/enrollment');
+        expect(options.headers['authorization'], 'Bearer enrollment-only');
+        reads++;
+        return _jsonResponse(200, {
+          ..._profileJson(''),
+          'status': 'pending_approval',
+          'documents': [
+            for (final type in ['health_certificate', 'criminal_record'])
+              {
+                'type': type,
+                'name': 'Uzun-adlı-arayış-sənədi.pdf',
+                'available': true,
+                'status': 'ready',
+                'scan_status': 'clean',
+                'download_url': '/v1/workers/worker-1/documents/$type/download',
+              },
+          ],
+        });
+      });
+      final client = ApiClient(
+        baseUrl: 'https://example.test/v1',
+        tokenStorage: storage,
+        expectedRole: 'worker',
+        sessionCoordinator: coordinator,
+        dioOverride: dio,
+      );
+      for (var opening = 0; opening < 2; opening++) {
+        await tester.pumpWidget(
+          Provider<WorkerRepository>(
+            create: (_) => WorkerRepository(apiClient: client),
+            child: MaterialApp(
+              theme: AppTheme.light(),
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: EnrollmentDocumentsSection(
+                    key: ValueKey(opening),
+                    token: 'enrollment-only',
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('worker-document-health_certificate')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('worker-document-criminal_record')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
+      expect(reads, 2);
+      expect(storage.saveCount, 0);
+    });
+  }
+
+  for (final status in ['pending_approval', 'rejected']) {
+    test(
+      '$status login never opens worker app or stores enrollment as access',
+      () async {
+        final storage = _MemoryTokenStorage();
+        final coordinator = SessionCoordinator();
+        final calls = <String>[];
+        final dio = Dio(BaseOptions(baseUrl: 'https://example.test/v1'));
+        dio.httpClientAdapter = _CallbackAdapter((options) async {
+          calls.add(options.path);
+          if (options.path == '/auth/worker/login') {
+            return _jsonResponse(403, {
+              'code': 'WORKER_NOT_APPROVED',
+              'details': {'status': status},
+            });
+          }
+          expect(options.path, '/auth/worker/document-session');
+          return _jsonResponse(200, {
+            'worker_id': 'worker-1',
+            'status': status,
+            'registration_access_token': 'short-lived-document-token',
+          });
+        });
+        final client = ApiClient(
+          baseUrl: 'https://example.test/v1',
+          tokenStorage: storage,
+          expectedRole: 'worker',
+          sessionCoordinator: coordinator,
+          dioOverride: dio,
+        );
+        final controller = AuthController(
+          AuthRepository(apiClient: client, tokenStorage: storage),
+          PushRegistrationService(
+            apiClient: client,
+            pushNotificationService: PushNotificationService(),
+          ),
+          coordinator,
+        );
+        addTearDown(() async {
+          controller.dispose();
+          await coordinator.dispose();
+        });
+        await controller.loginWorker(
+          phone: '+994501112233',
+          password: 'Worker123!',
+        );
+        expect(
+          controller.state,
+          status == 'pending_approval'
+              ? AuthViewState.pendingApproval
+              : AuthViewState.accountBlocked,
+        );
+        expect(controller.worker, isNull);
+        expect(storage.saveCount, 0);
+        expect(
+          calls,
+          status == 'pending_approval'
+              ? ['/auth/worker/login', '/auth/worker/document-session']
+              : ['/auth/worker/login'],
+        );
+        expect(
+          controller.documentSessionToken,
+          status == 'pending_approval' ? 'short-lived-document-token' : null,
+        );
+        controller.backToLogin();
+        expect(controller.documentSessionToken, isNull);
+      },
+    );
+  }
+
   test(
     'worker profile mutations and refreshes share one observable model',
     () async {
@@ -92,6 +241,7 @@ Map<String, dynamic> _profileJson(String photoUrl) {
 }
 
 class _MemoryTokenStorage implements TokenStorage {
+  int saveCount = 0;
   @override
   bool get isLoaded => true;
 
@@ -117,7 +267,9 @@ class _MemoryTokenStorage implements TokenStorage {
   Future<void> saveTokens({
     required String accessToken,
     required String refreshToken,
-  }) async {}
+  }) async {
+    saveCount++;
+  }
 
   @override
   Future<void> warmUp() async {}

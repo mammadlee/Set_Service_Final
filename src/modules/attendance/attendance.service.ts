@@ -122,7 +122,10 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
 
 export async function getKioskSession(token: string) {
   const venueKiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
-  if (venueKiosk) return toVenueKioskPublicResponse(venueKiosk);
+  if (venueKiosk) {
+    ensureVenueKioskUsable(venueKiosk);
+    return toVenueKioskPublicResponse(venueKiosk);
+  }
 
   const session = await findValidKioskSessionByToken(token);
   return toKioskSessionResponse(session);
@@ -206,7 +209,7 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
 
   let companyId = filters.company_id;
   if (role === 'company') {
-    companyId = (await getApprovedCompanyForUser(userId)).id;
+    companyId = await resolveManageableCompanyId(userId, role, filters.company_id);
   }
 
   return {
@@ -229,7 +232,7 @@ export async function listKioskEligibleOrders(
 
   let companyId = filters.company_id;
   if (role === 'company') {
-    companyId = (await getApprovedCompanyForUser(userId)).id;
+    companyId = await resolveManageableCompanyId(userId, role, filters.company_id);
   }
 
   return {
@@ -259,9 +262,7 @@ export async function activateVenueKiosk(
   }
 
   const kiosk = await findManageableVenueKiosk(id, userId, role);
-  if (kiosk.status !== 'active' || kiosk.revoked_at !== null) {
-    throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
-  }
+  ensureVenueKioskUsable(kiosk);
 
   const order = await AttendanceRepository.findOrderForKiosk(input.order_id);
   if (!order || order.deleted_at !== null) {
@@ -279,7 +280,7 @@ export async function activateVenueKiosk(
     activatedById: userId,
     expiresAt: parseOptionalFutureDate(input.expires_at, 'Kiosk aktiv sessiyasının bitmə tarixi gələcək tarix olmalıdır.'),
   });
-  if (!activated) throw Errors.gone('Bu QR ekranÄ± deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
+  if (!activated) throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
   return toVenueKioskManagementResponse(activated);
 }
 
@@ -552,7 +553,6 @@ function assertKioskEligibleOrder(order: KioskOrderRecord, now: Date = new Date(
     status: order.status,
     shift_end: order.shift_end,
     deleted_at: order.deleted_at,
-    acceptedAssignmentCount: order._count.assignments,
   }, now)) {
     return;
   }
@@ -563,14 +563,17 @@ function assertKioskEligibleOrder(order: KioskOrderRecord, now: Date = new Date(
   if (order.shift_end.getTime() <= now.getTime()) {
     throw Errors.conflict('Bitmiş sifariş üçün QR ekranı aktiv edilə bilməz.', 'ORDER_EXPIRED');
   }
-  throw Errors.conflict('Bu sifariş üzrə işi qəbul etmiş işçi yoxdur.', 'NO_ACCEPTED_ASSIGNMENTS');
+  throw Errors.notFound('Sifariş tapılmadı.', 'ORDER_NOT_FOUND');
 }
 
 async function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
   ensureVenueKioskUsable(kiosk);
   const activeSession = getUsableActiveSession(kiosk);
   if (!activeSession) {
-    throw Errors.conflict('QR ekranı hazır deyil. Admin tərəfindən aktiv ediləcək.', 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+    if (kiosk.active_sessions.length > 0) {
+      throw Errors.gone('QR sifarişinin və ya sessiyasının aktiv müddəti bitib.', 'KIOSK_ORDER_INACTIVE');
+    }
+    throw Errors.conflict('QR ekranı üçün aktiv sifariş seçilməlidir.', 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
   }
 
   const qr = generateAttendanceQrToken({
@@ -605,6 +608,8 @@ function ensureVenueKioskUsable(kiosk: VenueKioskRecord): void {
     kiosk.revoked_at !== null ||
     kiosk.status !== 'active' ||
     kiosk.company.deleted_at !== null ||
+    !kiosk.company.user.is_active ||
+    kiosk.company.user.deleted_at !== null ||
     kiosk.company.status !== 'approved'
   ) {
     throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
@@ -621,6 +626,7 @@ function getUsableActiveSession(kiosk: VenueKioskRecord) {
     session.deleted_at !== null ||
     session.status !== 'active' ||
     session.order.deleted_at !== null ||
+    session.order.shift_end.getTime() <= Date.now() ||
     !ORDER_ATTENDANCE_STATUSES.includes(session.order.status) ||
     session.order.company_id !== kiosk.company_id
   ) {
@@ -637,8 +643,11 @@ function ensureKioskSessionActive(session: KioskSessionRecord): void {
     session.revoked_at !== null ||
     expired ||
     session.company.deleted_at !== null ||
+    !session.company.user.is_active ||
+    session.company.user.deleted_at !== null ||
     session.company.status !== 'approved' ||
     session.order.deleted_at !== null ||
+    session.order.shift_end.getTime() <= now ||
     !ORDER_ATTENDANCE_STATUSES.includes(session.order.status) ||
     session.assignment.deleted_at !== null ||
     session.assignment.status !== 'accepted' ||
@@ -821,7 +830,9 @@ async function getAssignmentForQr(assignmentId: string): Promise<AssignmentRecor
   if (
     assignment.status !== 'accepted' ||
     !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status) ||
-    assignment.order.deleted_at !== null
+    assignment.order.deleted_at !== null ||
+    assignment.order.shift_end.getTime() <= Date.now() ||
+    assignment.order.company.status !== 'approved'
   ) {
     throw Errors.conflict('QR yaratmaq üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
   }
@@ -852,6 +863,7 @@ async function getWorkerAssignmentForQr(
       'KIOSK_ASSIGNMENT_NOT_FOUND'
     );
   }
+  assertWorkerAssignmentActive(assignment);
   if (submittedAssignmentId && submittedAssignmentId !== assignment.id) {
     // The QR is order-based; use the authenticated worker's accepted assignment for that order.
   }
@@ -865,17 +877,23 @@ async function getWorkerAcceptedAssignment(assignmentId: string, workerId: strin
   if (assignment.worker_id !== workerId) {
     throw Errors.forbidden('Worker can use attendance only for own assignment.', 'FORBIDDEN');
   }
+  assertWorkerAssignmentActive(assignment);
+  return assignment;
+}
+
+function assertWorkerAssignmentActive(assignment: AssignmentRecord): void {
   if (
     assignment.status !== 'accepted' ||
     !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status) ||
-    assignment.order.deleted_at !== null
+    assignment.order.deleted_at !== null ||
+    assignment.order.shift_end.getTime() <= Date.now() ||
+    assignment.order.company.status !== 'approved'
   ) {
     throw Errors.conflict('Davamiyyət üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED', {
       status: assignment.status,
       order_status: assignment.order.status,
     });
   }
-  return assignment;
 }
 
 function verifyQrForAssignment(qrToken: string, assignment: AssignmentRecord): void {
@@ -929,6 +947,9 @@ function throwQrUseError(kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_
 async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord> {
   const company = await AttendanceRepository.findCompanyByUserId(userId);
   if (!company || company.deleted_at) throw Errors.notFound('Müəssisə profili tapılmadı.', 'COMPANY_NOT_FOUND');
+  if (!company.user.is_active || company.user.deleted_at) {
+    throw Errors.forbidden('Müəssisə hesabı aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
   if (company.status !== 'approved') {
     throw Errors.forbidden('Davamiyyət üçün müəssisə hesabı təsdiqlənməlidir.', 'ACCOUNT_NOT_APPROVED', {
       status: company.status,
@@ -940,6 +961,9 @@ async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord>
 async function getApprovedWorkerForUser(userId: string): Promise<WorkerRecord> {
   const worker = await AttendanceRepository.findWorkerByUserId(userId);
   if (!worker || worker.deleted_at) throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
+  if (!worker.user.is_active || worker.user.deleted_at) {
+    throw Errors.forbidden('İşçi hesabı aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
   if (worker.status !== 'approved') {
     throw Errors.forbidden('Davamiyyət üçün işçi hesabı təsdiqlənməlidir.', 'ACCOUNT_NOT_APPROVED', {
       status: worker.status,

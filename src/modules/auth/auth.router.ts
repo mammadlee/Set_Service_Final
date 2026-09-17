@@ -67,6 +67,13 @@ router.post('/worker/login', validate(WorkerLoginSchema), async (req: Request, r
   } catch (e) { next(e); }
 });
 
+router.post('/worker/document-session', validate(WorkerLoginSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await AuthService.createWorkerDocumentSession(req.body));
+  } catch (e) { next(e); }
+});
+
 router.post('/worker/forgot-password', validate(WorkerForgotPasswordSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.forgotWorkerPassword(req.body, clientIp(req)));

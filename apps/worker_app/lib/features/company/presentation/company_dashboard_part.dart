@@ -80,8 +80,9 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
               child: PremiumHeroPanel(
                 title: data.company.name,
                 subtitle: 'Müəssisə idarə paneli',
-                trailing: StatusPill(status: data.company.status),
                 children: [
+                  StatusPill(status: data.company.status),
+                  const SizedBox(height: 14),
                   LayoutBuilder(
                     builder: (context, constraints) {
                       final compact = constraints.maxWidth < 360;
@@ -120,7 +121,12 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
                 items: [
                   _SummaryItem(
                     AppStrings.activeOrders,
-                    data.orders.where((item) => item.status == 'active').length,
+                    data.orders
+                        .where(
+                          (item) =>
+                              _companyOrderIsCurrent(item, DateTime.now()),
+                        )
+                        .length,
                   ),
                   _SummaryItem(
                     AppStrings.activeWorkers,
@@ -134,7 +140,14 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
                   ),
                   _SummaryItem(
                     AppStrings.todayCheckIns,
-                    data.attendance.length,
+                    data.attendance.where((item) {
+                      final time = item.checkinTime;
+                      final now = DateTime.now();
+                      return time != null &&
+                          time.year == now.year &&
+                          time.month == now.month &&
+                          time.day == now.day;
+                    }).length,
                   ),
                 ],
               ),
@@ -146,11 +159,17 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
   }
 
   Future<void> _openCreateOrder() async {
-    final created = await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const _CreateOrderScreen()));
-    if (created == true) {
-      await _refresh();
+    final created = await Navigator.of(context).push<MobileOrder>(
+      MaterialPageRoute(builder: (_) => const CompanyCreateOrderScreen()),
+    );
+    if (created != null && mounted) {
+      setState(() => _future = _load());
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => CompanyOrderDetailRoute(orderId: created.id),
+        ),
+      );
+      if (mounted) await _refresh();
     }
   }
 }

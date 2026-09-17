@@ -22,7 +22,9 @@ import '../../notifications/data/models/notification_item.dart';
 import '../../notifications/presentation/widgets/notification_card.dart';
 import '../../taxonomy/data/taxonomy_repository.dart';
 import '../data/company_repository.dart';
+import '../data/company_kiosk.dart';
 import 'company_auth_controller.dart';
+import 'company_strings.dart';
 
 part 'company_dashboard_part.dart';
 part 'company_orders_part.dart';
@@ -33,6 +35,7 @@ part 'company_order_creation_part.dart';
 part 'company_worker_profile_part.dart';
 part 'company_reports_part.dart';
 part 'company_shared_part.dart';
+part 'company_order_qr_part.dart';
 
 class CompanyHomeShell extends StatefulWidget {
   const CompanyHomeShell({super.key});

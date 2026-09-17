@@ -59,14 +59,28 @@ class _AttendanceCard extends StatelessWidget {
         ? 'checked_in'
         : 'waiting';
     return PremiumCard(
-      child: ListTile(
-        title: Text(item.assignmentId),
-        subtitle: Text(
-          item.durationMinutes == null
-              ? AppStrings.attendance
-              : '${item.durationMinutes} dəq',
-        ),
-        trailing: StatusPill(status: status),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StatusPill(status: status),
+          const SizedBox(height: 12),
+          _CompanyDetailField(
+            label: item.workerName == null ? 'Təyinat' : AppStrings.worker,
+            value: item.workerName ?? item.assignmentId,
+          ),
+          if (item.orderTitle != null)
+            _CompanyDetailField(label: 'Sifariş', value: item.orderTitle!),
+          _CompanyDetailField(
+            label: 'Giriş vaxtı',
+            value: _companyDateTime(item.checkinTime),
+          ),
+          if (item.checkoutTime != null)
+            _CompanyDetailField(
+              label: 'Çıxış vaxtı',
+              value: _companyDateTime(item.checkoutTime),
+            ),
+          if (item.durationMinutes != null) Text('${item.durationMinutes} dəq'),
+        ],
       ),
     );
   }

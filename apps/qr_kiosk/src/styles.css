@@ -132,6 +132,18 @@ body {
   align-items: center;
 }
 
+.layout-grid > *,
+.detail-list div > * {
+  min-width: 0;
+}
+
+.context-panel,
+.detail-list strong,
+.countdown-text,
+.network-text {
+  overflow-wrap: anywhere;
+}
+
 .context-panel {
   max-width: 560px;
   animation: slideIn 620ms ease both 90ms;
@@ -208,6 +220,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  max-width: 100%;
   padding: 12px 16px;
   border: 1px solid rgba(227, 193, 137, 0.46);
   border-radius: 999px;
@@ -239,9 +253,9 @@ h1 {
 .qr-card {
   position: relative;
   width: min(100%, 500px);
-  aspect-ratio: 1;
   display: grid;
   place-items: center;
+  gap: 16px;
   border-radius: 36px;
   padding: clamp(26px, 4vw, 42px);
   background:
@@ -263,9 +277,8 @@ h1 {
 }
 
 .qr-status {
-  position: absolute;
-  top: 22px;
-  left: 22px;
+  position: relative;
+  justify-self: start;
   z-index: 2;
   border-radius: 999px;
   padding: 8px 14px;
@@ -286,7 +299,7 @@ h1 {
 }
 
 .qr-frame {
-  width: min(78%, 360px);
+  width: min(100%, 360px);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -300,6 +313,7 @@ h1 {
 }
 
 .qr-image {
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
   opacity: 0;
@@ -319,6 +333,7 @@ h1 {
 }
 
 .qr-placeholder {
+  grid-area: 1 / 1;
   display: grid;
   place-items: center;
   width: 100%;
@@ -335,9 +350,8 @@ h1 {
 }
 
 .countdown-ring {
-  position: absolute;
-  right: 26px;
-  bottom: 26px;
+  position: relative;
+  justify-self: end;
   z-index: 2;
   width: 92px;
   height: 92px;
@@ -420,6 +434,7 @@ h1 {
 
   .top-bar {
     margin-bottom: 22px;
+    flex-wrap: wrap;
   }
 
   .brand-logo {
@@ -427,7 +442,7 @@ h1 {
   }
 
   .fullscreen-button {
-    min-height: 40px;
+    min-height: 44px;
     padding: 0 14px;
   }
 
@@ -451,7 +466,6 @@ h1 {
   }
 
   .qr-frame {
-    width: 82%;
     border-width: 8px;
     border-radius: 22px;
   }
@@ -459,12 +473,10 @@ h1 {
   .countdown-ring {
     width: 76px;
     height: 76px;
-    right: 18px;
-    bottom: 18px;
   }
 }
 
-@media (orientation: landscape) and (max-height: 640px) {
+@media (orientation: landscape) and (max-height: 640px) and (min-width: 800px) {
   .hero-panel {
     min-height: auto;
   }
