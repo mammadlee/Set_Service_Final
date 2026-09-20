@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../shared/app_strings.dart';
+import '../../../shared/widgets/legal_consent_gate.dart';
 import '../../auth/presentation/screens/splash_screen.dart';
 import 'company_auth_controller.dart';
 import 'company_home_shell.dart';
@@ -34,7 +35,10 @@ class CompanyAuthGate extends StatelessWidget {
         icon: Icons.lock_outline,
         color: BrandColors.primaryBurgundy,
       ),
-      CompanyAuthState.authenticated => const CompanyHomeShell(),
+      CompanyAuthState.authenticated => const LegalConsentGate(
+        roleKey: 'company',
+        child: CompanyHomeShell(),
+      ),
     };
   }
 }
