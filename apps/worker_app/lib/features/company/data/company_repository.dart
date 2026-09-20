@@ -474,6 +474,17 @@ class CompanyRepository {
     }
   }
 
+  Future<void> deleteMyAccount() async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/companies/me/account-deletion-request',
+        data: const {'confirm': true},
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<void> logout() async {
     final refreshToken = await _tokenStorage.readRefreshToken();
     try {
