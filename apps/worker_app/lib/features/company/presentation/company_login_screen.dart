@@ -8,6 +8,7 @@ import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
+import '../../../../shared/widgets/legal_acceptance_checkbox.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import 'company_auth_controller.dart';
 
@@ -379,6 +380,7 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   final _contactController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController(text: '+994');
+  bool _legalAccepted = false;
 
   @override
   void initState() {
@@ -478,6 +480,11 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
                 onFieldSubmitted: (_) => _submit(context),
               ),
               const SizedBox(height: 22),
+              LegalAcceptanceCheckbox(
+                value: _legalAccepted,
+                onChanged: (value) => setState(() => _legalAccepted = value),
+              ),
+              const SizedBox(height: 12),
               LoadingButton(
                 label: AppStrings.registerAndSendOtp,
                 loading: auth.isSubmitting,
@@ -493,6 +500,14 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_legalAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Davam etmək üçün İstifadə Qaydalarını qəbul edin.'),
+        ),
+      );
+      return;
+    }
     await context.read<CompanyAuthController>().registerCompany(
       name: _nameController.text.trim(),
       contactName: _contactController.text.trim(),
