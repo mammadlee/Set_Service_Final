@@ -10,6 +10,7 @@ import '../../../../core/network/api_exception.dart';
 import '../../../../core/session/role_session_controller.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/app_strings.dart';
+import '../../../../shared/legal_links.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/loading_button.dart';
