@@ -15,6 +15,16 @@ export const ORDER_ATTENDANCE_STATUSES: OrderStatus[] = [
   'in_progress',
 ];
 
+/** Lifecycle groups, not the legacy literal `active` enum. No assignment is required. */
+export function orderLifecycleWhere(scope: 'active' | 'staffing', now: Date = new Date()): Prisma.OrderWhereInput {
+  return {
+    deleted_at: null,
+    status: { in: scope === 'staffing' ? ORDER_STAFFING_STATUSES : ORDER_ATTENDANCE_STATUSES },
+    shift_end: { gt: now },
+    company: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+  };
+}
+
 type TransitionActor = {
   actorId: string;
   actorRole: Role;

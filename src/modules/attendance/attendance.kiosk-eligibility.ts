@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import type { OrderStatus } from '../../types/prisma';
-import { ORDER_ATTENDANCE_STATUSES } from '../orders/orders.lifecycle';
+import { ORDER_ATTENDANCE_STATUSES, orderLifecycleWhere } from '../orders/orders.lifecycle';
 
 export type KioskEligibleOrderCandidate = {
   status: OrderStatus;
@@ -14,14 +14,7 @@ export function kioskEligibleOrderWhere(input: {
   orderId?: string;
 }): Prisma.OrderWhereInput {
   return {
-    deleted_at: null,
-    status: { in: ORDER_ATTENDANCE_STATUSES },
-    shift_end: { gt: input.now },
-    company: {
-      status: 'approved',
-      deleted_at: null,
-      user: { is_active: true, deleted_at: null },
-    },
+    ...orderLifecycleWhere('active', input.now),
     ...(input.companyId ? { company_id: input.companyId } : {}),
     ...(input.orderId ? { id: input.orderId } : {}),
   };

@@ -7,10 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:worker_app/core/network/api_client.dart';
+import 'package:worker_app/core/push/push_notification_service.dart';
+import 'package:worker_app/core/push/push_registration_service.dart';
 import 'package:worker_app/core/session/session_coordinator.dart';
 import 'package:worker_app/core/storage/token_storage.dart';
 import 'package:worker_app/core/theme/app_theme.dart';
 import 'package:worker_app/features/company/data/company_repository.dart';
+import 'package:worker_app/features/company/presentation/company_auth_controller.dart';
 import 'package:worker_app/features/attendance/data/models/attendance.dart';
 import 'package:worker_app/features/company/presentation/company_home_shell.dart';
 import 'package:worker_app/features/company/presentation/company_strings.dart';
@@ -26,6 +29,74 @@ const _address =
     'Bakı şəhəri, Nəsimi rayonu, Üzeyir Hacıbəyli küçəsi 123, üçüncü mərtəbə, böyük tədbirlər zalının xidməti girişi';
 
 void main() {
+  testWidgets(
+    'returning to cached active orders shows a new published order with zero assignments',
+    (tester) async {
+      final fixture = _Fixture()..orderCreated = false;
+      addTearDown(fixture.dispose);
+      _size(tester, 390);
+      await tester.pumpWidget(fixture.wrap(const CompanyHomeShell()));
+      // The dashboard has a continuously animated hero; pump bounded frames.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.tap(find.byType(NavigationDestination).at(1));
+      await tester.pumpAndSettle();
+      expect(find.text('Hələ sifariş yoxdur.'), findsOneWidget);
+      await tester.tap(find.byType(NavigationDestination).at(0));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+
+      // A create from another screen must invalidate the previously visited list.
+      final created = await tester.runAsync(
+        () => fixture.repo.createOrder(
+          title: 'Yeni sifariş',
+          description: 'Banket xidməti',
+          categoryItems: [
+            CreateOrderCategoryInput(
+              category: _position,
+              requiredCount: 2,
+              departmentId: 'department-1',
+              subdepartmentId: 'subdepartment-1',
+              positionId: 'position-1',
+            ),
+          ],
+          start: DateTime.now().add(const Duration(days: 2)),
+          end: DateTime.now().add(const Duration(days: 3)),
+          location: _address,
+        ),
+      );
+      expect(created?.status, 'published');
+      expect(created?.assignmentCount, 0);
+      final previousGets = fixture.requests
+          .where((r) => r.path == '/orders' && r.method == 'GET')
+          .length;
+      await tester.tap(find.byType(NavigationDestination).at(1));
+      await tester.pumpAndSettle();
+      expect(find.text(_order()['title'] as String), findsOneWidget);
+      expect(find.text('Hələ sifariş yoxdur.'), findsNothing);
+      final gets = fixture.requests
+          .where((r) => r.path == '/orders' && r.method == 'GET')
+          .toList();
+      expect(gets.length, greaterThan(previousGets));
+      expect(gets.every((r) => r.queryParameters['scope'] == 'active'), isTrue);
+      expect(
+        gets.every((r) => !r.queryParameters.containsKey('status')),
+        isTrue,
+      );
+      await tester.tap(find.text(AppStrings.allOrders));
+      await tester.pumpAndSettle();
+      expect(
+        fixture.requests.last.queryParameters.containsKey('scope'),
+        isFalse,
+      );
+      await tester.tap(find.text(AppStrings.activeOrders));
+      await tester.pumpAndSettle();
+      expect(fixture.requests.last.queryParameters['scope'], 'active');
+      expect(find.text(_order()['title'] as String), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   test(
     'company attendance keeps worker/order context from the existing API',
     () {
@@ -318,9 +389,20 @@ class _Fixture {
   bool eligible = true;
   bool existing = false;
   bool failActivation = false;
+  bool orderCreated = true;
 
   Widget wrap(Widget home) => MultiProvider(
     providers: [
+      ChangeNotifierProvider<CompanyAuthController>(
+        create: (_) => CompanyAuthController(
+          repo,
+          PushRegistrationService(
+            apiClient: client,
+            pushNotificationService: PushNotificationService(),
+          ),
+          coordinator,
+        ),
+      ),
       Provider<CompanyRepository>.value(value: repo),
       Provider<TaxonomyRepository>.value(
         value: TaxonomyRepository(apiClient: client),
@@ -350,7 +432,21 @@ class _Fixture {
         ],
       });
     }
+    if (options.path == '/companies/me') {
+      return _response({
+        'id': 'company-1',
+        'name': 'Test müəssisə',
+        'status': 'approved',
+      });
+    }
+    if (options.path == '/orders' && options.method == 'GET') {
+      return _response({
+        'data': orderCreated ? [_order()] : [],
+        'meta': {'page': 1, 'total_pages': 1},
+      });
+    }
     if (options.path == '/orders' || options.path == '/orders/order-1') {
+      orderCreated = true;
       return _response(_order());
     }
     if (options.path == '/attendance/venue-kiosks/eligible-orders') {

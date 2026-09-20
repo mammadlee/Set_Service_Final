@@ -10,6 +10,7 @@ import {
 } from './orders.schema';
 import * as OrdersRepository from './orders.repository';
 import { assertOrderTransition } from './orders.state-machine';
+import { orderLifecycleWhere } from './orders.lifecycle';
 import * as TaxonomyService from '../taxonomy/taxonomy.service';
 
 type OrderRecord = NonNullable<Awaited<ReturnType<typeof OrdersRepository.findOrderById>>>;
@@ -63,6 +64,7 @@ export async function listOrders(userId: string, roleValue: string, filters: Lis
 
   if (filters.status) where.status = filters.status;
   const andFilters: Prisma.OrderWhereInput[] = [];
+  if (filters.scope) andFilters.push(orderLifecycleWhere(filters.scope));
   if (filters.category) {
     andFilters.push({
       OR: [

@@ -1,9 +1,13 @@
 part of 'company_home_shell.dart';
 
 class _CompanyOrdersTab extends StatefulWidget {
-  const _CompanyOrdersTab({required this.attendanceCache});
+  const _CompanyOrdersTab({
+    required this.attendanceCache,
+    required this.refreshVersion,
+  });
 
   final _CompanyAttendanceStatusCache attendanceCache;
+  final int refreshVersion;
 
   @override
   State<_CompanyOrdersTab> createState() => _CompanyOrdersTabState();
@@ -19,8 +23,16 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
     _future = _load();
   }
 
+  @override
+  void didUpdateWidget(_CompanyOrdersTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshVersion != widget.refreshVersion) _future = _load();
+  }
+
   Future<MobileOrderPage> _load() =>
-      context.read<CompanyRepository>().listOrders();
+      context.read<CompanyRepository>().listOrders(
+        scope: _filter == _OrderHistoryFilter.active ? 'active' : null,
+      );
 
   Future<void> _refresh() async {
     setState(() => _future = _load());
@@ -60,8 +72,10 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
                       ),
                     ],
                     selected: {_filter},
-                    onSelectionChanged: (value) =>
-                        setState(() => _filter = value.first),
+                    onSelectionChanged: (value) => setState(() {
+                      _filter = value.first;
+                      _future = _load();
+                    }),
                   ),
                 ),
                 const SizedBox(height: 12),

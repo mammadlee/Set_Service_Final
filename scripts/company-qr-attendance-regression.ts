@@ -33,7 +33,7 @@ function attach(name: string, row: Row): Row {
   if (name === 'order') {
     row.company = rows.company.find((item) => item.id === row.company_id);
     row.assignments = rows.assignment.filter((item) => item.order_id === row.id);
-    row._count = { assignments: rows.assignment.filter((item) => item.order_id === row.id && item.status === 'accepted').length };
+    row._count = { assignments: row.assignments.length };
   }
   if (name === 'assignment') {
     row.order = attach('order', rows.order.find((item) => item.id === row.order_id)!);
@@ -76,7 +76,16 @@ async function main() {
       assert.ok(row, `Missing ${name}`);
       return row;
     };
-    db[name].findMany = async ({ where }: any = {}) => select(where);
+    db[name].findMany = async ({ where, skip = 0, take, orderBy, select: projection }: any = {}) => {
+      const selected = select(where);
+      if (orderBy?.created_at) selected.sort((a, b) => (a.created_at - b.created_at) * (orderBy.created_at === 'desc' ? -1 : 1));
+      return selected.slice(skip, take === undefined ? undefined : skip + take).map((row) => {
+        if (name === 'order' && projection?._count?.select?.assignments?.where) {
+          return { ...row, _count: { assignments: rows.assignment.filter((a) => a.order_id === row.id && matches(a, projection._count.select.assignments.where)).length } };
+        }
+        return row;
+      });
+    };
     db[name].count = async ({ where }: any) => select(where).length;
     db[name].create = async ({ data }: any) => {
       data = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
@@ -90,7 +99,7 @@ async function main() {
         ...data,
       };
       if (name === 'order' && row.category_items?.create) {
-        row.category_items = row.category_items.create.map((item: Row) => ({ id: crypto.randomUUID(), notes: null, ...item }));
+        row.category_items = row.category_items.create.map((item: Row) => ({ id: crypto.randomUUID(), notes: null, department_id: null, subdepartment_id: null, position_id: null, ...item }));
       }
       table.push(row);
       return attach(name, row);
@@ -105,6 +114,7 @@ async function main() {
   db.$queryRaw = async (strings: TemplateStringsArray, ...values: any[]) => {
     const sql = strings.join('?');
     const tableName = sql.match(/FROM "(\w+)"/)?.[1];
+    if (tableName === 'order_category_items') return rows.order.find((o) => o.id === values[0])?.category_items ?? [];
     const tableMap: Record<string, string> = {
       orders: 'order', assignments: 'assignment', venue_kiosks: 'venueKiosk',
       kiosk_active_sessions: 'kioskActiveSession', kiosk_sessions: 'kioskSession',
@@ -127,7 +137,9 @@ async function main() {
   const companyB = { ...companyA, id: 'company-b', user_id: 'company-user-b', name: 'Müəssisə B', user: { ...companyA.user, id: 'company-user-b' } };
   rows.company.push(companyA, companyB);
   const ordersService = await import('../src/modules/orders/orders.service');
-  const { CreateOrderSchema } = await import('../src/modules/orders/orders.schema');
+  const { CreateOrderSchema, ListOrdersQuerySchema } = await import('../src/modules/orders/orders.schema');
+  const assignmentsService = await import('../src/modules/assignments/assignments.service');
+  const { CreateAssignmentsSchema } = await import('../src/modules/assignments/assignments.schema');
   const created = await ordersService.createOrder(companyA.user_id, 'company', CreateOrderSchema.parse({
     title: 'Şöbə sifarişi', description: 'İş yeri üzrə ofisiant xidməti',
     category: 'Ofisiant', required_count: 1,
@@ -142,9 +154,74 @@ async function main() {
   cases += 1;
   const otherOrder = { ...order, id: 'order-b', company_id: companyB.id };
   rows.order.push(otherOrder);
-  const worker = { id: 'worker-a', user_id: 'worker-user-a', status: 'approved', deleted_at: null,
+  const worker = { id: '10000000-0000-4000-8000-000000000001', user_id: 'worker-user-a', status: 'approved', deleted_at: null, availability: true, positions: [],
     user: { id: 'worker-user-a', name: 'İşçi A', phone: '+994502222222', is_active: true, deleted_at: null } };
   rows.worker.push(worker, { ...worker, id: 'worker-b', user_id: 'worker-user-b' });
+
+  const query = (scope?: 'active' | 'staffing') => ListOrdersQuerySchema.parse({ scope, limit: 100 });
+  const visible = async (role: 'company' | 'admin', scope?: 'active' | 'staffing') =>
+    (await ordersService.listOrders(role === 'company' ? companyA.user_id : 'admin-user', role, query(scope))).data;
+  assert.equal((created.response as Row).status, 'published');
+  assert.equal((created.response as Row).assignment_count, 0);
+  assert.equal((await visible('company', 'active'))[0].id, order.id);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id && o.assignment_count === 0), true);
+  assert.equal((await visible('admin')).some((o) => o.id === order.id), true);
+  assert.equal((await ordersService.listOrders(companyA.user_id, 'company', ListOrdersQuerySchema.parse({ status: 'active' }))).data.length, 0,
+    'Legacy exact active filter is not a lifecycle group; this reproduces the original selector bug.');
+  assert.equal((await visible('company', 'active')).some((o) => o.id === otherOrder.id), false);
+  assert.equal(ListOrdersQuerySchema.safeParse({ scope: 'invented' }).success, false);
+  // Instant comparison, not device/server calendar date: +04:00 and UTC are identical.
+  const endIso = order.shift_end.toISOString();
+  const offsetEnd = new Date(order.shift_end.getTime() + 4 * 3600000).toISOString().replace('Z', '+04:00');
+  assert.equal(new Date(offsetEnd).getTime(), new Date(endIso).getTime());
+  order.shift_end = new Date(offsetEnd);
+  assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), true);
+  cases += 7;
+
+  for (const status of ['draft', 'cancelled', 'completed', 'in_progress']) {
+    order.status = status;
+    assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+    assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), status === 'in_progress');
+    await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  }
+  order.status = 'published';
+  const validEnd = order.shift_end;
+  order.shift_end = new Date(Date.now() - 60000);
+  assert.equal((await visible('company', 'active')).length, 0);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  order.shift_end = validEnd;
+  await rejectsCode(() => assignmentsService.createAssignments(companyA.user_id, 'company', { order_id: order.id, worker_ids: [worker.id] }), 'ROLE_FORBIDDEN');
+
+  // Filtering precedes pagination; recent completed orders cannot crowd a new
+  // published order out of the first active/staffing page.
+  rows.order.push(...Array.from({ length: 101 }, (_, index) => ({
+    ...order, id: `history-${index}`, status: 'completed', created_at: new Date(Date.now() + index + 1),
+  })));
+  assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), true);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), true);
+  assert.equal((await ordersService.listOrders('admin-user', 'admin', ListOrdersQuerySchema.parse({
+    status: 'completed', scope: 'staffing',
+  }))).data.length, 0, 'scope cannot broaden an explicit status filter');
+  rows.order.splice(2);
+  cases += 1;
+
+  const { orderLifecycleWhere } = await import('../src/modules/orders/orders.lifecycle');
+  const boundary = new Date(order.shift_end);
+  for (const scope of ['active', 'staffing'] as const) {
+    assert.equal(matches(attach('order', order), orderLifecycleWhere(scope, new Date(boundary.getTime() - 1))), true);
+    assert.equal(matches(attach('order', order), orderLifecycleWhere(scope, boundary)), false);
+  }
+  cases += 1;
+
+  companyA.status = 'pending_approval';
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  companyA.status = 'approved';
+  companyA.user.is_active = false;
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  companyA.user.is_active = true;
 
   // A/B: a just-published own order with no assignment is eligible and gets a live QR.
   const eligible = await service.listKioskEligibleOrders(companyA.user_id, 'company', {});
@@ -210,12 +287,18 @@ async function main() {
 
   // I: a valid company QR conveys no worker/assignment permission.
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
-  rows.assignment.push({ id: 'assignment-a', worker_id: worker.id, order_id: order.id, status: 'accepted', deleted_at: null });
-  const { reconcileOrderStaffingStatus } = await import('../src/modules/orders/orders.lifecycle');
-  await reconcileOrderStaffingStatus(db, order.id, {
-    actorId: 'admin-user', actorRole: 'admin', reason: 'Regression assignment accepted',
-  });
-  await rejectsCode(() => service.checkIn('worker-user-b', 'worker', { qr_token: initialQr.token, assignment_id: 'assignment-a' }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
+  const firstAssignment = await assignmentsService.createAssignments('admin-user', 'admin', CreateAssignmentsSchema.parse({ order_id: order.id, worker_ids: [worker.id] }));
+  const assignmentId = firstAssignment.assignments[0].id;
+  assert.equal(firstAssignment.assigned_count, 1);
+  assert.equal(firstAssignment.assignments[0].status, 'assigned');
+  assert.equal(order.status, 'assigned');
+  assert.equal((await visible('company', 'active'))[0].assignment_count, 1);
+  assert.equal(rows.kioskActiveSession[0].id, active.active_session!.id, 'QR already exists before assignment');
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
+  const accepted = await assignmentsService.acceptAssignment(assignmentId, worker.user_id, 'worker');
+  assert.equal(accepted.status, 'accepted');
+  cases += 2;
+  await rejectsCode(() => service.checkIn('worker-user-b', 'worker', { qr_token: initialQr.token, assignment_id: assignmentId }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
   worker.status = 'pending_approval';
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ACCOUNT_NOT_APPROVED');
   worker.status = 'approved';
@@ -238,7 +321,7 @@ async function main() {
   if (!verifiedInitial.valid) throw new Error('Expected valid test QR');
   companyA.user.is_active = false;
   const inactiveCompanyCheckin = await repository.createCheckInWithAudit({
-    assignmentId: 'assignment-a', workerId: worker.id, actorId: worker.user_id, actorRole: 'worker',
+    assignmentId, workerId: worker.id, actorId: worker.user_id, actorRole: 'worker',
     qr: {
       tokenHash: qrLib.hashQrToken(initialQr.token), nonce: verifiedInitial.payload.nonce,
       orderId: order.id, companyId: companyA.id, kioskId: kiosk.id, kioskSessionId: active.active_session!.id,
@@ -261,7 +344,7 @@ async function main() {
 
   // H: company-created order QR works after acceptance, then prevents duplicate scans.
   const checkin = await service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token });
-  assert.equal(checkin.assignment_id, 'assignment-a');
+  assert.equal(checkin.assignment_id, assignmentId);
   assert.equal(order.status, 'in_progress');
   assert.equal(rows.attendanceQrUse.length, 1);
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ATTENDANCE_ALREADY_CHECKED_IN');

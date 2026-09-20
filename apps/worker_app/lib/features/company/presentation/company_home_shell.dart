@@ -97,6 +97,7 @@ class _CompanyNotificationsRouteState extends State<CompanyNotificationsRoute> {
 
 class _CompanyHomeShellState extends State<CompanyHomeShell> {
   int _index = 0;
+  int _ordersRefreshVersion = 0;
   late final List<Widget?> _tabs;
   final _attendanceCache = _CompanyAttendanceStatusCache();
 
@@ -195,7 +196,10 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
   Widget _createTab(int index) {
     return switch (index) {
       0 => const _CompanyDashboardTab(),
-      1 => _CompanyOrdersTab(attendanceCache: _attendanceCache),
+      1 => _CompanyOrdersTab(
+        attendanceCache: _attendanceCache,
+        refreshVersion: _ordersRefreshVersion,
+      ),
       2 => _CompanyAssignmentsTab(attendanceCache: _attendanceCache),
       3 => const _CompanyAttendanceTab(),
       4 => _CompanyNotificationsTab(attendanceCache: _attendanceCache),
@@ -206,7 +210,12 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
   void _selectTab(int index) {
     if (_index == index) return;
     setState(() {
-      _tabs[index] ??= _createTab(index);
+      if (index == 1) {
+        _ordersRefreshVersion++;
+        _tabs[index] = _createTab(index);
+      } else {
+        _tabs[index] ??= _createTab(index);
+      }
       _index = index;
     });
   }

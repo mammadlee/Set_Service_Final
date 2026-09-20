@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { AssignmentStatus, Role } from '../../types/prisma';
 import {
-  ORDER_STAFFING_STATUSES,
+  orderLifecycleWhere,
   reconcileOrderStaffingStatus,
 } from '../orders/orders.lifecycle';
 
@@ -207,7 +207,7 @@ export function createAssignmentsWithSideEffects(input: {
     await tx.$queryRaw`SELECT id FROM "order_category_items" WHERE order_id = ${input.orderId} AND deleted_at IS NULL FOR UPDATE`;
 
     const order = await tx.order.findFirst({
-      where: { id: input.orderId, status: { in: ORDER_STAFFING_STATUSES }, deleted_at: null },
+      where: { id: input.orderId, ...orderLifecycleWhere('staffing') },
       select: {
         id: true,
         title: true,
@@ -499,10 +499,7 @@ export function changeWorkerAssignmentStatus(input: {
         worker_id: input.workerId,
         deleted_at: null,
         status: 'assigned',
-        order: {
-          status: { in: ORDER_STAFFING_STATUSES },
-          deleted_at: null,
-        },
+        order: orderLifecycleWhere('staffing'),
       },
       data: { status: input.nextStatus },
     });

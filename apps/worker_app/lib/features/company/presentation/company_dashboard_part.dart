@@ -46,7 +46,7 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
   Future<_CompanyDashboardData> _load() async {
     final repo = context.read<CompanyRepository>();
     final companyFuture = repo.getMe();
-    final ordersFuture = repo.listOrders();
+    final ordersFuture = repo.listOrders(scope: 'active');
     final assignmentsFuture = repo.listAssignments();
     final attendanceFuture = repo.listAttendance();
     final company = await companyFuture;

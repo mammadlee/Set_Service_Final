@@ -188,7 +188,7 @@ class AdminRepository {
     }
   }
 
-  Future<MobileOrderPage> listOrders({String? status}) async {
+  Future<MobileOrderPage> listOrders({String? status, String? scope}) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/orders',
@@ -196,6 +196,7 @@ class AdminRepository {
           'limit': 50,
           'sort': 'desc',
           if (status != null) 'status': status,
+          if (scope != null) 'scope': scope,
         },
       );
       return MobileOrderPage.fromJson(response.data ?? const {});

@@ -147,7 +147,7 @@ class _CreateAssignmentScreenState extends State<_CreateAssignmentScreen> {
 
   Future<_AssignmentOptions> _load() async {
     final repo = context.read<AdminRepository>();
-    final ordersFuture = repo.listOrders(status: 'active');
+    final ordersFuture = repo.listOrders(scope: 'staffing');
     final workersFuture = repo.listWorkers(status: 'approved', available: true);
     final orders = await ordersFuture;
     final workers = await workersFuture;

@@ -54,7 +54,7 @@ export function AssignmentsPage() {
   );
   const activeOrders = useAsync(
     () => canManageAssignments
-      ? ordersService.list({ page: 1, limit: 100, status: 'active' })
+      ? ordersService.list({ page: 1, limit: 100, scope: 'staffing', sort: 'desc' })
       : Promise.resolve({ data: [], meta: { page: 1, limit: 100, total: 0, total_pages: 0 } }),
     [canManageAssignments],
   );
@@ -133,7 +133,7 @@ export function AssignmentsPage() {
       setCreateOrderId('');
       setCreateCategoryItemId('');
       setSelectedWorkerIds([]);
-      await assignments.reload();
+      await Promise.all([assignments.reload(), activeOrders.reload()]);
     } catch (error) {
       setFormError(getErrorMessage(error));
     } finally {
@@ -149,7 +149,7 @@ export function AssignmentsPage() {
     try {
       await assignmentsService.cancel(cancelTarget.id, reason);
       setCancelTarget(null);
-      await assignments.reload();
+      await Promise.all([assignments.reload(), activeOrders.reload()]);
     } catch (error) {
       setCancelError(getErrorMessage(error));
     } finally {

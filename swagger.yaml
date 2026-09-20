@@ -2932,13 +2932,18 @@ paths:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: List orders for company or all orders for super admin
-      description: Approved companies receive only their own orders. Requires super_admin or admin with view_orders to receive all orders.
+      description: Approved companies receive only their own orders. Requires super_admin or admin with view_orders to receive all orders. New orders persist as published with zero assignments. Use scope=active for current company orders or scope=staffing for admin assignment candidates, not the legacy literal status=active filter. Staffing candidates may have zero assignments; worker/category availability and remaining capacity are revalidated transactionally on assignment creation.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
         - name: status
           in: query
           schema: { $ref: '#/components/schemas/OrderStatus' }
+          description: Exact persisted status, intersected with scope when both are provided.
+        - name: scope
+          in: query
+          schema: { type: string, enum: [active, staffing] }
+          description: Both scopes require a nondeleted order, approved active company, and shift_end strictly after server time (absolute instant; UTC/offset equivalent). Active includes active, published, partially_assigned, assigned and in_progress. Staffing excludes in_progress. Neither requires existing assignments. Omit for unfiltered history.
         - name: category
           in: query
           schema: { type: string, example: hospitality }

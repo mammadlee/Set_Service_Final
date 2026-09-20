@@ -7,6 +7,7 @@ export const ordersService = {
     limit?: number;
     search?: string;
     status?: OrderStatus | '';
+    scope?: 'active' | 'staffing';
     category?: string;
     sort?: 'asc' | 'desc';
   }) {
