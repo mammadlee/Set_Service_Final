@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../home/presentation/screens/worker_home_shell.dart';
+import '../../../../shared/widgets/legal_consent_gate.dart';
 import '../controllers/auth_controller.dart';
 import 'account_blocked_screen.dart';
 import 'login_screen.dart';
@@ -24,7 +25,10 @@ class AuthGate extends StatelessWidget {
       AuthViewState.passwordRequired => const PasswordScreen(),
       AuthViewState.pendingApproval => const PendingApprovalScreen(),
       AuthViewState.accountBlocked => const AccountBlockedScreen(),
-      AuthViewState.authenticated => const WorkerHomeShell(),
+      AuthViewState.authenticated => const LegalConsentGate(
+        roleKey: 'worker',
+        child: WorkerHomeShell(),
+      ),
     };
   }
 }
