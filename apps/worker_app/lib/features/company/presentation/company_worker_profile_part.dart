@@ -282,6 +282,33 @@ class _CompanyWorkerProfileScreenState
     await _future;
   }
 
+  Future<void> _reportWorkerProfile() async {
+    final input = await showContentReportDialog(
+      context,
+      subjectLabel: 'İşçi profilini',
+    );
+    if (input == null || !mounted) return;
+
+    try {
+      await context.read<CompanyRepository>().reportWorkerProfile(
+        workerId: widget.workerId,
+        reason: input.reason,
+        details: input.details,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Şikayət qəbul edildi və admin yoxlamasına göndərildi.'),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -383,6 +410,12 @@ class _CompanyWorkerProfileScreenState
                       ),
                   ],
                 ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _reportWorkerProfile,
+                icon: const Icon(Icons.flag_outlined),
+                label: const Text('İşçi profilini şikayət et'),
               ),
             ],
           ),
