@@ -7,6 +7,7 @@ import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
+import '../../../../shared/widgets/legal_acceptance_checkbox.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import '../../../../shared/widgets/premium_components.dart';
 import '../../../taxonomy/data/taxonomy_repository.dart';
@@ -31,6 +32,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _positionId;
   bool _taxonomyLoading = true;
   String? _taxonomyError;
+  bool _legalAccepted = false;
 
   @override
   void initState() {
@@ -195,6 +197,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onTap: _selectLanguages,
               ),
               const SizedBox(height: 22),
+              LegalAcceptanceCheckbox(
+                value: _legalAccepted,
+                onChanged: (value) => setState(() => _legalAccepted = value),
+              ),
+              const SizedBox(height: 12),
               LoadingButton(
                 label: AppStrings.registerAndSendOtp,
                 icon: Icons.sms_outlined,
@@ -211,6 +218,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_legalAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Davam etmək üçün İstifadə Qaydalarını qəbul edin.'),
+        ),
+      );
+      return;
+    }
     final position = _selectedPosition;
     if (position == null) return;
 
