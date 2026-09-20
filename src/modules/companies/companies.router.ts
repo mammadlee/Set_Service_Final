@@ -23,6 +23,10 @@ const CompanyDocumentParamsSchema = z.object({
   type: CompanyDocumentTypeSchema,
 }).strict();
 
+export const CompanyAccountDeletionRequestSchema = z.object({
+  confirm: z.literal(true),
+}).strict();
+
 export const CompanyUpdateSchema = z
   .object({
     name: z.string().trim().min(2).max(200).optional(),
@@ -54,6 +58,10 @@ router.get('/companies/me', requireAuth, requireRole('company'), requireApproved
 
 router.patch('/companies/me', requireAuth, requireRole('company'), requireApprovedAccount, validate(CompanyUpdateSchema), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.updateMyCompany(req.user!.sub, req.body)); } catch (e) { next(e); }
+});
+
+router.post('/companies/me/account-deletion-request', requireAuth, requireRole('company'), validate(CompanyAccountDeletionRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try { res.status(202).json(await Service.requestMyAccountDeletion(req.user!.sub)); } catch (e) { next(e); }
 });
 
 router.post('/companies/me/documents', requireEnrollmentAuth, requireRole('company'), upload.single('file'), async (req: Request, res: Response, next: NextFunction) => {
