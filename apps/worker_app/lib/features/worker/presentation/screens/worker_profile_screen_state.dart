@@ -177,7 +177,29 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w800),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 8),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.privacy_tip_outlined),
+                        title: const Text('Məxfilik Siyasəti'),
+                        trailing: const Icon(Icons.open_in_new),
+                        onTap: () => _openLegal(LegalLinks.privacy),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.description_outlined),
+                        title: const Text('İstifadə Qaydaları'),
+                        trailing: const Icon(Icons.open_in_new),
+                        onTap: () => _openLegal(LegalLinks.terms),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.delete_outline),
+                        title: const Text('Web hesab silmə səhifəsi'),
+                        trailing: const Icon(Icons.open_in_new),
+                        onTap: () => _openLegal(LegalLinks.accountDeletion),
+                      ),
+                      const SizedBox(height: 10),
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.tonalIcon(
@@ -221,6 +243,13 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         },
       ),
     );
+  }
+
+  Future<void> _openLegal(Uri uri) async {
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      setState(() => _error = 'Səhifəni açmaq mümkün olmadı.');
+    }
   }
 
   Future<void> _logout() async {
