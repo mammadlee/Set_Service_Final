@@ -6,6 +6,7 @@ import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
+import '../../../../shared/widgets/content_report_dialog.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import '../../../../shared/widgets/premium_components.dart';
@@ -94,7 +95,16 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 children: [
                   _AssignmentHeader(assignment: assignment),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _reportOrder(assignment),
+                      icon: const Icon(Icons.flag_outlined),
+                      label: const Text('Sifarişi və ya müəssisəni şikayət et'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   if (_error != null) ...[
                     InlineMessage(
                       message: _error!,
@@ -127,6 +137,34 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _reportOrder(Assignment assignment) async {
+    final input = await showContentReportDialog(
+      context,
+      subjectLabel: 'Sifarişi',
+    );
+    if (input == null || !mounted) return;
+
+    try {
+      await context.read<AssignmentRepository>().reportOrder(
+        orderId: assignment.orderId,
+        reason: input.reason,
+        details: input.details,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Şikayət qəbul edildi və admin yoxlamasına göndərildi.'),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Şikayəti göndərmək mümkün olmadı.');
+    }
   }
 
   Future<void> _changeStatus({required bool accept}) async {
