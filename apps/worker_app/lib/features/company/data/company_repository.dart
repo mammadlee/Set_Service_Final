@@ -423,6 +423,27 @@ class CompanyRepository {
     }
   }
 
+  Future<void> reportWorkerProfile({
+    required String workerId,
+    required String reason,
+    String? details,
+  }) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/moderation/reports',
+        data: {
+          'target_type': 'worker_profile',
+          'target_id': workerId,
+          'reason': reason,
+          if (details != null && details.trim().isNotEmpty)
+            'details': details.trim(),
+        },
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<void> rateWorker({
     required String assignmentId,
     required int score,
