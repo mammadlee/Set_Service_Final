@@ -742,9 +742,9 @@ jobs:
           if (typeof projectId !== 'string' || projectId.trim().length === 0) {
             throw new Error('google-services.json is missing project_info.project_id.');
           }
-          if (!packages.includes('az.setservice.worker_app')) {
+          if (!packages.includes('az.setservice.app')) {
             throw new Error(
-              'google-services.json does not contain az.setservice.worker_app.',
+              'google-services.json does not contain az.setservice.app.',
             );
           }
           NODE
