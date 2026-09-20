@@ -269,6 +269,38 @@ class CompanyAuthController extends ChangeNotifier {
     }
   }
 
+  Future<bool> deleteAccount() async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _pushRegistrationService.unregisterDeviceToken();
+      await _repository.deleteMyAccount();
+      await _repository.clearLocalSession();
+      pendingPhone = null;
+      pendingEmail = null;
+      pendingOtpCode = null;
+      pendingOtpChallenge = null;
+      enrollmentToken = null;
+      pendingPurpose = null;
+      blockedStatus = null;
+      successMessage = null;
+      companyName = null;
+      state = CompanyAuthState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
+      return true;
+    } on ApiException catch (error) {
+      errorMessage = error.message;
+      return false;
+    } catch (_) {
+      errorMessage = AppStrings.unknownError;
+      return false;
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     isSubmitting = true;
     notifyListeners();
