@@ -80,6 +80,126 @@ export async function updateMyCompany(userId: string, data: { name?: string; ema
   return toCompanyProfile(updated);
 }
 
+export async function requestMyAccountDeletion(userId: string) {
+  const now = new Date();
+  const effectiveAt = now.toISOString();
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const company = await tx.company.findFirst({
+      where: { user_id: userId, deleted_at: null },
+      select: { id: true },
+    });
+    if (!company) throw Errors.notFound('Company account not found.', 'COMPANY_NOT_FOUND');
+
+    await tx.$queryRaw`SELECT id FROM companies WHERE id = ${company.id} FOR UPDATE`;
+    const current = await tx.company.findUniqueOrThrow({
+      where: { id: company.id },
+      select: {
+        id: true,
+        user_id: true,
+        status: true,
+        documents: true,
+        docs_url: true,
+      },
+    });
+
+    const currentDocuments = normalizeCompanyDocuments(current.documents);
+    const cleanups = currentDocuments.flatMap((document) => {
+      if (
+        document.key
+        && document.status !== 'deleted'
+        && privateDocumentKeyBelongsToCompany(document.key, current.id, document.type)
+      ) {
+        return [{ key: document.key, visibility: 'private' as const }];
+      }
+      return [];
+    });
+    const deletedDocuments = currentDocuments.map((document) => ({
+      type: document.type,
+      status: 'deleted' as const,
+    }));
+
+    await tx.company.update({
+      where: { id: current.id },
+      data: {
+        name: 'Deleted Company',
+        status: 'inactive' as CompanyStatus,
+        docs_url: null,
+        documents: deletedDocuments as Prisma.InputJsonValue,
+        reject_reason: null,
+        deleted_at: now,
+      },
+    });
+    await tx.user.update({
+      where: { id: current.user_id },
+      data: {
+        phone: `deleted-company:${current.id}`,
+        email: null,
+        email_verified_at: null,
+        pending_email: null,
+        email_verification_code_hash: null,
+        email_verification_expires_at: null,
+        email_verification_sent_at: null,
+        email_verification_attempts: 0,
+        email_verification_blocked_until: null,
+        password_hash: null,
+        password_set_at: null,
+        name: 'Deleted Company',
+        fcm_token: null,
+        is_active: false,
+        session_version: { increment: 1 },
+        deleted_at: now,
+      },
+    });
+    await tx.refreshToken.updateMany({
+      where: { user_id: current.user_id, revoked_at: null },
+      data: { revoked_at: now, revoked_reason: 'account_deletion' },
+    });
+    await tx.deviceToken.updateMany({
+      where: { user_id: current.user_id, revoked_at: null },
+      data: { revoked_at: now, deleted_at: now },
+    });
+
+    const scheduledCleanupCount = await enqueueStorageCleanupEvents(tx, {
+      aggregate: 'company',
+      aggregateId: current.id,
+      reason: 'company_account_deletion',
+      objects: cleanups,
+    });
+
+    const audit = await tx.auditLog.create({
+      data: {
+        actor_id: userId,
+        actor_role: 'company' as Role,
+        action: 'status_changed',
+        entity_type: 'company_account_deletion_request',
+        entity_id: current.id,
+        metadata: {
+          event: 'account_deletion_requested',
+          fulfillment: 'soft_deleted_and_anonymized',
+          previous_status: current.status,
+          new_status: 'inactive',
+          documents_tombstoned: currentDocuments.length,
+          sessions_revoked: true,
+          storage_cleanup_scheduled: scheduledCleanupCount > 0,
+          storage_cleanup_event_count: scheduledCleanupCount,
+        },
+      },
+      select: { id: true },
+    });
+
+    return { auditId: audit.id, companyId: current.id };
+  });
+
+  return {
+    request_id: result.auditId,
+    company_id: result.companyId,
+    status: 'accepted',
+    account_state: 'inactive',
+    effective_at: effectiveAt,
+  };
+}
+
 export async function listCompanies(filters: {
   page: number;
   limit: number;
