@@ -23,6 +23,7 @@ import '../../notifications/presentation/widgets/notification_card.dart';
 import '../../taxonomy/data/taxonomy_repository.dart';
 import '../data/company_repository.dart';
 import '../data/company_kiosk.dart';
+import 'company_account_privacy_screen.dart';
 import 'company_auth_controller.dart';
 import 'company_strings.dart';
 
@@ -245,6 +246,11 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
             action: _CompanyMoreAction.reports,
           ),
           _MoreTile(
+            icon: Icons.privacy_tip_outlined,
+            title: 'Məxfilik və hesab',
+            action: _CompanyMoreAction.privacy,
+          ),
+          _MoreTile(
             icon: Icons.logout_rounded,
             title: 'Hesabdan çıx',
             action: _CompanyMoreAction.logout,
@@ -261,6 +267,13 @@ class _CompanyHomeShellState extends State<CompanyHomeShell> {
       case _CompanyMoreAction.reports:
         await Navigator.of(context).push<void>(
           MaterialPageRoute(builder: (_) => const _CompanyReportsScreen()),
+        );
+        break;
+      case _CompanyMoreAction.privacy:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => const CompanyAccountPrivacyScreen(),
+          ),
         );
         break;
       case _CompanyMoreAction.logout:
