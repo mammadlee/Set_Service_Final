@@ -11,6 +11,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../shared/app_strings.dart';
 import '../../../shared/models/mobile_models.dart';
 import '../../../shared/widgets/constrained_page.dart';
+import '../../../shared/widgets/content_report_dialog.dart';
 import '../../../shared/widgets/inline_message.dart';
 import '../../../shared/widgets/loading_button.dart';
 import '../../../shared/widgets/premium_components.dart';
