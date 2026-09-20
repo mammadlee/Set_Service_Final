@@ -22,6 +22,7 @@ import notificationsRouter from './modules/notifications/notifications.router';
 import adminsRouter from './modules/admins/admins.router';
 import taxonomyRouter from './modules/taxonomy/taxonomy.router';
 import publicUploadsRouter from './modules/uploads/public-uploads.router';
+import legalPagesRouter, { publicAccountDeletionRouter } from './modules/legal/legal.router';
 import { logger } from './lib/logger';
 import { Errors } from './lib/errors';
 import { assignCompatibilityRouter } from './modules/assignments/assignments.router';
@@ -63,6 +64,7 @@ app.use((_req, res, next) => {
 app.use(cors(corsOptions));
 app.use(requestContextMiddleware);
 app.use(express.json({ limit: '1mb' }));
+app.use(legalPagesRouter);
 app.use('/uploads', publicUploadsRouter);
 const globalLimiter = createRateLimitMiddleware({
   scope: 'global',
@@ -77,6 +79,12 @@ const authLimiter = createRateLimitMiddleware({
   dimensions: ['ip', 'target'],
   target: authTarget,
 });
+const publicDeletionLimiter = createRateLimitMiddleware({
+  scope: 'public_account_deletion',
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  dimensions: ['ip'],
+});
 const publicKioskLimiter = createRateLimitMiddleware({
   scope: 'public_kiosk',
   windowMs: 60 * 1000,
@@ -88,6 +96,7 @@ const publicKioskLimiter = createRateLimitMiddleware({
 app.use(globalLimiter);
 app.use('/v1/attendance/kiosk-sessions', publicKioskLimiter);
 app.use('/v1/attendance/venue-kiosks', publicKioskLimiter);
+app.use('/v1/public/account-deletion-requests', publicDeletionLimiter);
 app.use('/v1/auth/register', authLimiter);
 app.use('/v1/auth/worker/register', authLimiter);
 app.use('/v1/auth/worker/request-otp', authLimiter);
@@ -169,6 +178,7 @@ if (docsEnabled) {
   logger.info('Swagger UI disabled', { environment: process.env.NODE_ENV ?? 'development' });
 }
 
+app.use('/v1/public', publicAccountDeletionRouter);
 app.use('/v1/auth', authRouter);
 app.use('/v1/taxonomy', taxonomyRouter);
 app.use('/v1', companiesRouter);
