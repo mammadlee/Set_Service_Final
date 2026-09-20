@@ -1,6 +1,6 @@
 part of 'company_home_shell.dart';
 
-enum _CompanyMoreAction { attendance, reports, logout }
+enum _CompanyMoreAction { attendance, reports, privacy, logout }
 
 class _MoreTile extends StatelessWidget {
   const _MoreTile({
