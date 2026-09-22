@@ -1,3 +1,6 @@
+// ignore_for_file: undefined_shown_name, unused_import
+import 'package:flutter/cupertino.dart'
+    show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 class BrandColors {
