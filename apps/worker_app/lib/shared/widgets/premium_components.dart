@@ -64,7 +64,12 @@ class Premium3DCard extends StatelessWidget {
               : accentColor.withValues(alpha: 0.62),
         ),
       ),
-      child: child,
+      child: Material(
+        type: MaterialType.transparency,
+        borderRadius: borderRadius,
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
     );
 
     if (onTap == null) return content;
