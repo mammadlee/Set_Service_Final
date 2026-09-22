@@ -246,9 +246,15 @@ void main() {
         ],
         child: MaterialApp(
           theme: AppTheme.light(),
-          home: const WorkerProfileScreen(),
+          home: const Scaffold(body: WorkerProfileScreen()),
         ),
       ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text(AppStrings.deleteAccount),
+      320,
+      scrollable: find.byType(Scrollable).last,
     );
     await tester.pumpAndSettle();
     expect(find.text(AppStrings.deleteAccount), findsOneWidget);
