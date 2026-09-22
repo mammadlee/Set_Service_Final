@@ -280,6 +280,26 @@ components:
         account_state: { type: string, enum: [inactive] }
         effective_at: { type: string, format: date-time }
 
+    CompanyAccountDeletionRequest:
+      type: object
+      required: [confirm]
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          enum: [true]
+          description: Explicit confirmation that the authenticated company wants the account deletion request applied.
+
+    CompanyAccountDeletionResponse:
+      type: object
+      required: [request_id, company_id, status, account_state, effective_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        account_state: { type: string, enum: [inactive] }
+        effective_at: { type: string, format: date-time }
+
     WorkExperience:
       type: object
       required: [company_name, position]
@@ -2243,6 +2263,32 @@ paths:
       summary: Update approved company profile
       responses:
         '200': { description: Updated company profile }
+
+  /companies/me/account-deletion-request:
+    post:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      operationId: requestMyCompanyAccountDeletion
+      summary: Request deletion of the authenticated company account
+      description: Immediately soft-deletes and anonymizes the company-owned profile and authentication data, revokes sessions and device tokens, tombstones documents, and writes an append-only audit event. Historical operational relations remain intact; no database row is hard-deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanyAccountDeletionRequest' }
+      responses:
+        '202':
+          description: Account deletion request accepted and applied
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyAccountDeletionResponse' }
+        '400': { description: Explicit confirmation is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not a company, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Company account does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /companies/me/documents:
     post:

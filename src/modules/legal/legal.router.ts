@@ -52,8 +52,8 @@ publicAccountDeletionRouter.post(
 function privacyBody(): string {
   return [
     '<h1>SET Service Məxfilik Siyasəti</h1>',
-    '<p><strong>Son yenilənmə:</strong> 20 sentyabr 2026</p>',
-    '<p>Bu siyasət SET Service Android tətbiqi və əlaqəli xidmətlərin istifadəçi məlumatlarını necə emal etdiyini izah edir.</p>',
+    '<p><strong>Son yenilənmə:</strong> 22 sentyabr 2026</p>',
+    '<p>Bu siyasət SET Service mobil tətbiqləri (Android və iOS) və əlaqəli xidmətlərin istifadəçi məlumatlarını necə emal etdiyini izah edir.</p>',
     '<h2>Topladığımız məlumatlar</h2>',
     '<ul>',
     '<li><strong>Hesab və əlaqə məlumatları:</strong> ad və soyad, telefon nömrəsi, e-poçt ünvanı, müəssisə adı və əlaqədar şəxs.</li>',
@@ -63,9 +63,9 @@ function privacyBody(): string {
     '<li><strong>Texniki və təhlükəsizlik məlumatları:</strong> sessiya və audit qeydləri, IP ünvanı, cihaz/platforma məlumatı, Firebase Cloud Messaging tokeni və tətbiq quraşdırma identifikatoru.</li>',
     '</ul>',
     '<h2>Həssas sənədlər</h2>',
-    '<p>Sağlamlıq və məhkumluq arayışları işçi uyğunluğunun və qeydiyyat tələblərinin yoxlanılması üçün istifadə olunur. Sənədlər məhdud girişli saxlamada qorunur. Sağlamlıq arayışı yalnız səlahiyyətli adminlərə və işçi ilə uyğun təyinat əlaqəsi olan təsdiqlənmiş müəssisələrə göstərilə bilər.</p>',
+    '<p>Sağlamlıq və məhkumluq arayışları işçi uyğunluğunun və qeydiyyat tələblərinin yoxlanılması üçün istifadə olunur. Bu arayışlar və CV məhdud girişli saxlamada qorunur; profil şəkli isə yalnız məhdud profil şəkli endpoint-i ilə təqdim olunur. Sağlamlıq arayışı yalnız səlahiyyətli adminlərə və işçi ilə uyğun təyinat əlaqəsi olan təsdiqlənmiş müəssisələrə göstərilə bilər. Məhkumluq arayışı müəssisə istifadəçilərinə göstərilmir.</p>',
     '<h2>Kamera və məkan</h2>',
-    '<p>Android tətbiqi kameradan yalnız QR kodu oxumaq üçün istifadə edir. Kamera görüntüləri SET Service serverlərinə yüklənmir və saxlanılmır. Hazırkı Android tətbiqi dəqiq cihaz məkanına icazə istəmir və istifadəçinin canlı dəqiq fiziki məkanını toplamır. Sifarişdəki məkan müəssisənin daxil etdiyi iş/məkan mətnidir.</p>',
+    '<p>Mobil tətbiq kameradan yalnız QR kodu oxumaq üçün istifadə edir. Kamera görüntüləri SET Service serverlərinə yüklənmir və saxlanılmır. Android və iOS tətbiqləri dəqiq cihaz məkanına icazə istəmir və istifadəçinin canlı dəqiq fiziki məkanını toplamır. Sifarişdəki məkan müəssisənin daxil etdiyi iş/məkan mətnidir.</p>',
     '<h2>Məlumatlardan istifadə məqsədləri</h2>',
     '<ul><li>hesab yaratmaq, giriş və hesab idarəetməsi;</li><li>işçi və müəssisə uyğunluğunu/təsdiqini yoxlamaq;</li><li>sifariş, təyinat, QR giriş-çıxış və reytinq funksiyalarını təmin etmək;</li><li>push və xidmət bildirişləri göndərmək;</li><li>təhlükəsizlik, fırıldaqçılığın qarşısının alınması, audit və texniki nasazlıqların araşdırılması;</li><li>qanuni və tənzimləyici öhdəliklərə əməl etmək.</li></ul>',
     '<h2>Məlumatların paylaşılması</h2>',
@@ -102,7 +102,7 @@ function termsBody(): string {
 function accountDeletionBody(): string {
   return [
     '<h1>SET Service hesabının silinməsi</h1>',
-    '<p>Bu səhifə SET Service Android tətbiqinin istifadəçilərinə tətbiqi yenidən quraşdırmadan hesab və əlaqəli şəxsi məlumatların silinməsini tələb etməyə imkan verir.</p>',
+    '<p>Bu səhifə SET Service mobil tətbiqlərinin (Android və iOS) istifadəçilərinə tətbiqi yenidən quraşdırmadan hesab və əlaqəli şəxsi məlumatların silinməsini tələb etməyə imkan verir.</p>',
     '<p>Tətbiqə daxil ola bilirsinizsə, hesab parametrlərindəki <strong>Hesabı sil</strong> seçimi ən sürətli yoldur. Daxil ola bilmirsinizsə, aşağıdakı formanı göndərin.</p>',
     '<form id="deletion-form">',
     '<label for="role">Hesab növü</label><select id="role" name="role" required><option value="worker">İşçi</option><option value="company">Müəssisə</option></select>',

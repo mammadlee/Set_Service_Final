@@ -29,6 +29,9 @@ import 'package:worker_app/features/company/presentation/company_login_screen.da
 import 'package:worker_app/features/company/presentation/company_otp_screen.dart';
 import 'package:worker_app/features/company/presentation/company_password_screen.dart';
 import 'package:worker_app/features/company/presentation/company_status_screen.dart';
+import 'package:worker_app/features/company/presentation/company_account_privacy_screen.dart';
+import 'package:worker_app/features/worker/data/worker_repository.dart';
+import 'package:worker_app/features/worker/presentation/screens/worker_profile_screen.dart';
 import 'package:worker_app/features/taxonomy/data/taxonomy_repository.dart';
 import 'package:worker_app/shared/app_strings.dart';
 import 'package:worker_app/shared/widgets/premium_components.dart';
@@ -204,6 +207,52 @@ void main() {
           .selected,
       isTrue,
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('in-app account deletion remains visible on narrow iOS-sized UI', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(fixture.wrap(const CompanyAccountPrivacyScreen()));
+    await tester.pumpAndSettle();
+    expect(find.text('Müəssisə hesabını sil'), findsOneWidget);
+    expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<RoleSessionController>.value(
+            value: fixture.roleSession,
+          ),
+          ChangeNotifierProvider<AuthController>.value(
+            value: fixture.workerAuth,
+          ),
+          ChangeNotifierProvider<CompanyAuthController>.value(
+            value: fixture.companyAuth,
+          ),
+          Provider<TaxonomyRepository>.value(
+            value: TaxonomyRepository(apiClient: fixture.workerClient),
+          ),
+          Provider<WorkerRepository>.value(
+            value: WorkerRepository(apiClient: fixture.workerClient),
+          ),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const WorkerProfileScreen(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(AppStrings.deleteAccount), findsOneWidget);
+    expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
