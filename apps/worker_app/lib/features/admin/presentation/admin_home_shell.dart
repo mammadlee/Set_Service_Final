@@ -19,6 +19,7 @@ import '../../attendance/data/models/attendance.dart';
 import '../../notifications/data/models/notification_item.dart';
 import '../../notifications/presentation/widgets/notification_card.dart';
 import '../data/admin_repository.dart';
+import '../data/admin_moderation_models.dart';
 import 'admin_auth_controller.dart';
 
 part 'admin_dashboard_parts.dart';
@@ -30,6 +31,7 @@ part 'admin_assignments_parts.dart';
 part 'admin_attendance_parts.dart';
 part 'admin_notifications_parts.dart';
 part 'admin_shared_parts.dart';
+part 'admin_moderation_parts.dart';
 
 class AdminHomeShell extends StatefulWidget {
   const AdminHomeShell({super.key});
@@ -76,6 +78,7 @@ class _AdminHomeShellState extends State<AdminHomeShell> {
     'Müəssisələr',
     AppStrings.reports,
     AppStrings.notifications,
+    'Moderasiya',
   ];
 
   @override
@@ -108,15 +111,19 @@ class _AdminHomeShellState extends State<AdminHomeShell> {
       },
       child: Scaffold(
         appBar: AppBar(
-          toolbarHeight: 82,
+          toolbarHeight: MediaQuery.textScalerOf(context).scale(24) * 2.5 < 82
+              ? 82
+              : MediaQuery.textScalerOf(context).scale(24) * 2.5,
           titleSpacing: 0,
           backgroundColor: BrandColors.creamBackground,
           surfaceTintColor: BrandColors.transparent,
           title: Text(
             _titles[activeIndex],
+            maxLines: 2,
+            softWrap: true,
             style: const TextStyle(
               color: BrandColors.darkText,
-              fontSize: 27,
+              fontSize: 24,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.8,
             ),
@@ -170,6 +177,7 @@ class _AdminHomeShellState extends State<AdminHomeShell> {
       6 => const _AdminCompaniesDirectoryTab(),
       7 => const _AdminReportsTab(),
       8 => const _AdminNotificationsTab(),
+      9 => const _AdminModerationTab(),
       _ => const SizedBox.shrink(),
     };
   }
@@ -201,6 +209,7 @@ const _adminIndexPermissions = <int, List<String>>{
   6: ['view_companies'],
   7: ['view_reports'],
   8: ['view_notifications'],
+  9: ['view_moderation'],
 };
 
 class _AdminDrawer extends StatelessWidget {
@@ -230,6 +239,7 @@ class _AdminDrawer extends StatelessWidget {
       _DrawerItem('Müəssisələr', Icons.apartment_outlined),
       _DrawerItem('Hesabatlar', Icons.bar_chart_rounded),
       _DrawerItem('Bildirişlər', Icons.notifications_none_rounded),
+      _DrawerItem('Moderasiya', Icons.report_outlined),
     ];
 
     final visibleIndexes = allowedIndexes
@@ -269,6 +279,7 @@ class _AdminDrawer extends StatelessWidget {
                   ),
                   Positioned(
                     left: 4,
+                    right: 4,
                     bottom: 0,
                     child: Text(
                       adminName?.trim().isNotEmpty == true
@@ -278,6 +289,8 @@ class _AdminDrawer extends StatelessWidget {
                         color: BrandColors.white,
                         fontWeight: FontWeight.w700,
                       ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],

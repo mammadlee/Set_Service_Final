@@ -142,6 +142,23 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                   onEditDocuments: () => _openDocumentsSheet(worker),
                 ),
                 const SizedBox(height: 14),
+                PremiumCard(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.star_outline),
+                    title: const Text('Reytinqlər və rəylər'),
+                    subtitle: const Text(
+                      'Aldığınız qiymətləndirmələrə baxın və uyğun olmayan rəyi şikayət edin.',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => const WorkerRatingsScreen(),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
                 const InlineMessage(
                   message:
                       'Əlaqə məlumatlarınız yalnız admin tərəfindən görünür. Müəssisələr profilinizin icazəli hissələrini görə bilər.',

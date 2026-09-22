@@ -230,6 +230,7 @@ class _WorkerReportPanel extends StatelessWidget {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             value: selectedWorkerId,
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: AppStrings.selectWorker,
               prefixIcon: Icon(Icons.badge_outlined),
@@ -242,28 +243,32 @@ class _WorkerReportPanel extends StatelessWidget {
               ...workers.map(
                 (worker) => DropdownMenuItem(
                   value: worker.id,
-                  child: Text(worker.name),
+                  child: Text(worker.name, maxLines: 2, overflow: TextOverflow.ellipsis),
                 ),
               ),
             ],
             onChanged: onWorkerChanged,
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onPickStart,
-                  icon: const Icon(Icons.hourglass_top_rounded),
-                  label: Text(_dateButtonText(AppStrings.starts, startDate)),
+          AdminActionGroup(
+            stackBelow: 420,
+            actions: [
+              OutlinedButton.icon(
+                onPressed: onPickStart,
+                icon: const Icon(Icons.hourglass_top_rounded),
+                label: Text(
+                  _dateButtonText(AppStrings.starts, startDate),
+                  textAlign: TextAlign.center,
+                  softWrap: true,
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onPickEnd,
-                  icon: const Icon(Icons.hourglass_bottom_rounded),
-                  label: Text(_dateButtonText(AppStrings.ends, endDate)),
+              OutlinedButton.icon(
+                onPressed: onPickEnd,
+                icon: const Icon(Icons.hourglass_bottom_rounded),
+                label: Text(
+                  _dateButtonText(AppStrings.ends, endDate),
+                  textAlign: TextAlign.center,
+                  softWrap: true,
                 ),
               ),
             ],

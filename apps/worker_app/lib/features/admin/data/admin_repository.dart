@@ -13,6 +13,7 @@ import '../../attendance/data/models/kiosk_session.dart';
 import '../../auth/data/models/auth_models.dart';
 import '../../notifications/data/models/notification_item.dart';
 import 'admin_session_cache.dart';
+import 'admin_moderation_models.dart';
 
 class AdminRepository {
   AdminRepository({
@@ -342,6 +343,55 @@ class AdminRepository {
   Future<void> markNotificationRead(String id) async {
     try {
       await _dio.patch<void>('/notifications/$id/read');
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<AdminModerationReportPage> listModerationReports({
+    int page = 1,
+    String? status,
+  }) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/moderation/admin/reports',
+        queryParameters: {
+          'page': page,
+          'limit': 20,
+          if (status != null) 'status': status,
+        },
+      );
+      return AdminModerationReportPage.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<AdminModerationReport> getModerationReport(String id) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/moderation/admin/reports/$id',
+      );
+      return AdminModerationReport.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<AdminModerationReport> updateModerationReport(
+    String id, {
+    required String status,
+    String? resolutionNote,
+  }) async {
+    try {
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/moderation/admin/reports/$id/status',
+        data: {
+          'status': status,
+          if (resolutionNote != null) 'resolution_note': resolutionNote,
+        },
+      );
+      return AdminModerationReport.fromJson(response.data ?? const {});
     } catch (error) {
       throw mapDioException(error);
     }

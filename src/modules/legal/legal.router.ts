@@ -1,19 +1,17 @@
 
-import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-
-import { prisma } from '../../lib/prisma';
-import { normalizeEmail } from '../../lib/password';
-import { normalizePhone } from '../../lib/phone';
-import { Role } from '../../types/prisma';
+import { recordAccountDeletionRequest } from './account-deletion.service';
 
 const legalPagesRouter = Router();
 export const publicAccountDeletionRouter = Router();
 
 const AccountDeletionRequestSchema = z.object({
   role: z.enum(['worker', 'company']),
-  identifier: z.string().trim().min(3).max(254),
+  identifier: z.string().trim().min(3).max(254).refine(
+    (value) => !value.includes('@') || z.string().email().max(254).safeParse(value).success,
+    'Düzgün telefon nömrəsi və ya e-poçt ünvanı daxil edin.',
+  ),
   note: z.string().trim().max(1000).optional(),
 }).strict();
 
@@ -51,95 +49,6 @@ publicAccountDeletionRouter.post(
   },
 );
 
-async function recordAccountDeletionRequest(
-  input: z.infer<typeof AccountDeletionRequestSchema>,
-) {
-  const rawIdentifier = input.identifier.trim();
-  const identifierKind = rawIdentifier.includes('@') ? 'email' : 'phone';
-  const normalizedIdentifier =
-    identifierKind === 'email'
-      ? normalizeEmail(rawIdentifier)
-      : normalizePhone(rawIdentifier);
-
-  const user = await prisma.user.findFirst({
-    where: {
-      role: input.role as Role,
-      deleted_at: null,
-      ...(identifierKind === 'email'
-        ? { OR: [{ email: normalizedIdentifier }, { pending_email: normalizedIdentifier }] }
-        : { phone: normalizedIdentifier }),
-    },
-    select: {
-      id: true,
-      worker: { select: { id: true, deleted_at: true } },
-      company: { select: { id: true, deleted_at: true } },
-    },
-  });
-
-  // Keep the public response identical whether an account exists or not.
-  if (!user) return;
-
-  const profileIsActive =
-    input.role === 'worker'
-      ? Boolean(user.worker && !user.worker.deleted_at)
-      : Boolean(user.company && !user.company.deleted_at);
-  if (!profileIsActive) return;
-
-  const requestId = crypto.randomUUID();
-  const identifierHash = crypto
-    .createHash('sha256')
-    .update(normalizedIdentifier)
-    .digest('hex');
-  const admins = await prisma.user.findMany({
-    where: {
-      role: { in: ['admin', 'super_admin'] },
-      is_active: true,
-      deleted_at: null,
-    },
-    select: { id: true },
-  });
-
-  await prisma.$transaction(async (tx) => {
-    await tx.auditLog.create({
-      data: {
-        actor_id: null,
-        actor_role: input.role as Role,
-        action: 'status_changed',
-        entity_type: 'external_account_deletion_request',
-        entity_id: requestId,
-        metadata: {
-          event: 'account_deletion_requested_from_web',
-          status: 'pending_verification',
-          source: 'public_web_form',
-          requested_role: input.role,
-          account_user_id: user.id,
-          identifier_kind: identifierKind,
-          identifier_sha256: identifierHash,
-          note: input.note?.trim() || null,
-        },
-      },
-    });
-
-    for (const admin of admins) {
-      await tx.notification.create({
-        data: {
-          recipient_id: admin.id,
-          type: 'system',
-          channel: 'in_app',
-          title: 'Hesab silmə sorğusu',
-          body: 'Web səhifəsindən yeni hesab silmə sorğusu daxil olub.',
-          metadata: {
-            request_id: requestId,
-            account_user_id: user.id,
-            requested_role: input.role,
-            source: 'public_web_form',
-          },
-        },
-      });
-    }
-  });
-}
-
 function privacyBody(): string {
   return [
     '<h1>SET Service Məxfilik Siyasəti</h1>',
@@ -164,7 +73,7 @@ function privacyBody(): string {
     '<h2>Təhlükəsizlik</h2>',
     '<p>Production şəbəkə trafiki HTTPS/TLS ilə şifrələnir. Həssas sənədlər məhdud giriş və müddətli imzalanmış keçidlər vasitəsilə təqdim olunur. Giriş nəzarəti, sessiya ləğvi, audit qeydləri və fayl təhlükəsizlik yoxlamaları tətbiq olunur.</p>',
     '<h2>Hesab və məlumatların silinməsi</h2>',
-    '<p>İstifadəçilər tətbiq daxilindən və ya <a href="/account-deletion">hesab silmə səhifəsindən</a> hesablarının və əlaqəli şəxsi məlumatlarının silinməsini tələb edə bilərlər. Silinmə zamanı giriş deaktiv edilir, sessiyalar ləğv olunur, şəxsi profil məlumatları anonimləşdirilir/silinir və saxlanılan şəxsi faylların silinməsi başladılır. Təhlükəsizlik, fırıldaqçılığın qarşısının alınması və qanuni öhdəliklər üçün zəruri minimal audit/əməliyyat qeydləri əsaslandırılan müddət ərzində saxlanıla bilər.</p>',
+    '<p>İstifadəçilər tətbiq daxilindən və ya <a href="/account-deletion">hesab silmə səhifəsindən</a> hesablarının və əlaqəli şəxsi məlumatlarının silinməsini tələb edə bilərlər. Tətbiq daxilində təsdiqlənmiş silinmə zamanı giriş deaktiv edilir, sessiyalar ləğv olunur, şəxsi profil məlumatları anonimləşdirilir/silinir və saxlanılan şəxsi faylların silinməsi başladılır. İctimai formadan gələn müraciətlər sahiblik yoxlamasından sonra icra olunur; forma təkbaşına hesabı silmir. Təhlükəsizlik, fırıldaqçılığın qarşısının alınması və qanuni öhdəliklər üçün zəruri minimal audit/əməliyyat qeydləri əsaslandırılan müddət ərzində saxlanıla bilər.</p>',
     '<h2>Yaş məhdudiyyəti</h2><p>SET Service peşəkar işçi və müəssisə istifadəsi üçün nəzərdə tutulub və 18 yaşdan kiçik şəxslər üçün hədəflənməyib.</p>',
     '<h2>Əlaqə</h2><p>Məxfilik və hesab silmə məsələləri üçün tətbiqdəki dəstək kanallarından və ya <a href="/account-deletion">hesab silmə formasından</a> istifadə edin. Qaynar xətt: +994 70 231 51 51.</p>',
   ].join('');
@@ -183,7 +92,7 @@ function termsBody(): string {
     '<p>Profil məlumatları, sifariş başlığı və təsviri, qeydlər, reytinqlər və rəylər istifadəçi tərəfindən yaradılan məzmun ola bilər. Qanunsuz, təhdidedici, təhqiredici, ayrı-seçkilik yaradan, seksual, saxta, aldadıcı, spam və ya başqasının məxfi məlumatını icazəsiz açıqlayan məzmun qadağandır.</p>',
     '<p>İstifadəçilər tətbiq daxilində uyğun olmayan məzmunu və ya profili şikayət edə bilərlər. SET Service şikayətləri araşdırmaq, məzmunu məhdudlaşdırmaq/silmək və qaydaları pozan hesabları dayandırmaq hüququnu saxlayır.</p>',
     '<h2>Sənədlər</h2>',
-    '<p>İşçi uyğunluğunun yoxlanması üçün sağlamlıq və məhkumluq arayışları, müəssisə təsdiqi üçün isə korporativ sənədlər tələb oluna bilər. Saxta və ya dəyişdirilmiş sənəd təqdim etmək qadağandır.</p>',
+    '<p>İşçi təsdiqi üçün sağlamlıq və məhkumluq arayışları tələb olunur. Müəssisə sənədləri təsdiq üçün məcburi deyil. Saxta və ya dəyişdirilmiş sənəd təqdim etmək qadağandır.</p>',
     '<h2>Hesabın dayandırılması və silinməsi</h2>',
     '<p>Qaydaların, təhlükəsizlik tələblərinin və ya qanunların pozulması hesabın dayandırılması və ya deaktiv edilməsi ilə nəticələnə bilər. İstifadəçi tətbiq daxilindən və ya <a href="/account-deletion">hesab silmə səhifəsindən</a> hesabının silinməsini tələb edə bilər.</p>',
     '<h2>Məxfilik</h2><p>Şəxsi məlumatların emalı <a href="/privacy">SET Service Məxfilik Siyasəti</a> ilə tənzimlənir.</p>',
@@ -202,7 +111,7 @@ function accountDeletionBody(): string {
     '<button type="submit">Silinmə sorğusu göndər</button><p id="status" role="status" aria-live="polite"></p>',
     '</form>',
     '<h2>Nə silinir?</h2>',
-    '<p>Sorğu təsdiqləndikdən sonra hesab girişiniz deaktiv edilir, sessiyalar ləğv olunur, şəxsi profil və əlaqə məlumatları anonimləşdirilir/silinir və hesabla bağlı saxlanılan şəxsi faylların silinməsi başladılır. Təhlükəsizlik, fırıldaqçılığın qarşısının alınması və qanuni tələblər üçün zəruri minimal audit/əməliyyat qeydləri saxlanıla bilər.</p>',
+    '<p>İctimai forma hesabı avtomatik silmir. Müraciət baxış üçün qeydə alınır və hesab sahibliyi ayrıca yoxlanılır. Sahiblik təsdiqləndikdən sonra hesabın silinməsi icra oluna bilər: giriş deaktiv edilir, sessiyalar ləğv olunur, şəxsi profil və əlaqə məlumatları anonimləşdirilir/silinir və şəxsi faylların silinməsi başladılır. Təhlükəsizlik, fırıldaqçılığın qarşısının alınması və qanuni tələblər üçün zəruri minimal audit/əməliyyat qeydləri saxlanıla bilər.</p>',
     '<p><a href="/privacy">Məxfilik Siyasəti</a> · <a href="/terms">İstifadə Qaydaları</a></p>',
     '<script>',
     "const form=document.getElementById('deletion-form');const status=document.getElementById('status');",

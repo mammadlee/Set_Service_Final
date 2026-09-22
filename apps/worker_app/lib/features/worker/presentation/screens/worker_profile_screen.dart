@@ -21,6 +21,7 @@ import '../../../auth/data/models/auth_models.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../taxonomy/data/taxonomy_repository.dart';
 import '../../data/worker_repository.dart';
+import 'worker_ratings_screen.dart';
 
 part 'worker_profile_screen_state.dart';
 part 'worker_profile_screen_widgets.dart';

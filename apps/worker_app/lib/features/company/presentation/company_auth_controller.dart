@@ -36,6 +36,7 @@ class CompanyAuthController extends ChangeNotifier {
   String? errorMessage;
   String? successMessage;
   String? companyName;
+  String? companyProfileId;
   bool isSubmitting = false;
   bool _disposed = false;
 
@@ -66,6 +67,7 @@ class CompanyAuthController extends ChangeNotifier {
     try {
       final me = await _repository.getMe();
       companyName = me.name;
+      companyProfileId = me.id;
       state = me.status == 'approved'
           ? CompanyAuthState.authenticated
           : _blockedState(me.status);
@@ -103,6 +105,7 @@ class CompanyAuthController extends ChangeNotifier {
     pendingPurpose = null;
     blockedStatus = null;
     companyName = null;
+    companyProfileId = null;
     successMessage = null;
     errorMessage = AppStrings.backendError(code: event.code);
     state = CompanyAuthState.unauthenticated;
@@ -154,6 +157,7 @@ class CompanyAuthController extends ChangeNotifier {
         password: password,
       );
       companyName = session.user.name;
+      companyProfileId = session.user.company?.id;
       state = CompanyAuthState.authenticated;
       _notifySessionState(SessionState.authenticated);
     });
@@ -286,6 +290,7 @@ class CompanyAuthController extends ChangeNotifier {
       blockedStatus = null;
       successMessage = null;
       companyName = null;
+      companyProfileId = null;
       state = CompanyAuthState.unauthenticated;
       _notifySessionState(SessionState.unauthenticated);
       return true;
@@ -318,6 +323,7 @@ class CompanyAuthController extends ChangeNotifier {
       errorMessage = null;
       successMessage = null;
       companyName = null;
+      companyProfileId = null;
       state = CompanyAuthState.unauthenticated;
       isSubmitting = false;
       _notifySessionState(SessionState.unauthenticated);

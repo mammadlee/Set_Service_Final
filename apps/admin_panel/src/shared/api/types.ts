@@ -10,6 +10,8 @@ export type AdminPermission =
   | 'manage_assignments'
   | 'view_attendance'
   | 'view_reports'
+  | 'view_moderation'
+  | 'manage_moderation'
   | 'manage_kiosks'
   | 'view_notifications'
   | 'manage_admins';

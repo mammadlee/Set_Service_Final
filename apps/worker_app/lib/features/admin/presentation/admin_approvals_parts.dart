@@ -137,6 +137,7 @@ class _WorkerApprovalCard extends StatelessWidget {
           const SizedBox(height: 20),
           DropdownButtonFormField<String>(
             value: worker.workerClass,
+            isExpanded: true,
             decoration: const InputDecoration(
               labelText: AppStrings.workerClass,
             ),
@@ -169,17 +170,13 @@ class _WorkerApprovalCard extends StatelessWidget {
             },
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _rejectWorker(context, worker.id),
-                  child: const Text(AppStrings.reject),
-                ),
+          AdminActionGroup(
+            actions: [
+              OutlinedButton(
+                onPressed: () => _rejectWorker(context, worker.id),
+                child: const Text(AppStrings.reject),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton(
+              ElevatedButton(
                   onPressed: worker.workerClass == null
                       ? null
                       : () async {
@@ -195,8 +192,7 @@ class _WorkerApprovalCard extends StatelessWidget {
                           );
                           await onChanged();
                         },
-                  child: const Text(AppStrings.approve),
-                ),
+                child: const Text(AppStrings.approve),
               ),
             ],
           ),
@@ -240,17 +236,13 @@ class _CompanyApprovalCard extends StatelessWidget {
             ).textTheme.bodyLarge?.copyWith(color: BrandColors.darkText),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _rejectCompany(context, company.id),
-                  child: const Text(AppStrings.reject),
-                ),
+          AdminActionGroup(
+            actions: [
+              OutlinedButton(
+                onPressed: () => _rejectCompany(context, company.id),
+                child: const Text(AppStrings.reject),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton(
+              ElevatedButton(
                   onPressed: () async {
                     final confirmed = await _confirmAction(
                       context,
@@ -264,8 +256,7 @@ class _CompanyApprovalCard extends StatelessWidget {
                     );
                     await onChanged();
                   },
-                  child: const Text(AppStrings.approve),
-                ),
+                child: const Text(AppStrings.approve),
               ),
             ],
           ),

@@ -44,24 +44,25 @@ class _AdminAssignmentsTabState extends State<_AdminAssignmentsTab> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                SizedBox(
-                  width: double.infinity,
-                  child: SegmentedButton<_AdminAssignmentFilter>(
-                    expandedInsets: EdgeInsets.zero,
-                    segments: const [
-                      ButtonSegment(
-                        value: _AdminAssignmentFilter.all,
-                        label: Text(AppStrings.allJobs),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text(AppStrings.allJobs),
+                      selected: _filter == _AdminAssignmentFilter.all,
+                      onSelected: (_) => setState(
+                        () => _filter = _AdminAssignmentFilter.all,
                       ),
-                      ButtonSegment(
-                        value: _AdminAssignmentFilter.history,
-                        label: Text(AppStrings.assignmentHistory),
+                    ),
+                    ChoiceChip(
+                      label: const Text(AppStrings.assignmentHistory),
+                      selected: _filter == _AdminAssignmentFilter.history,
+                      onSelected: (_) => setState(
+                        () => _filter = _AdminAssignmentFilter.history,
                       ),
-                    ],
-                    selected: {_filter},
-                    onSelectionChanged: (value) =>
-                        setState(() => _filter = value.first),
-                  ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 if (assignments.isEmpty)
@@ -362,8 +363,7 @@ class _AdminSelectorTile extends StatelessWidget {
           ),
           child: Text(
             displayValue.isEmpty ? placeholder : displayValue,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               color: displayValue.isEmpty
                   ? BrandColors.urbanGraphite
@@ -410,8 +410,7 @@ Future<T?> _showAdminOptionSheet<T>({
                       Expanded(
                         child: Text(
                           label(item),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                           softWrap: true,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -476,29 +475,21 @@ class _AdminWorkerAssignmentPickerItem extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  worker.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ),
-              if (worker.isFocTraining) ...[
-                const SizedBox(width: 8),
-                const PremiumChip(label: 'F.O.C. təlim'),
-              ],
-            ],
+          Text(
+            worker.name,
+            softWrap: true,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
           ),
+          if (worker.isFocTraining) ...[
+            const SizedBox(height: 6),
+            const PremiumChip(label: 'F.O.C. təlim'),
+          ],
           const SizedBox(height: 6),
           Text(
             'Vəzifə: $position',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: BrandColors.urbanGraphite,
               fontWeight: FontWeight.w600,
@@ -604,20 +595,9 @@ class _AssignmentCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  assignment.order.title,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              StatusPill(status: assignment.status),
-            ],
+          AdminStatusHeader(
+            title: assignment.order.title,
+            status: assignment.status,
           ),
           const SizedBox(height: 8),
           Text(

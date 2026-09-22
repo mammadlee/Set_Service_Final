@@ -219,8 +219,9 @@ class _AdminWorkerDetailScreenState extends State<_AdminWorkerDetailScreen> {
                     ? AppStrings.worker
                     : worker.position,
                 compact: true,
-                trailing: StatusPill(status: worker.status),
+                wrapFullText: true,
                 children: [
+                  StatusPill(status: worker.status),
                   PremiumChip(
                     label: worker.workerClass ?? AppStrings.classNotSelected,
                     icon: Icons.workspace_premium_outlined,
@@ -300,7 +301,8 @@ class _AdminCompanyDetailScreenState extends State<_AdminCompanyDetailScreen> {
                     ? AppStrings.company
                     : company.contactName,
                 compact: true,
-                trailing: StatusPill(status: company.status),
+                wrapFullText: true,
+                children: [StatusPill(status: company.status)],
               ),
               const SizedBox(height: 12),
               PremiumCard(
@@ -336,22 +338,14 @@ class _OrderCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  order.title,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w800,
-                    height: 1.15,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              StatusPill(status: order.status),
-            ],
+          AdminStatusHeader(
+            title: order.title,
+            status: order.status,
+            titleStyle: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: Colors.black,
+              fontWeight: FontWeight.w800,
+              height: 1.15,
+            ),
           ),
           const SizedBox(height: 14),
           Text(

@@ -35,9 +35,11 @@ class CompanyAuthGate extends StatelessWidget {
         icon: Icons.lock_outline,
         color: BrandColors.primaryBurgundy,
       ),
-      CompanyAuthState.authenticated => const LegalConsentGate(
+      CompanyAuthState.authenticated => LegalConsentGate(
+        key: ValueKey('company-legal-${auth.companyProfileId}'),
         roleKey: 'company',
-        child: CompanyHomeShell(),
+        accountId: auth.companyProfileId,
+        child: const CompanyHomeShell(),
       ),
     };
   }

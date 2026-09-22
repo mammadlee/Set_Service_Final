@@ -10,11 +10,13 @@ import 'inline_message.dart';
 class LegalConsentGate extends StatefulWidget {
   const LegalConsentGate({
     required this.roleKey,
+    required this.accountId,
     required this.child,
     super.key,
   });
 
   final String roleKey;
+  final String? accountId;
   final Widget child;
 
   @override
@@ -27,7 +29,8 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
   bool _checked = false;
   String? _error;
 
-  String get _storageKey => 'setservice_legal_acceptance_v1_${widget.roleKey}';
+  String get _storageKey =>
+      'setservice_legal_acceptance_v1_${widget.roleKey}_${widget.accountId}';
 
   @override
   void initState() {
@@ -36,6 +39,10 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
   }
 
   Future<void> _loadAcceptance() async {
+    if (widget.accountId == null || widget.accountId!.isEmpty) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
     try {
       final value = await SecureStorageConfig.storage.read(key: _storageKey);
       if (!mounted) return;
@@ -60,7 +67,9 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
       if (mounted) setState(() => _accepted = true);
     } catch (_) {
       if (mounted) {
-        setState(() => _error = 'Razılıq yadda saxlanılmadı. Yenidən cəhd edin.');
+        setState(
+          () => _error = 'Razılıq yadda saxlanılmadı. Yenidən cəhd edin.',
+        );
       }
     }
   }
@@ -75,11 +84,12 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    if (_accepted) return widget.child;
+    // Preserve offline access if a cached session has not yet loaded its account ID.
+    if (_accepted || widget.accountId == null || widget.accountId!.isEmpty) {
+      return widget.child;
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('İstifadə qaydaları')),
@@ -97,9 +107,9 @@ class _LegalConsentGateState extends State<LegalConsentGate> {
             Text(
               'SET Service-dən istifadə şərtləri',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 12),
             Text(

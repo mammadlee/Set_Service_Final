@@ -1,5 +1,100 @@
 part of 'admin_home_shell.dart';
 
+class AdminStatusHeader extends StatelessWidget {
+  const AdminStatusHeader({
+    required this.title,
+    required this.status,
+    this.icon,
+    this.titleStyle,
+    super.key,
+  });
+
+  final String title;
+  final String status;
+  final IconData? icon;
+  final TextStyle? titleStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final heading = Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, color: BrandColors.primaryBurgundy, size: 26),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Text(
+                title,
+                softWrap: true,
+                style:
+                    titleStyle ??
+                    Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ),
+          ],
+        );
+        final pill = ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+          child: StatusPill(status: status),
+        );
+        if (constraints.maxWidth < 390) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [heading, const SizedBox(height: 10), pill],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: heading),
+            const SizedBox(width: 12),
+            pill,
+          ],
+        );
+      },
+    );
+  }
+}
+
+class AdminActionGroup extends StatelessWidget {
+  const AdminActionGroup({
+    required this.actions,
+    this.stackBelow = 300,
+    super.key,
+  });
+
+  final List<Widget> actions;
+  final double stackBelow;
+
+  @override
+  Widget build(BuildContext context) {
+    if (actions.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stacked = constraints.maxWidth < stackBelow;
+        final actionWidth = stacked
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 8 * (actions.length - 1)) /
+                  actions.length;
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final action in actions)
+              SizedBox(width: actionWidth, child: action),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _AsyncView<T> extends StatelessWidget {
   const _AsyncView({
     required this.future,

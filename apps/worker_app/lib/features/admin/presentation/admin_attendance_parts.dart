@@ -36,24 +36,25 @@ class _AdminAttendanceTabState extends State<_AdminAttendanceTab> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              SizedBox(
-                width: double.infinity,
-                child: SegmentedButton<_AdminAttendanceFilter>(
-                  expandedInsets: EdgeInsets.zero,
-                  segments: const [
-                    ButtonSegment(
-                      value: _AdminAttendanceFilter.today,
-                      label: Text(AppStrings.todayAttendance),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text(AppStrings.todayAttendance),
+                    selected: _filter == _AdminAttendanceFilter.today,
+                    onSelected: (_) => setState(
+                      () => _filter = _AdminAttendanceFilter.today,
                     ),
-                    ButtonSegment(
-                      value: _AdminAttendanceFilter.all,
-                      label: Text(AppStrings.allAttendance),
+                  ),
+                  ChoiceChip(
+                    label: const Text(AppStrings.allAttendance),
+                    selected: _filter == _AdminAttendanceFilter.all,
+                    onSelected: (_) => setState(
+                      () => _filter = _AdminAttendanceFilter.all,
                     ),
-                  ],
-                  selected: {_filter},
-                  onSelectionChanged: (value) =>
-                      setState(() => _filter = value.first),
-                ),
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
               if (attendance.isEmpty)
@@ -88,15 +89,21 @@ class _AttendanceCard extends StatelessWidget {
         ? 'checked_in'
         : 'waiting';
     return Premium3DCard(
-      child: ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(item.assignmentId),
-        subtitle: Text(
-          item.durationMinutes == null
-              ? AppStrings.todayAttendance
-              : '${item.durationMinutes} dəq',
-        ),
-        trailing: StatusPill(status: status),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AdminStatusHeader(
+            title: item.assignmentId,
+            status: status,
+            titleStyle: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            item.durationMinutes == null
+                ? AppStrings.todayAttendance
+                : '${item.durationMinutes} dəq',
+          ),
+        ],
       ),
     );
   }

@@ -25,9 +25,11 @@ class AuthGate extends StatelessWidget {
       AuthViewState.passwordRequired => const PasswordScreen(),
       AuthViewState.pendingApproval => const PendingApprovalScreen(),
       AuthViewState.accountBlocked => const AccountBlockedScreen(),
-      AuthViewState.authenticated => const LegalConsentGate(
+      AuthViewState.authenticated => LegalConsentGate(
+        key: ValueKey('worker-legal-${auth.worker?.id}'),
         roleKey: 'worker',
-        child: WorkerHomeShell(),
+        accountId: auth.worker?.id,
+        child: const WorkerHomeShell(),
       ),
     };
   }

@@ -48,12 +48,19 @@ class _AdminWorkersDirectoryTabState extends State<_AdminWorkersDirectoryTab> {
                         _AdminWorkerDetailScreen(workerId: worker.id),
                   ),
                 ),
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.badge_outlined),
-                  title: Text(worker.name),
-                  subtitle: Text(worker.position),
-                  trailing: StatusPill(status: worker.status),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AdminStatusHeader(
+                      title: worker.name,
+                      status: worker.status,
+                      icon: Icons.badge_outlined,
+                    ),
+                    if (worker.position.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(worker.position),
+                    ],
+                  ],
                 ),
               );
             },
@@ -113,12 +120,19 @@ class _AdminCompaniesDirectoryTabState
                         _AdminCompanyDetailScreen(companyId: company.id),
                   ),
                 ),
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.business_outlined),
-                  title: Text(company.name),
-                  subtitle: Text(company.contactName),
-                  trailing: StatusPill(status: company.status),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AdminStatusHeader(
+                      title: company.name,
+                      status: company.status,
+                      icon: Icons.business_outlined,
+                    ),
+                    if (company.contactName.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(company.contactName),
+                    ],
+                  ],
                 ),
               );
             },

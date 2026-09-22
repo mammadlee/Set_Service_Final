@@ -203,13 +203,15 @@ class _PendingApprovalsCard extends StatelessWidget {
                   size: 18,
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  total == 0
-                      ? 'Təsdiq gözləyən sorğu yoxdur'
-                      : '$total təsdiq sorğusu gözlənilir',
-                  style: const TextStyle(
-                    color: BrandColors.primaryBurgundy,
-                    fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Text(
+                    total == 0
+                        ? 'Təsdiq gözləyən sorğu yoxdur'
+                        : '$total təsdiq sorğusu gözlənilir',
+                    style: const TextStyle(
+                      color: BrandColors.primaryBurgundy,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ],
@@ -304,8 +306,7 @@ class _AdminCardTitle extends StatelessWidget {
         Expanded(
           child: Text(
             title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),

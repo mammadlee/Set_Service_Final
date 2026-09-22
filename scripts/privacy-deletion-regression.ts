@@ -17,6 +17,7 @@ const originalCreateUploadService = uploads.createUploadService;
 
 const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/prisma');
 const WorkersService = require('../src/modules/workers/workers.service') as typeof import('../src/modules/workers/workers.service');
+const CompaniesService = require('../src/modules/companies/companies.service') as typeof import('../src/modules/companies/companies.service');
 const {
   deliverStorageCleanupOutboxEvent,
 } = require('../src/lib/storage-cleanup-outbox') as typeof import('../src/lib/storage-cleanup-outbox');
@@ -30,6 +31,9 @@ const ownedHealthKey =
   `workers/${workerId}/documents/health_certificate/health-certificate.pdf`;
 const foreignCriminalKey =
   'workers/99999999-0000-4000-8000-000000000999/documents/criminal_record/foreign.pdf';
+const companyId = '30000000-0000-4000-8000-000000000001';
+const companyUserId = '40000000-0000-4000-8000-000000000001';
+const companyDocumentKey = `companies/${companyId}/documents/registration_certificate/receipt.pdf`;
 
 type AsyncMethod = (...args: any[]) => Promise<any>;
 
@@ -237,7 +241,7 @@ async function testAccountDeletionSoftDeletesAndAudits(): Promise<void> {
   let workerUpdate: any;
   let userUpdate: any;
   let refreshTokenUpdate: any;
-  let deviceTokenUpdate: any;
+  let deviceTokenDeletion: any;
   let auditEvent: any;
   let cleanupEvents: any[] = [];
 
@@ -252,6 +256,7 @@ async function testAccountDeletionSoftDeletesAndAudits(): Promise<void> {
         id: workerId,
         user_id: workerUserId,
         status: 'approved',
+        deleted_at: null,
         documents: [
           readyDocument('health_certificate', ownedHealthKey, true),
           readyDocument('criminal_record', foreignCriminalKey, false),
@@ -282,8 +287,8 @@ async function testAccountDeletionSoftDeletesAndAudits(): Promise<void> {
       },
     },
     deviceToken: {
-      updateMany: async (query: any) => {
-        deviceTokenUpdate = query;
+      deleteMany: async (query: any) => {
+        deviceTokenDeletion = query;
         return { count: 1 };
       },
     },
@@ -353,11 +358,7 @@ async function testAccountDeletionSoftDeletesAndAudits(): Promise<void> {
     revoked_at: null,
   });
   assert.equal(refreshTokenUpdate.data.revoked_reason, 'account_deletion');
-  assert.deepEqual(deviceTokenUpdate.where, {
-    user_id: workerUserId,
-    revoked_at: null,
-  });
-  assert.ok(deviceTokenUpdate.data.deleted_at instanceof Date);
+  assert.deepEqual(deviceTokenDeletion.where, { user_id: workerUserId });
 
   assert.equal(auditEvent.actor_id, workerUserId);
   assert.equal(auditEvent.actor_role, 'worker');
@@ -431,6 +432,93 @@ async function testStorageCleanupOutboxDelivery(): Promise<void> {
   );
 }
 
+async function testCompanyAccountDeletion(): Promise<void> {
+  let companyUpdate: any;
+  let userUpdate: any;
+  let refreshUpdate: any;
+  let deviceDelete: any;
+  let auditEvent: any;
+  let cleanupEvents: any[] = [];
+  const tx = {
+    $queryRaw: async () => [],
+    company: {
+      findFirst: async () => ({ id: companyId }),
+      findUniqueOrThrow: async () => ({
+        id: companyId,
+        user_id: companyUserId,
+        status: 'approved',
+        deleted_at: null,
+        docs_url: 'https://example.invalid/legacy.pdf',
+        documents: [
+          { type: 'registration_certificate', name: 'receipt.pdf', key: companyDocumentKey, status: 'ready' },
+          { type: 'tax_certificate', name: 'foreign.pdf', key: 'companies/another/documents/tax_certificate/foreign.pdf', status: 'ready' },
+        ],
+      }),
+      update: async (query: any) => { companyUpdate = query; return { id: companyId }; },
+    },
+    user: {
+      update: async (query: any) => { userUpdate = query; return { id: companyUserId }; },
+    },
+    refreshToken: {
+      updateMany: async (query: any) => { refreshUpdate = query; return { count: 1 }; },
+    },
+    deviceToken: {
+      deleteMany: async (query: any) => { deviceDelete = query; return { count: 2 }; },
+    },
+    outboxEvent: {
+      createMany: async (query: any) => { cleanupEvents = query.data; return { count: query.data.length }; },
+    },
+    auditLog: {
+      create: async (query: any) => { auditEvent = query.data; return { id: 'company-delete-audit' }; },
+    },
+  };
+
+  const result = await withPrismaMethod(
+    '$transaction',
+    async (callback: (client: any) => Promise<any>) => callback(tx),
+    () => CompaniesService.requestMyAccountDeletion(companyUserId),
+  );
+  assert.equal(result.request_id, 'company-delete-audit');
+  assert.equal(result.account_state, 'inactive');
+  assert.equal(companyUpdate.data.docs_url, null);
+  assert.equal(companyUpdate.data.name, 'Deleted Company');
+  assert.ok(companyUpdate.data.deleted_at instanceof Date);
+  assert.equal(companyUpdate.data.documents.length, 2);
+  assert.equal(JSON.stringify(companyUpdate.data.documents).includes(companyDocumentKey), false);
+  assert.equal(userUpdate.data.phone, `deleted-company:${companyId}`);
+  assert.equal(userUpdate.data.email, null);
+  assert.equal(userUpdate.data.pending_email, null);
+  assert.equal(userUpdate.data.fcm_token, null);
+  assert.equal(userUpdate.data.is_active, false);
+  assert.deepEqual(userUpdate.data.session_version, { increment: 1 });
+  assert.equal(refreshUpdate.data.revoked_reason, 'account_deletion');
+  assert.deepEqual(deviceDelete.where, { user_id: companyUserId });
+  assert.deepEqual(cleanupEvents.map((event) => event.payload.key), [companyDocumentKey]);
+  assert.equal(cleanupEvents[0].aggregate, 'company');
+  assert.equal(cleanupEvents[0].payload.reason, 'company_account_deletion');
+  assert.equal(auditEvent.metadata.storage_cleanup_event_count, 1);
+  assert.equal(JSON.stringify(auditEvent).includes(companyDocumentKey), false);
+  assert.equal(JSON.stringify(auditEvent).includes('example.invalid'), false);
+}
+
+async function testCompanyRepeatedDeletionFailsSafely(): Promise<void> {
+  let mutationAttempted = false;
+  const tx = {
+    $queryRaw: async () => [],
+    company: {
+      findFirst: async () => ({ id: companyId }),
+      findUniqueOrThrow: async () => ({ id: companyId, user_id: companyUserId, status: 'inactive', deleted_at: new Date(), documents: [] }),
+      update: async () => { mutationAttempted = true; },
+    },
+  };
+  await withPrismaMethod(
+    '$transaction',
+    async (callback: (client: any) => Promise<any>) => callback(tx),
+    () => expectAppError(() => CompaniesService.requestMyAccountDeletion(companyUserId), 410, 'COMPANY_ALREADY_DELETED'),
+  );
+  assert.equal(mutationAttempted, false);
+}
+
 function testRouteIsolationAndStrictConfirmation(): void {
   assert.equal(WorkerAccountDeletionRequestSchema.safeParse({ confirm: true }).success, true);
   assert.equal(WorkerAccountDeletionRequestSchema.safeParse({ confirm: false }).success, false);
@@ -483,6 +571,8 @@ async function main(): Promise<void> {
     await testForeignDocumentKeyIsNeverDeleted();
     await testMissingDocumentDoesNotMutate();
     await testAccountDeletionSoftDeletesAndAudits();
+    await testCompanyAccountDeletion();
+    await testCompanyRepeatedDeletionFailsSafely();
     await testStorageCleanupOutboxDelivery();
     testRouteIsolationAndStrictConfirmation();
     console.log('privacy-deletion-regression: OK');

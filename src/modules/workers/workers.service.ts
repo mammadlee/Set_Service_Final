@@ -496,7 +496,7 @@ export async function deleteMyDocument(userId: string, type: string) {
   };
 }
 
-export async function requestMyAccountDeletion(userId: string) {
+export async function requestMyAccountDeletion(userId: string, initiatedBy?: { sub: string; role: 'super_admin' }) {
   const now = new Date();
   const effectiveAt = now.toISOString();
 
@@ -514,10 +514,14 @@ export async function requestMyAccountDeletion(userId: string) {
         id: true,
         user_id: true,
         status: true,
+        deleted_at: true,
         documents: true,
         profile_photo_url: true,
       },
     });
+    if (current.deleted_at) {
+      throw Errors.gone('Worker account has already been deleted.', 'WORKER_ALREADY_DELETED');
+    }
     const currentDocuments = normalizeDocuments(current.documents);
     const cleanups = currentDocuments.flatMap((document) => {
       const cleanup = documentStorageCleanup(document, current.id);
@@ -577,9 +581,8 @@ export async function requestMyAccountDeletion(userId: string) {
       where: { user_id: current.user_id, revoked_at: null },
       data: { revoked_at: now, revoked_reason: 'account_deletion' },
     });
-    await tx.deviceToken.updateMany({
-      where: { user_id: current.user_id, revoked_at: null },
-      data: { revoked_at: now, deleted_at: now },
+    await tx.deviceToken.deleteMany({
+      where: { user_id: current.user_id },
     });
     const scheduledCleanupCount = await enqueueStorageCleanupEvents(tx, {
       aggregate: 'worker',
@@ -589,13 +592,14 @@ export async function requestMyAccountDeletion(userId: string) {
     });
     const audit = await tx.auditLog.create({
       data: {
-        actor_id: userId,
-        actor_role: 'worker' as Role,
+        actor_id: initiatedBy?.sub ?? userId,
+        actor_role: (initiatedBy?.role ?? 'worker') as Role,
         action: 'status_changed',
         entity_type: 'worker_account_deletion_request',
         entity_id: current.id,
         metadata: {
           event: 'account_deletion_requested',
+          source: initiatedBy ? 'verified_external_request' : 'authenticated_account',
           fulfillment: 'soft_deleted_and_anonymized',
           previous_status: current.status,
           new_status: 'inactive',

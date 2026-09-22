@@ -22,13 +22,15 @@ const permissionLabels: Record<AdminPermission, string> = {
   manage_assignments: 'Təyinatları idarə et',
   view_attendance: 'Davamiyyətə baxış',
   view_reports: 'Hesabatlara baxış',
+  view_moderation: 'Şikayətlərə baxış',
+  manage_moderation: 'Şikayətləri idarə et',
   manage_kiosks: 'QR kioskları idarə et',
   view_notifications: 'Bildirişlərə baxış',
   manage_admins: 'Adminləri idarə et',
 };
 
 const permissionGroups: Array<{ title: string; permissions: AdminPermission[] }> = [
-  { title: 'İcmal', permissions: ['view_dashboard', 'view_reports', 'view_notifications'] },
+  { title: 'İcmal', permissions: ['view_dashboard', 'view_reports', 'view_notifications', 'view_moderation', 'manage_moderation'] },
   { title: 'İşçi və müəssisələr', permissions: ['view_workers', 'manage_workers', 'view_companies', 'manage_companies'] },
   { title: 'Sifariş əməliyyatları', permissions: ['view_orders', 'view_assignments', 'manage_assignments', 'view_attendance'] },
   { title: 'Sistem', permissions: ['manage_kiosks', 'manage_admins'] },

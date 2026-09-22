@@ -126,6 +126,36 @@ enum AuditAction {
   otp_blocked
 }
 
+enum ModerationTargetType {
+  order
+  company_profile
+  worker_profile
+  rating
+}
+
+enum ModerationReason {
+  inappropriate_content
+  harassment
+  false_information
+  spam
+  privacy
+  other
+}
+
+enum ModerationReportStatus {
+  open
+  reviewing
+  resolved
+  dismissed
+}
+
+enum ExternalDeletionRequestStatus {
+  open
+  reviewing
+  resolved
+  dismissed
+}
+
 model User {
   id                            String    @id @default(uuid())
   phone                         String    @unique
@@ -166,6 +196,10 @@ model User {
   created_venue_kiosks     VenueKiosk[]         @relation("venue_kiosk_created_by")
   activated_kiosk_sessions KioskActiveSession[] @relation("kiosk_active_session_activated_by")
   order_status_history     OrderStatusHistory[] @relation("order_status_history_actor")
+  moderation_reports       ModerationReport[] @relation("moderation_reporter")
+  reviewed_moderation_reports ModerationReport[] @relation("moderation_reviewer")
+  external_deletion_requests ExternalAccountDeletionRequest[] @relation("external_deletion_account")
+  reviewed_external_deletion_requests ExternalAccountDeletionRequest[] @relation("external_deletion_reviewer")
 
   @@index([phone])
   @@index([email])
@@ -759,4 +793,51 @@ model AuditLog {
   @@index([action, created_at])
   @@index([created_at])
   @@map("audit_logs")
+}
+
+model ModerationReport {
+  id               String                 @id @default(uuid())
+  reporter_user_id String?
+  reporter_role    Role
+  target_type      ModerationTargetType
+  target_id        String
+  reason           ModerationReason
+  details          String?
+  status           ModerationReportStatus @default(open)
+  reviewed_by_id   String?
+  reviewed_at      DateTime?
+  resolution_note  String?
+  created_at       DateTime               @default(now())
+  updated_at       DateTime               @updatedAt
+
+  reporter    User? @relation("moderation_reporter", fields: [reporter_user_id], references: [id], onDelete: SetNull)
+  reviewed_by User? @relation("moderation_reviewer", fields: [reviewed_by_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at])
+  @@index([reporter_user_id, created_at])
+  @@index([target_type, target_id])
+  @@map("moderation_reports")
+}
+
+model ExternalAccountDeletionRequest {
+  id               String                        @id @default(uuid())
+  role             Role
+  identifier_kind  String
+  identifier_hmac  String
+  account_user_id  String?
+  note             String?
+  status           ExternalDeletionRequestStatus @default(open)
+  reviewed_by_id   String?
+  reviewed_at      DateTime?
+  resolution_note  String?
+  created_at       DateTime                      @default(now())
+  updated_at       DateTime                      @updatedAt
+
+  account_user User? @relation("external_deletion_account", fields: [account_user_id], references: [id], onDelete: SetNull)
+  reviewed_by  User? @relation("external_deletion_reviewer", fields: [reviewed_by_id], references: [id], onDelete: SetNull)
+
+  @@index([status, created_at])
+  @@index([account_user_id, created_at])
+  @@index([identifier_hmac, created_at])
+  @@map("external_account_deletion_requests")
 }

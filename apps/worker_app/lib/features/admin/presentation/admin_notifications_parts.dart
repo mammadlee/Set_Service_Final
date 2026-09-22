@@ -74,7 +74,14 @@ class _AdminNotificationsTabState extends State<_AdminNotificationsTab> {
     final orderId = _metadataString(item, 'order_id');
     final workerId = _metadataString(item, 'worker_id');
     final companyId = _metadataString(item, 'company_id');
-    if (orderId != null && auth.hasPermission('view_orders')) {
+    final reportId = _metadataString(item, 'report_id');
+    if (reportId != null && auth.hasPermission('view_moderation')) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => _AdminModerationDetailScreen(reportId: reportId),
+        ),
+      );
+    } else if (orderId != null && auth.hasPermission('view_orders')) {
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => _AdminOrderDetailScreen(orderId: orderId),

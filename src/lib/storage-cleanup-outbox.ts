@@ -9,13 +9,14 @@ export interface StorageCleanupRequest {
 }
 
 export interface EnqueueStorageCleanupInput {
-  aggregate: 'worker' | 'worker_document' | 'company_document';
+  aggregate: 'worker' | 'worker_document' | 'company' | 'company_document';
   aggregateId: string;
   reason:
     | 'worker_account_deletion'
     | 'worker_document_owner_deletion'
     | 'worker_document_replaced'
-    | 'company_document_replaced';
+    | 'company_document_replaced'
+    | 'company_account_deletion';
   objects: readonly StorageCleanupRequest[];
 }
 

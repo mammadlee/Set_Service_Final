@@ -164,6 +164,7 @@ class PremiumHeroPanel extends StatelessWidget {
     this.trailing,
     this.children = const [],
     this.compact = false,
+    this.wrapFullText = false,
     super.key,
   });
 
@@ -173,6 +174,7 @@ class PremiumHeroPanel extends StatelessWidget {
   final Widget? trailing;
   final List<Widget> children;
   final bool compact;
+  final bool wrapFullText;
 
   @override
   Widget build(BuildContext context) {
@@ -191,8 +193,8 @@ class PremiumHeroPanel extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: wrapFullText ? null : 2,
+                      overflow: wrapFullText ? null : TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(
                             color: BrandColors.white,
@@ -202,8 +204,8 @@ class PremiumHeroPanel extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       subtitle,
-                      maxLines: compact ? 2 : 3,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: wrapFullText ? null : (compact ? 2 : 3),
+                      overflow: wrapFullText ? null : TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: BrandColors.softBeige,
                         height: 1.35,
@@ -734,8 +736,7 @@ class AnimatedStatusChip extends StatelessWidget {
             Flexible(
               child: Text(
                 label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                softWrap: true,
                 style: TextStyle(
                   color: foreground,
                   fontWeight: FontWeight.w600,

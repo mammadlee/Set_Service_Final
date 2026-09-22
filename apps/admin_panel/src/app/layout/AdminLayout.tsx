@@ -8,11 +8,13 @@ import {
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
+  Flag,
   QrCode,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   Users,
+  UserRoundX,
   Workflow,
   X,
 } from 'lucide-react';
@@ -54,12 +56,13 @@ export function AdminLayout() {
   const visiblePrimaryNavigation = primaryNavigation.filter((item) => hasPermission(user, item.permission));
   const visibleMobileNavigation = mobileNavigation.filter((item) => hasPermission(user, item.permission));
   const canSeeNotifications = hasPermission(user, 'view_notifications');
+  const canSeeModeration = hasPermission(user, 'view_moderation');
   const canManageKiosks = hasPermission(user, 'manage_kiosks');
   const canSeeSystem = user?.role === 'super_admin';
   const canSeeAdmins = canSeeSystem && hasPermission(user, 'manage_admins');
   const roleLabel = user?.role === 'super_admin' ? appStrings.superAdmin : 'Admin';
   const currentTitle = pageTitle(location.pathname);
-  const moreActive = ['/companies', '/reports', '/admins', '/settings'].some((path) => (
+  const moreActive = ['/companies', '/reports', '/moderation', '/admins', '/settings'].some((path) => (
     location.pathname.startsWith(path)
   ));
 
@@ -96,6 +99,11 @@ export function AdminLayout() {
                     </NavLink>
                   </div>
                 ) : null}
+                {item.to === '/reports' && canSeeModeration ? (
+                  <div className="sidebar-subnav contextual-subnav">
+                    <NavLink to="/moderation"><Flag size={16} /><span>Şikayətlər</span></NavLink>
+                  </div>
+                ) : null}
               </div>
             );
           })}
@@ -120,6 +128,10 @@ export function AdminLayout() {
                 <NavLink to="/settings/system">
                   <SlidersHorizontal size={16} />
                   <span>Sistem parametrləri</span>
+                </NavLink>
+                <NavLink to="/settings/deletion-requests">
+                  <UserRoundX size={16} />
+                  <span>Hesab silmə müraciətləri</span>
                 </NavLink>
               </div>
             </div>
@@ -197,6 +209,7 @@ export function AdminLayout() {
             <div className="mobile-more-links">
               {hasPermission(user, 'view_companies') ? <MoreLink to="/companies" icon={Building2} label={appStrings.nav.companies} /> : null}
               {hasPermission(user, 'view_reports') ? <MoreLink to="/reports" icon={BarChart3} label={appStrings.nav.reports} /> : null}
+              {canSeeModeration ? <MoreLink to="/moderation" icon={Flag} label="Şikayətlər" /> : null}
               {canSeeAdmins ? <MoreLink to="/admins" icon={ShieldCheck} label="Adminlər" /> : null}
               {canSeeSystem ? <MoreLink to="/settings/taxonomy" icon={Settings} label="Parametrlər" /> : null}
               <button className="mobile-more-link logout-link" type="button" onClick={() => void logout()}>
@@ -235,6 +248,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith('/attendance/qr-display')) return `${appStrings.nav.attendance} · ${appStrings.nav.qrDisplay}`;
   if (pathname.startsWith('/attendance')) return appStrings.nav.attendance;
   if (pathname.startsWith('/reports')) return appStrings.nav.reports;
+  if (pathname.startsWith('/moderation')) return 'Şikayətlər';
   if (pathname.startsWith('/notifications')) return appStrings.nav.notifications;
   if (pathname.startsWith('/admins')) return 'Sistem · Adminlər';
   if (pathname.startsWith('/settings')) return 'Sistem · Parametrlər';

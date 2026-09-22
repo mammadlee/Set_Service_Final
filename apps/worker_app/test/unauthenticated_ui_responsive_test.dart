@@ -142,6 +142,7 @@ void main() {
     expect(find.text('Aşpaz'), findsOneWidget);
     await tester.tap(find.text('Aşpaz'));
     await tester.pumpAndSettle();
+    expect(find.text('Aşpaz'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text(AppStrings.registerAndSendOtp),
@@ -152,7 +153,6 @@ void main() {
 
     expect(find.text(AppStrings.skills), findsOneWidget);
     expect(find.text(AppStrings.languages), findsOneWidget);
-    expect(find.text('Aşpaz'), findsOneWidget);
     expect(find.text(AppStrings.registerAndSendOtp), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

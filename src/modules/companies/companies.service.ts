@@ -80,7 +80,7 @@ export async function updateMyCompany(userId: string, data: { name?: string; ema
   return toCompanyProfile(updated);
 }
 
-export async function requestMyAccountDeletion(userId: string) {
+export async function requestMyAccountDeletion(userId: string, initiatedBy?: { sub: string; role: 'super_admin' }) {
   const now = new Date();
   const effectiveAt = now.toISOString();
 
@@ -98,10 +98,14 @@ export async function requestMyAccountDeletion(userId: string) {
         id: true,
         user_id: true,
         status: true,
+        deleted_at: true,
         documents: true,
         docs_url: true,
       },
     });
+    if (current.deleted_at) {
+      throw Errors.gone('Company account has already been deleted.', 'COMPANY_ALREADY_DELETED');
+    }
 
     const currentDocuments = normalizeCompanyDocuments(current.documents);
     const cleanups = currentDocuments.flatMap((document) => {
@@ -155,9 +159,8 @@ export async function requestMyAccountDeletion(userId: string) {
       where: { user_id: current.user_id, revoked_at: null },
       data: { revoked_at: now, revoked_reason: 'account_deletion' },
     });
-    await tx.deviceToken.updateMany({
-      where: { user_id: current.user_id, revoked_at: null },
-      data: { revoked_at: now, deleted_at: now },
+    await tx.deviceToken.deleteMany({
+      where: { user_id: current.user_id },
     });
 
     const scheduledCleanupCount = await enqueueStorageCleanupEvents(tx, {
@@ -169,13 +172,14 @@ export async function requestMyAccountDeletion(userId: string) {
 
     const audit = await tx.auditLog.create({
       data: {
-        actor_id: userId,
-        actor_role: 'company' as Role,
+        actor_id: initiatedBy?.sub ?? userId,
+        actor_role: (initiatedBy?.role ?? 'company') as Role,
         action: 'status_changed',
         entity_type: 'company_account_deletion_request',
         entity_id: current.id,
         metadata: {
           event: 'account_deletion_requested',
+          source: initiatedBy ? 'verified_external_request' : 'authenticated_account',
           fulfillment: 'soft_deleted_and_anonymized',
           previous_status: current.status,
           new_status: 'inactive',

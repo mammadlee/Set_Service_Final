@@ -96,13 +96,24 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
                 children: [
                   _AssignmentHeader(assignment: assignment),
                   const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () => _reportOrder(assignment),
-                      icon: const Icon(Icons.flag_outlined),
-                      label: const Text('Sifarişi və ya müəssisəni şikayət et'),
-                    ),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () =>
+                            _reportTarget(assignment, company: false),
+                        icon: const Icon(Icons.flag_outlined),
+                        label: const Text('Sifarişi şikayət et'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () =>
+                            _reportTarget(assignment, company: true),
+                        icon: const Icon(Icons.flag_outlined),
+                        label: const Text('Müəssisəni şikayət et'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 6),
                   if (_error != null) ...[
@@ -139,23 +150,37 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
     );
   }
 
-  Future<void> _reportOrder(Assignment assignment) async {
+  Future<void> _reportTarget(
+    Assignment assignment, {
+    required bool company,
+  }) async {
     final input = await showContentReportDialog(
       context,
-      subjectLabel: 'Sifarişi',
+      subjectLabel: company ? 'Müəssisəni' : 'Sifarişi',
     );
     if (input == null || !mounted) return;
 
     try {
-      await context.read<AssignmentRepository>().reportOrder(
-        orderId: assignment.orderId,
-        reason: input.reason,
-        details: input.details,
-      );
+      final repository = context.read<AssignmentRepository>();
+      if (company) {
+        await repository.reportCompany(
+          companyId: assignment.order.company.id,
+          reason: input.reason,
+          details: input.details,
+        );
+      } else {
+        await repository.reportOrder(
+          orderId: assignment.orderId,
+          reason: input.reason,
+          details: input.details,
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Şikayət qəbul edildi və admin yoxlamasına göndərildi.'),
+          content: Text(
+            'Şikayət qəbul edildi və admin yoxlamasına göndərildi.',
+          ),
         ),
       );
     } on ApiException catch (error) {
@@ -195,7 +220,7 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
 
   String _messageForStatus(Assignment assignment) {
     if (assignment.status == 'accepted') {
-      return assignment.order.status == 'active'
+      return assignment.canUseAttendance
           ? AppStrings.assignmentAcceptedActive
           : AppStrings.assignmentAcceptedInactive;
     }

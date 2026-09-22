@@ -6,6 +6,7 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../shared/app_strings.dart';
 import '../../auth/data/models/auth_models.dart';
+import 'models/worker_rating.dart';
 
 class WorkerRepository {
   WorkerRepository({required ApiClient apiClient}) : _dio = apiClient.dio;
@@ -37,6 +38,36 @@ class WorkerRepository {
     try {
       final response = await _dio.get<Map<String, dynamic>>('/workers/me');
       return WorkerMe.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<WorkerRatingSummary> getMyRatings() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>('/ratings/me');
+      return WorkerRatingSummary.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<void> reportRating({
+    required String ratingId,
+    required String reason,
+    String? details,
+  }) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/moderation/reports',
+        data: {
+          'target_type': 'rating',
+          'target_id': ratingId,
+          'reason': reason,
+          if (details != null && details.trim().isNotEmpty)
+            'details': details.trim(),
+        },
+      );
     } catch (error) {
       throw mapDioException(error);
     }

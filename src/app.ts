@@ -23,6 +23,7 @@ import adminsRouter from './modules/admins/admins.router';
 import taxonomyRouter from './modules/taxonomy/taxonomy.router';
 import publicUploadsRouter from './modules/uploads/public-uploads.router';
 import legalPagesRouter, { publicAccountDeletionRouter } from './modules/legal/legal.router';
+import accountDeletionAdminRouter from './modules/legal/account-deletion-admin.router';
 import moderationRouter from './modules/moderation/moderation.router';
 import { logger } from './lib/logger';
 import { Errors } from './lib/errors';
@@ -180,6 +181,7 @@ if (docsEnabled) {
 }
 
 app.use('/v1/public', publicAccountDeletionRouter);
+app.use('/v1/admin/account-deletion-requests', accountDeletionAdminRouter);
 app.use('/v1/auth', authRouter);
 app.use('/v1/taxonomy', taxonomyRouter);
 app.use('/v1', companiesRouter);
