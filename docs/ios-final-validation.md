@@ -1,6 +1,6 @@
 # iOS final validation command pack
 
-Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands have not been run here and no signed archive or IPA has been created. Execute from the exact reviewed SHA `bf73ea87430c268c567b433e2ae3fa6ab6edfd12` on `codex/play-store-live-final-hardening` (or an explicitly approved successor).
+Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands have not been run here and no signed archive or IPA has been created. Execute from the exact reviewed SHA `00754e3e8df15d3b8c52bf19bb9b402547316fc6` on `codex/play-store-live-final-hardening` (or an explicitly approved successor).
 
 ## Toolchain and source checks
 
