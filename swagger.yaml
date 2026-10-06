@@ -2400,14 +2400,31 @@ paths:
     patch:
       tags: [Admin - Workers]
       security: [{ BearerAuth: [] }]
-      summary: Approve worker, create audit log, and notify worker
+      summary: Approve a pending worker, optionally classify them, create audit log, and notify worker
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                worker_class:
+                  allOf: [{ $ref: '#/components/schemas/WorkerClass' }]
+                  nullable: true
+            examples:
+              approve_without_class:
+                value: {}
+              approve_with_class:
+                value: { worker_class: A }
       responses:
         '200': { description: Worker approved }
+        '409': { description: Worker is not pending approval or the state changed concurrently }
 
   /admin/workers/{id}/reject:
     patch:

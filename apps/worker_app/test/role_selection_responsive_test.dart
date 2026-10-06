@@ -159,4 +159,84 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('contact details are responsive links with production URIs', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final openedUris = <Uri>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: RoleSelectionScreen(
+          launchExternalUri: (uri) async {
+            openedUris.add(uri);
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final contactFreeArtwork = find.byKey(
+      const ValueKey('role-selection-contact-free-artwork'),
+    );
+    expect(contactFreeArtwork, findsOneWidget);
+    expect(tester.getSize(contactFreeArtwork).height, 2100);
+
+    const expectedLinks = <String, String>{
+      'contact-website': 'https://www.setservice.az',
+      'contact-facebook': 'https://www.facebook.com/setservice.az/',
+      'contact-instagram': 'https://www.instagram.com/setservice.az/',
+      'contact-phone': 'tel:+994702315151',
+    };
+
+    for (final link in expectedLinks.entries) {
+      final target = find.byKey(ValueKey(link.key));
+      expect(target, findsOneWidget);
+      expect(
+        tester.getSize(target).height,
+        greaterThanOrEqualTo(44),
+        reason: link.key,
+      );
+      await tester.tap(target);
+      await tester.pump();
+      expect(openedUris.last.toString(), link.value);
+    }
+
+    expect(find.text(AppStrings.website), findsOneWidget);
+    expect(find.text(AppStrings.contactFacebook), findsOneWidget);
+    expect(find.text(AppStrings.contactInstagram), findsOneWidget);
+    expect(find.text(AppStrings.contactPhone), findsOneWidget);
+    expect(find.byType(Scrollable), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed contact launch reports an error without leaving screen', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: RoleSelectionScreen(launchExternalUri: (_) async => false),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('contact-website')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text(AppStrings.contactLinkFailed), findsOneWidget);
+    expect(find.byType(RoleSelectionScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

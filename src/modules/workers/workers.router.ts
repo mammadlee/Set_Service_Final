@@ -68,6 +68,10 @@ const RejectWorkerSchema = z.object({
   reason: z.string().min(3).max(1000),
 });
 
+export const ApproveWorkerSchema = z.object({
+  worker_class: z.enum(['A', 'B', 'C']).nullable().optional(),
+}).strict().default({});
+
 const UpdateWorkerClassSchema = z.object({
   worker_class: z.enum(['A', 'B', 'C']).nullable(),
 });
@@ -193,9 +197,19 @@ router.get('/admin/workers/:id', requireAuth, requirePermission('view_workers'),
   try { res.json(await Service.getWorkerById(req.params.id)); } catch (e) { next(e); }
 });
 
-router.patch('/admin/workers/:id/approve', requireAuth, requirePermission('manage_workers'), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.approveWorker(req.params.id, req.user!)); } catch (e) { next(e); }
-});
+router.patch(
+  '/admin/workers/:id/approve',
+  requireAuth,
+  requirePermission('manage_workers'),
+  validate(ApproveWorkerSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await Service.approveWorker(req.params.id, req.user!, req.body.worker_class));
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
 router.patch('/admin/workers/:id/reject', requireAuth, requirePermission('manage_workers'), validate(RejectWorkerSchema), async (req: Request, res: Response, next: NextFunction) => {
   try { res.json(await Service.rejectWorker(req.params.id, req.body.reason, req.user!)); } catch (e) { next(e); }

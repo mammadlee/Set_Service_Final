@@ -231,6 +231,7 @@ class _WorkerReportPanel extends StatelessWidget {
           DropdownButtonFormField<String>(
             value: selectedWorkerId,
             isExpanded: true,
+            itemHeight: null,
             decoration: const InputDecoration(
               labelText: AppStrings.selectWorker,
               prefixIcon: Icon(Icons.badge_outlined),
@@ -243,7 +244,10 @@ class _WorkerReportPanel extends StatelessWidget {
               ...workers.map(
                 (worker) => DropdownMenuItem(
                   value: worker.id,
-                  child: Text(worker.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: Text(worker.name, softWrap: true),
+                  ),
                 ),
               ),
             ],

@@ -50,6 +50,11 @@ class AppStrings {
   static const instagram = 'Instagram: @setservice.az';
   static const facebook = 'Facebook: SET Service';
   static const hotline = 'Qaynar xətt: +994 70 231 51 51';
+  static const website = 'www.setservice.az';
+  static const contactInstagram = '@setservice.az';
+  static const contactFacebook = 'SET Service';
+  static const contactPhone = '+994 70 231 51 51';
+  static const contactLinkFailed = 'Linki açmaq mümkün olmadı.';
   static const workerRole = 'İşçi';
   static const companyRole = 'Müəssisə';
   static const adminRole = 'Admin';

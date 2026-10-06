@@ -87,10 +87,14 @@ class AdminRepository {
     }
   }
 
-  Future<AdminWorkerProfile> approveWorker(String id) async {
+  Future<AdminWorkerProfile> approveWorker(
+    String id, {
+    required String? workerClass,
+  }) async {
     try {
       final response = await _dio.patch<Map<String, dynamic>>(
         '/admin/workers/$id/approve',
+        data: {'worker_class': workerClass},
       );
       return AdminWorkerProfile.fromJson(response.data ?? const {});
     } catch (error) {

@@ -203,6 +203,9 @@ class _AdminWorkerDetailScreenState extends State<_AdminWorkerDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canManageWorkers = context.watch<AdminAuthController>().hasPermission(
+      'manage_workers',
+    );
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.workerName)),
       body: _AsyncView<AdminWorkerProfile>(
@@ -230,6 +233,21 @@ class _AdminWorkerDetailScreenState extends State<_AdminWorkerDetailScreen> {
                 ],
               ),
               const SizedBox(height: 12),
+              if (canManageWorkers) ...[
+                PremiumCard(
+                  child: _WorkerClassEditor(
+                    worker: worker,
+                    onUpdated: (updated) async {
+                      if (!mounted) return;
+                      setState(
+                        () =>
+                            _future = Future<AdminWorkerProfile>.value(updated),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               PremiumCard(
                 child: Column(
                   children: [

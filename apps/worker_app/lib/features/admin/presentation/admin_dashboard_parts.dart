@@ -276,8 +276,8 @@ class _QuickActionsCard extends StatelessWidget {
                           icon: Icon(action.icon),
                           label: Text(
                             action.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            softWrap: true,
                           ),
                         ),
                       ),

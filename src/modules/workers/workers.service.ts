@@ -868,7 +868,15 @@ export async function getCompanyVisibleWorkerProfile(userId: string, workerId: s
   return toCompanyWorkerProfile(worker);
 }
 
-export async function approveWorker(id: string, actor: { sub: string; role: string }) {
+export async function approveWorker(
+  id: string,
+  actor: { sub: string; role: string },
+  workerClass?: WorkerClass | null,
+) {
+  if (workerClass !== undefined && workerClass !== null && !WORKER_CLASSES.has(workerClass)) {
+    throw Errors.badRequest('Invalid worker class.', 'INVALID_WORKER_CLASS');
+  }
+
   const worker = await prisma.worker.findFirst({
     where: { id, deleted_at: null },
     include: {
@@ -885,8 +893,12 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
     },
   });
   if (!worker) throw Errors.notFound('Worker not found.', 'WORKER_NOT_FOUND');
-  if (worker.status === 'approved') {
-    return toWorkerProfile(worker, { includeWorkerClass: true });
+  if (worker.status !== 'pending_approval') {
+    throw Errors.conflict(
+      'Only a worker awaiting approval can be approved.',
+      'WORKER_APPROVAL_NOT_PENDING',
+      { status: worker.status },
+    );
   }
   const missingPrerequisites = workerApprovalPrerequisites(worker);
   if (missingPrerequisites.length > 0) {
@@ -897,6 +909,7 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
     );
   }
 
+  const approvedAt = new Date();
   const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const transition = await tx.worker.updateMany({
       where: {
@@ -915,8 +928,11 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
       data: {
         status: 'approved' as WorkerStatus,
         reject_reason: null,
-        approved_at: new Date(),
+        rejected_at: null,
+        rejected_by_id: null,
+        approved_at: approvedAt,
         approved_by_id: actor.sub,
+        ...(workerClass !== undefined ? { worker_class: workerClass } : {}),
       },
     });
 
@@ -925,10 +941,11 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
         where: { id, deleted_at: null },
         include: workerProfileInclude,
       });
-      if (current?.status === 'approved') {
-        return { worker: current, transitioned: false };
-      }
-      throw Errors.conflict('Worker approval state changed.', 'WORKER_APPROVAL_STATE_CHANGED');
+      throw Errors.conflict(
+        'Worker approval state changed. Please retry.',
+        'WORKER_APPROVAL_STATE_CHANGED',
+        { status: current?.status ?? 'deleted' },
+      );
     }
 
     const updatedWorker = await tx.worker.findUniqueOrThrow({
@@ -943,7 +960,12 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
         action: 'worker_approved',
         entity_type: 'worker',
         entity_id: id,
-        metadata: { previous_status: worker.status, new_status: updatedWorker.status },
+        metadata: {
+          previous_status: worker.status,
+          new_status: updatedWorker.status,
+          previous_worker_class: worker.worker_class,
+          new_worker_class: updatedWorker.worker_class,
+        },
       },
     });
 
@@ -957,18 +979,16 @@ export async function approveWorker(id: string, actor: { sub: string; role: stri
       },
     });
 
-    return { worker: updatedWorker, transitioned: true };
+    return updatedWorker;
   });
 
-  if (updated.transitioned) {
-    await sendPushToUser(worker.user_id, {
-      title: 'Profil təsdiqləndi',
-      body: 'İşçi profiliniz təsdiqləndi.',
-      data: { type: 'worker_approved', worker_id: id, role: 'worker' },
-    });
-  }
+  await sendPushToUser(worker.user_id, {
+    title: 'Profil təsdiqləndi',
+    body: 'İşçi profiliniz təsdiqləndi.',
+    data: { type: 'worker_approved', worker_id: id, role: 'worker' },
+  });
 
-  return toWorkerProfile(updated.worker, { includeWorkerClass: true });
+  return toWorkerProfile(updated, { includeWorkerClass: true });
 }
 
 export async function rejectWorker(id: string, reason: string, actor: { sub: string; role: string }) {
