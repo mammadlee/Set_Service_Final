@@ -100,8 +100,12 @@ function workerRecord(status = 'pending_approval', workerClass: 'A' | 'B' | 'C' 
   };
 }
 
-async function approve(workerClass?: 'A' | 'B' | 'C' | null) {
+async function approve(
+  workerClass?: 'A' | 'B' | 'C' | null,
+  documentsOverride?: unknown[],
+) {
   const pending = workerRecord();
+  if (documentsOverride !== undefined) pending.documents = documentsOverride as typeof pending.documents;
   let updateQuery: any;
   let auditQuery: any;
   let notificationQuery: any;
@@ -181,6 +185,11 @@ async function testApprovalWithOptionalClass(): Promise<void> {
   const assignLater = await approve(null);
   assert.equal(assignLater.updateQuery.data.worker_class, null);
   assert.equal(assignLater.result.status, 'approved');
+}
+
+async function testApprovalDoesNotRequireDocuments(): Promise<void> {
+  const withoutDocuments = await approve(undefined, []);
+  assert.equal(withoutDocuments.result.status, 'approved');
 }
 
 async function testOnlyPendingWorkersCanBeApproved(): Promise<void> {
@@ -283,6 +292,7 @@ function testStrictApprovalPayload(): void {
 async function main(): Promise<void> {
   testStrictApprovalPayload();
   await testApprovalWithOptionalClass();
+  await testApprovalDoesNotRequireDocuments();
   await testOnlyPendingWorkersCanBeApproved();
   await testPendingListUsesExactDatabaseFilter();
   await testClassRemainsEditableAfterApproval();
