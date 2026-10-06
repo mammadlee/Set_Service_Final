@@ -192,7 +192,7 @@ function dataDeletionBody(): string {
     '<h2>Digər məlumatlar</h2>',
     '<p>Digər şəxsi məlumatlarla bağlı silinmə və ya məxfilik sorğusu üçün SET Service dəstək kanallarından istifadə edin. Bütün hesabı və əlaqəli şəxsi məlumatları silmək üçün <a href="/account-deletion">Hesab Silmə səhifəsindən</a> istifadə edin.</p>',
     '<h2>Saxlanılan məlumatlar və müddət</h2>',
-    '<p>Təhlükəsizlik, fırıldaqçılığın qarşısının alınması, audit, mübahisələrin həlli və qanuni öhdəliklər üçün zəruri minimal audit və əməliyyat qeydləri əsaslandırılmış məhdud müddət ərzində saxlanıla bilər. Artıq lazım olmayan məlumatlar silinir və ya anonimləşdirilir.</p>',
+    '<p>Təhlükəsizlik, fırıldaqçılığın qarşısının alınması, audit, mübahisələrin həlli və qanuni öhdəliklər üçün zəruri minimal qeydlər məhdud müddət saxlanıla bilər: audit qeydləri maksimum 365 gün, müddəti bitmiş və ya ləğv olunmuş refresh-token qeydləri maksimum 90 gün, OTP qeydləri isə müddəti bitdikdən sonra maksimum 30 gün. Artıq lazım olmayan məlumatlar silinir və ya anonimləşdirilir.</p>',
     '<hr />',
     '<h2>English</h2>',
     '<p>This page explains how SET Service users can delete certain personal data without deleting their account.</p>',
@@ -200,7 +200,7 @@ function dataDeletionBody(): string {
     '<ol><li>Sign in to the SET Service app.</li><li>Open <strong>My Profile</strong>.</li><li>Open the CV/documents section.</li><li>Select <strong>Delete</strong> for the CV and confirm.</li></ol>',
     '<p>After confirmation, the CV is removed from the profile and deletion of the associated stored file is initiated. Separately entered profile information, such as work-history fields, is not automatically deleted when the CV file is deleted.</p>',
     '<p>For other privacy or deletion requests, use the SET Service support channels. To delete the entire account and associated personal data, use the <a href="/account-deletion">Account Deletion page</a>.</p>',
-    '<p>Minimal audit or operational records may be retained for a limited period where reasonably necessary for security, fraud prevention, dispute handling, or legal obligations.</p>',
+    '<p>Limited security and operational records may be retained where reasonably necessary: audit records for up to 365 days, expired or revoked refresh-token records for up to 90 days, and expired OTP records for up to 30 days. Data that is no longer required is deleted or anonymised.</p>',
   ].join('');
 }
 
@@ -216,7 +216,7 @@ function accountDeletionBody(): string {
     '<button type="submit">Silinmə sorğusu göndər</button><p id="status" role="status" aria-live="polite"></p>',
     '</form>',
     '<h2>Nə silinir?</h2>',
-    '<p>İctimai forma hesabı avtomatik silmir. Müraciət baxış üçün qeydə alınır və hesab sahibliyi ayrıca yoxlanılır. Sahiblik təsdiqləndikdən sonra hesabın silinməsi icra oluna bilər: giriş deaktiv edilir, sessiyalar ləğv olunur, şəxsi profil və əlaqə məlumatları anonimləşdirilir/silinir və şəxsi faylların silinməsi başladılır. Təhlükəsizlik, fırıldaqçılığın qarşısının alınması və qanuni tələblər üçün zəruri minimal audit/əməliyyat qeydləri saxlanıla bilər.</p>',
+    '<p>İctimai forma hesabı avtomatik silmir. Müraciət baxış üçün qeydə alınır və hesab sahibliyi ayrıca yoxlanılır. Sahiblik təsdiqləndikdən sonra giriş deaktiv edilir, aktiv sessiyalar ləğv olunur, şəxsi profil və əlaqə məlumatları silinir və ya anonimləşdirilir, şəxsi faylların silinməsi başladılır. Təhlükəsizlik və qanuni öhdəliklər üçün məhdud qeydlər saxlanıla bilər: audit qeydləri maksimum 365 gün, müddəti bitmiş və ya ləğv olunmuş refresh-token qeydləri maksimum 90 gün, OTP qeydləri isə müddəti bitdikdən sonra maksimum 30 gün.</p>',
     '<p><a href="/privacy">Məxfilik Siyasəti</a> · <a href="/terms">İstifadə Qaydaları</a></p>',
     '<script>',
     "const form=document.getElementById('deletion-form');const status=document.getElementById('status');",
@@ -226,11 +226,32 @@ function accountDeletionBody(): string {
 }
 
 function page(title: string, body: string): string {
-  return '<!doctype html><html lang="az"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="index,follow"><title>' +
+  return '<!doctype html><html lang="az"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="index,follow"><meta name="theme-color" content="#6d1d35"><title>' +
     title +
-    '</title><style>:root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}body{margin:0;background:#fffaf4;color:#241b1b}main{width:min(860px,calc(100% - 32px));margin:0 auto;padding:48px 0 72px}h1,h2{color:#5d1827;line-height:1.2}h1{font-size:clamp(2rem,5vw,3rem)}h2{margin-top:2rem}p,li{line-height:1.7}a{color:#7b2034}form{display:grid;gap:10px;padding:20px;border:1px solid #e6d8ce;border-radius:18px;background:white}label{font-weight:700;margin-top:6px}input,select,textarea,button{font:inherit;border-radius:10px;padding:12px;border:1px solid #cab9ad}button{background:#681a2c;color:white;border:0;font-weight:700;cursor:pointer;margin-top:8px}#status{min-height:24px;font-weight:600}</style></head><body><main>' +
-    body +
-    '</main></body></html>';
+    '</title><style>' +
+    ':root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:light;--brand:#6d1d35;--brand-dark:#4d1124;--brand-soft:#f7e8ed;--ink:#211a1d;--muted:#6d6266;--line:#eadfe3;--surface:#ffffff;--bg:#fbf7f5}' +
+    '*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:linear-gradient(180deg,#fff 0,#fbf7f5 360px);color:var(--ink)}' +
+    'a{color:var(--brand);font-weight:700;text-decoration-thickness:1.5px;text-underline-offset:3px}a:hover{color:var(--brand-dark)}' +
+    '.topbar{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}' +
+    '.nav{width:min(1080px,calc(100% - 32px));margin:auto;min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:20px}' +
+    '.brand{display:flex;align-items:center;gap:12px;color:var(--ink);text-decoration:none;font-weight:900;letter-spacing:-.02em}.brandmark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--brand);color:#fff;font-size:12px;box-shadow:0 8px 22px rgba(109,29,53,.22)}' +
+    '.links{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.links a{font-size:14px;text-decoration:none;color:var(--muted)}.links a:hover{color:var(--brand)}' +
+    '.hero{width:min(920px,calc(100% - 32px));margin:42px auto 0;padding:30px 32px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(135deg,#fff 0,#fff8fa 100%);box-shadow:0 18px 50px rgba(75,25,42,.08)}' +
+    '.eyebrow{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:999px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}.eyebrow:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--brand)}' +
+    'main{width:min(920px,calc(100% - 32px));margin:18px auto 72px;padding:0}.content{padding:30px 32px;border:1px solid var(--line);border-radius:28px;background:var(--surface);box-shadow:0 18px 50px rgba(75,25,42,.06)}' +
+    'h1,h2,h3{color:var(--brand-dark);line-height:1.18;letter-spacing:-.025em}h1{margin:0 0 18px;font-size:clamp(2rem,5vw,3.35rem)}h2{margin:38px 0 14px;padding-top:4px;font-size:clamp(1.35rem,3vw,1.75rem)}h3{margin:28px 0 10px;font-size:1.14rem}' +
+    'p,li{line-height:1.78;color:#3d3337}ul,ol{padding-left:24px}li+li{margin-top:7px}strong{color:#2d2025}hr{border:0;border-top:1px solid var(--line);margin:40px 0}' +
+    'form{display:grid;gap:12px;margin:24px 0 34px;padding:24px;border:1px solid #e8d6dc;border-radius:22px;background:#fff9fb;box-shadow:0 10px 30px rgba(109,29,53,.05)}' +
+    'label{font-weight:800;color:#3a252d;margin-top:4px}input,select,textarea,button{width:100%;font:inherit;border-radius:13px;padding:13px 14px;border:1px solid #cfbec4;background:#fff;color:var(--ink);outline:none;transition:.18s ease}input:focus,select:focus,textarea:focus{border-color:var(--brand);box-shadow:0 0 0 4px rgba(109,29,53,.10)}textarea{resize:vertical;min-height:108px}' +
+    'button{margin-top:6px;border:0;background:var(--brand);color:#fff;font-weight:850;cursor:pointer;box-shadow:0 10px 24px rgba(109,29,53,.22)}button:hover{background:var(--brand-dark);transform:translateY(-1px)}button:active{transform:translateY(0)}#status{min-height:24px;margin:2px 0 0;font-weight:700;color:var(--brand)}' +
+    '.footer{border-top:1px solid var(--line);background:#fff}.footerin{width:min(920px,calc(100% - 32px));margin:auto;padding:26px 0 34px;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px}.footer a{font-size:13px}' +
+    '@media(max-width:720px){.nav{min-height:64px}.links{display:none}.hero{margin-top:22px;padding:22px 20px;border-radius:22px}.content{padding:24px 20px;border-radius:22px}main{margin-top:12px}h2{margin-top:30px}form{padding:18px;border-radius:18px}.footerin{padding-bottom:28px}}' +
+    '</style></head><body>' +
+    '<header class="topbar"><nav class="nav" aria-label="Legal navigation"><a class="brand" href="/privacy"><span class="brandmark">SET</span><span>SET Service</span></a><div class="links"><a href="/privacy">Privacy</a><a href="/data-deletion">Data deletion</a><a href="/account-deletion">Account deletion</a><a href="/terms">Terms</a></div></nav></header>' +
+    '<section class="hero"><span class="eyebrow">SET Service · Legal & Privacy</span></section>' +
+    '<main><article class="content">' + body + '</article></main>' +
+    '<footer class="footer"><div class="footerin"><span>© 2026 SET Service. All rights reserved.</span><span><a href="/privacy">Privacy Policy</a> · <a href="/account-deletion">Account Deletion</a></span></div></footer>' +
+    '</body></html>';
 }
 
 export default legalPagesRouter;
