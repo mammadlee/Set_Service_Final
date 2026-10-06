@@ -1607,18 +1607,6 @@ function workerApprovalPrerequisites(worker: {
   if (!worker.user.phone.trim()) missing.push('phone');
   if (!worker.position?.trim() && worker.positions.length === 0) missing.push('position');
 
-  const documents = normalizeDocuments(worker.documents);
-  for (const type of ['health_certificate', 'criminal_record'] as const) {
-    const document = documents.find((item) => item.type === type);
-    if (
-      !document?.key
-      || document.status !== 'ready'
-      || document.scan_status !== 'clean'
-      || !privateDocumentKeyBelongsToWorker(document.key, worker.id, type)
-    ) {
-      missing.push(`document:${type}`);
-    }
-  }
   return missing;
 }
 
