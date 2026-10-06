@@ -33,6 +33,12 @@ legalPagesRouter.get('/account-deletion', (_req, res) => {
   );
 });
 
+legalPagesRouter.get('/data-deletion', (_req, res) => {
+  res.status(200).type('html').set('Cache-Control', 'no-store').send(
+    page('SET Service məlumatların silinməsi', dataDeletionBody()),
+  );
+});
+
 publicAccountDeletionRouter.post(
   '/account-deletion-requests',
   async (req: Request, res: Response, next: NextFunction) => {
@@ -171,6 +177,30 @@ function termsBody(): string {
     '<h2>Hesabın dayandırılması və silinməsi</h2>',
     '<p>Qaydaların, təhlükəsizlik tələblərinin və ya qanunların pozulması hesabın dayandırılması və ya deaktiv edilməsi ilə nəticələnə bilər. İstifadəçi tətbiq daxilindən və ya <a href="/account-deletion">hesab silmə səhifəsindən</a> hesabının silinməsini tələb edə bilər.</p>',
     '<h2>Məxfilik</h2><p>Şəxsi məlumatların emalı <a href="/privacy">SET Service Məxfilik Siyasəti</a> ilə tənzimlənir.</p>',
+  ].join('');
+}
+
+function dataDeletionBody(): string {
+  return [
+    '<h1>SET Service məlumatların silinməsi / Data deletion</h1>',
+    '<p>Bu səhifə SET Service istifadəçilərinə hesabı silmədən müəyyən şəxsi məlumatların necə silinə biləcəyini izah edir.</p>',
+    '<h2>Hesabı silmədən hansı məlumatları silmək olar?</h2>',
+    '<p>İşçi istifadəçiləri yüklədikləri CV sənədini hesablarını silmədən tətbiq daxilindən silə bilərlər.</p>',
+    '<h2>CV-ni silmək üçün addımlar</h2>',
+    '<ol><li>SET Service tətbiqinə daxil olun.</li><li><strong>Profilim</strong> bölməsini açın.</li><li>CV/sənədlər hissəsinə keçin.</li><li>CV üçün <strong>Sil</strong> əməliyyatını seçin və təsdiqləyin.</li></ol>',
+    '<p>Silinmə təsdiqləndikdən sonra CV profilinizdən çıxarılır və əlaqəli saxlanılan faylın silinməsi başladılır. İş təcrübəsi kimi ayrıca profil sahələri CV faylı silindikdə avtomatik silinmir; istifadəçi dəstəklənən profil məlumatlarını tətbiqdən redaktə edə bilər.</p>',
+    '<h2>Digər məlumatlar</h2>',
+    '<p>Digər şəxsi məlumatlarla bağlı silinmə və ya məxfilik sorğusu üçün SET Service dəstək kanallarından istifadə edin. Bütün hesabı və əlaqəli şəxsi məlumatları silmək üçün <a href="/account-deletion">Hesab Silmə səhifəsindən</a> istifadə edin.</p>',
+    '<h2>Saxlanılan məlumatlar və müddət</h2>',
+    '<p>Təhlükəsizlik, fırıldaqçılığın qarşısının alınması, audit, mübahisələrin həlli və qanuni öhdəliklər üçün zəruri minimal audit və əməliyyat qeydləri əsaslandırılmış məhdud müddət ərzində saxlanıla bilər. Artıq lazım olmayan məlumatlar silinir və ya anonimləşdirilir.</p>',
+    '<hr />',
+    '<h2>English</h2>',
+    '<p>This page explains how SET Service users can delete certain personal data without deleting their account.</p>',
+    '<h3>Delete an uploaded CV</h3>',
+    '<ol><li>Sign in to the SET Service app.</li><li>Open <strong>My Profile</strong>.</li><li>Open the CV/documents section.</li><li>Select <strong>Delete</strong> for the CV and confirm.</li></ol>',
+    '<p>After confirmation, the CV is removed from the profile and deletion of the associated stored file is initiated. Separately entered profile information, such as work-history fields, is not automatically deleted when the CV file is deleted.</p>',
+    '<p>For other privacy or deletion requests, use the SET Service support channels. To delete the entire account and associated personal data, use the <a href="/account-deletion">Account Deletion page</a>.</p>',
+    '<p>Minimal audit or operational records may be retained for a limited period where reasonably necessary for security, fraud prevention, dispute handling, or legal obligations.</p>',
   ].join('');
 }
 
