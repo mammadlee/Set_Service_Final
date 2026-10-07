@@ -33,37 +33,40 @@ class _AdminWorkersDirectoryTabState extends State<_AdminWorkersDirectoryTab> {
         if (page.data.isEmpty) {
           return _EmptyState(message: AppStrings.noData, onAction: _refresh);
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final worker = page.data[index];
-              return Premium3DCard(
-                onTap: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        _AdminWorkerDetailScreen(workerId: worker.id),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AdminStatusHeader(
-                      title: worker.name,
-                      status: worker.status,
-                      icon: Icons.badge_outlined,
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final worker = page.data[index];
+                return Premium3DCard(
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          _AdminWorkerDetailScreen(workerId: worker.id),
                     ),
-                    if (worker.position.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(worker.position),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AdminStatusHeader(
+                        title: worker.name,
+                        status: worker.status,
+                        icon: Icons.badge_outlined,
+                      ),
+                      if (worker.position.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(worker.position),
+                      ],
                     ],
-                  ],
-                ),
-              );
-            },
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
@@ -105,37 +108,40 @@ class _AdminCompaniesDirectoryTabState
         if (page.data.isEmpty) {
           return _EmptyState(message: AppStrings.noData, onAction: _refresh);
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final company = page.data[index];
-              return Premium3DCard(
-                onTap: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        _AdminCompanyDetailScreen(companyId: company.id),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AdminStatusHeader(
-                      title: company.name,
-                      status: company.status,
-                      icon: Icons.business_outlined,
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final company = page.data[index];
+                return Premium3DCard(
+                  onTap: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          _AdminCompanyDetailScreen(companyId: company.id),
                     ),
-                    if (company.contactName.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(company.contactName),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AdminStatusHeader(
+                        title: company.name,
+                        status: company.status,
+                        icon: Icons.business_outlined,
+                      ),
+                      if (company.contactName.trim().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(company.contactName),
+                      ],
                     ],
-                  ],
-                ),
-              );
-            },
+                  ),
+                );
+              },
+            ),
           ),
         );
       },

@@ -742,8 +742,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                       children: [
                         Text(
                           displayName,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                          softWrap: true,
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 6),

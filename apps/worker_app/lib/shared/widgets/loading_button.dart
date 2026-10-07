@@ -36,13 +36,7 @@ class LoadingButton extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
               Flexible(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  softWrap: true,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                ),
+                child: Text(label, softWrap: true, textAlign: TextAlign.center),
               ),
             ],
           );

@@ -36,20 +36,72 @@ class _AdminDashboardTabState extends State<_AdminDashboardTab> {
     return _AsyncView<_AdminDashboardData>(
       future: _future,
       onRetry: _refresh,
-      builder: (data) => ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const _AdminWelcomePanel(),
-          const SizedBox(height: 16),
-          _AdminDashboardMetricGrid(dashboard: data.dashboard),
-          const SizedBox(height: 16),
-          _AdminActivityCard(dashboard: data.dashboard),
-          const SizedBox(height: 16),
-          _PendingApprovalsCard(dashboard: data.dashboard),
-          const SizedBox(height: 16),
-          _QuickActionsCard(onNavigate: widget.onNavigate),
-          const SizedBox(height: 40),
-        ],
+      builder: (data) => AdminPageFrame(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              const _AdminWelcomePanel(),
+              const SizedBox(height: 16),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final metrics = _AdminDashboardMetricGrid(
+                    dashboard: data.dashboard,
+                  );
+                  final activity = _AdminActivityCard(
+                    dashboard: data.dashboard,
+                  );
+                  final pending = _PendingApprovalsCard(
+                    dashboard: data.dashboard,
+                  );
+                  final quickActions = _QuickActionsCard(
+                    onNavigate: widget.onNavigate,
+                  );
+                  if (constraints.maxWidth < 820) {
+                    return Column(
+                      children: [
+                        metrics,
+                        const SizedBox(height: 16),
+                        activity,
+                        const SizedBox(height: 16),
+                        pending,
+                        const SizedBox(height: 16),
+                        quickActions,
+                      ],
+                    );
+                  }
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          children: [
+                            metrics,
+                            const SizedBox(height: 16),
+                            activity,
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            pending,
+                            const SizedBox(height: 16),
+                            quickActions,
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
       ),
     );
   }

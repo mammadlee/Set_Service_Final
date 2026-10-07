@@ -253,14 +253,16 @@ class _AssignmentHeader extends StatelessWidget {
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final compact = constraints.maxWidth < 360;
+              final compact = constraints.maxWidth < 400;
               final title = Text(
-                assignment.order.title,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                assignment.order.title.trim().isEmpty
+                    ? 'Sifariş'
+                    : assignment.order.title,
+                softWrap: true,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
+                ),
               );
               if (compact) {
                 return Column(
@@ -344,7 +346,7 @@ class _DetailRow extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxWidth < 350;
+          final compact = constraints.maxWidth < 430;
           final labelWidget = Text(
             label,
             style: const TextStyle(
@@ -381,8 +383,9 @@ class _DetailRow extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: BrandColors.mutedBrown),
               const SizedBox(width: 10),
-              SizedBox(width: 108, child: labelWidget),
-              Expanded(child: valueWidget),
+              Expanded(flex: 2, child: labelWidget),
+              const SizedBox(width: 12),
+              Expanded(flex: 3, child: valueWidget),
             ],
           );
         },

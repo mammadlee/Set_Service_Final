@@ -83,14 +83,12 @@ void main() {
         gets.every((r) => !r.queryParameters.containsKey('status')),
         isTrue,
       );
-      await tester.tap(find.text(AppStrings.allOrders));
-      await tester.pumpAndSettle();
+      await _chooseOrderFilter(tester, AppStrings.allOrders);
       expect(
         fixture.requests.last.queryParameters.containsKey('scope'),
         isFalse,
       );
-      await tester.tap(find.text(AppStrings.activeOrders));
-      await tester.pumpAndSettle();
+      await _chooseOrderFilter(tester, AppStrings.activeOrders);
       expect(fixture.requests.last.queryParameters['scope'], 'active');
       expect(find.text(_order()['title'] as String), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -114,13 +112,20 @@ void main() {
     },
   );
 
-  for (final width in [360.0, 375.0, 390.0, 412.0, 430.0]) {
-    testWidgets('company order form creates once with long values at $width', (
-      tester,
-    ) async {
+  const orderViewports = <Size>[
+    Size(360, 800),
+    Size(390, 844),
+    Size(430, 900),
+    Size(844, 390),
+    Size(768, 1024),
+    Size(1024, 768),
+  ];
+  for (final viewport in orderViewports) {
+    testWidgets('company order form creates once with long values at '
+        '${viewport.width}x${viewport.height}', (tester) async {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
-      _size(tester, width);
+      _size(tester, viewport.width, height: viewport.height);
       MobileOrder? created;
       await tester.pumpWidget(
         fixture.wrap(
@@ -177,7 +182,11 @@ void main() {
         'Qonaqların qarşılanması və tədbir boyu banket xidməti.',
       );
       final submit = find.widgetWithText(LoadingButton, AppStrings.createOrder);
-      await tester.ensureVisible(submit);
+      await tester.scrollUntilVisible(
+        submit,
+        180,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
       await tester.tap(submit);
       await tester.pumpAndSettle();
@@ -202,12 +211,11 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('company detail and QR states fit long content at $width', (
-      tester,
-    ) async {
+    testWidgets('company detail and QR states fit long content at '
+        '${viewport.width}x${viewport.height}', (tester) async {
       final fixture = _Fixture();
       addTearDown(fixture.dispose);
-      _size(tester, width);
+      _size(tester, viewport.width, height: viewport.height);
       await tester.pumpWidget(
         fixture.wrap(const CompanyOrderDetailRoute(orderId: 'order-1')),
       );
@@ -220,7 +228,15 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text(CompanyStrings.createQr), findsOneWidget);
+      await tester.ensureVisible(find.text(CompanyStrings.createQr));
+      await tester.pumpAndSettle();
       await tester.tap(find.text(CompanyStrings.createQr));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text(CompanyStrings.qrOpen),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
       await tester.pumpAndSettle();
       expect(find.text(CompanyStrings.qrOpen), findsOneWidget);
       expect(find.textContaining('capability='), findsNothing);
@@ -234,6 +250,63 @@ void main() {
         ),
         hasLength(1),
       );
+    });
+  }
+
+  for (final viewport in const <Size>[
+    Size(360, 800),
+    Size(844, 390),
+    Size(768, 1024),
+    Size(1024, 768),
+  ]) {
+    testWidgets('company shell tabs and more menu remain usable at '
+        '${viewport.width}x${viewport.height}', (tester) async {
+      final fixture = _Fixture();
+      addTearDown(fixture.dispose);
+      _size(tester, viewport.width, height: viewport.height);
+      await tester.pumpWidget(fixture.wrap(const CompanyHomeShell()));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('Test müəssisə'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byIcon(Icons.assignment_outlined));
+      await tester.pumpAndSettle();
+      if (viewport.width < 560) {
+        expect(
+          find.byWidgetPredicate((widget) => widget is DropdownButtonFormField),
+          findsOneWidget,
+        );
+      } else {
+        expect(
+          find.byWidgetPredicate((widget) => widget is SegmentedButton),
+          findsOneWidget,
+        );
+      }
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byIcon(Icons.groups_outlined));
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.noAssignments), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byIcon(Icons.notifications_outlined));
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.noNotifications), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byIcon(Icons.menu_rounded));
+      await tester.pumpAndSettle();
+      expect(find.text('Giriş-çıxış'), findsOneWidget);
+      expect(find.text('Hesabat'), findsOneWidget);
+      expect(find.text('Məxfilik və hesab'), findsOneWidget);
+      expect(find.text('Hesabdan çıx'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Giriş-çıxış'));
+      await tester.pumpAndSettle();
+      expect(find.text('Hələ məlumat yoxdur'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   }
 
@@ -305,9 +378,9 @@ void main() {
   });
 }
 
-void _size(WidgetTester tester, double width) {
+void _size(WidgetTester tester, double width, {double height = 820}) {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = Size(width, 820);
+  tester.view.physicalSize = Size(width, height);
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetViewInsets);
@@ -317,6 +390,16 @@ Future<void> _select(WidgetTester tester, String prompt, String value) async {
   await tester.tap(find.text(prompt));
   await tester.pumpAndSettle();
   await tester.tap(find.text(value));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _chooseOrderFilter(WidgetTester tester, String label) async {
+  final dropdown = find.byWidgetPredicate(
+    (widget) => widget is DropdownButtonFormField,
+  );
+  await tester.tap(dropdown);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(label).last);
   await tester.pumpAndSettle();
 }
 

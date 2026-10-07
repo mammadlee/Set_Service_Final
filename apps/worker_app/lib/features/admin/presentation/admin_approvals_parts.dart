@@ -82,47 +82,50 @@ class _ApprovalsTabState extends State<_ApprovalsTab> {
         final companies = data.companies
             .where((company) => !_resolvedCompanyIds.contains(company.id))
             .toList(growable: false);
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                AppStrings.pendingWorkers,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              if (workers.isEmpty)
-                const InlineMessage(message: AppStrings.noPendingWorkers)
-              else
-                ...workers.map(
-                  (worker) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: AdminWorkerApprovalCard(
-                      worker: worker,
-                      onResolved: _resolveWorker,
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: [
+                Text(
+                  AppStrings.pendingWorkers,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (workers.isEmpty)
+                  const InlineMessage(message: AppStrings.noPendingWorkers)
+                else
+                  ...workers.map(
+                    (worker) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: AdminWorkerApprovalCard(
+                        worker: worker,
+                        onResolved: _resolveWorker,
+                      ),
                     ),
                   ),
+                const SizedBox(height: 18),
+                Text(
+                  AppStrings.pendingCompanies,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
-              const SizedBox(height: 18),
-              Text(
-                AppStrings.pendingCompanies,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              if (companies.isEmpty)
-                const InlineMessage(message: AppStrings.noPendingCompanies)
-              else
-                ...companies.map(
-                  (company) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _CompanyApprovalCard(
-                      company: company,
-                      onResolved: _resolveCompany,
+                const SizedBox(height: 8),
+                if (companies.isEmpty)
+                  const InlineMessage(message: AppStrings.noPendingCompanies)
+                else
+                  ...companies.map(
+                    (company) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _CompanyApprovalCard(
+                        company: company,
+                        onResolved: _resolveCompany,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },

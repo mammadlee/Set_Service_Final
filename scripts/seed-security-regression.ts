@@ -59,16 +59,40 @@ function testPasswordPolicy(): void {
 
 function testSeedSourceSafety(): void {
   const source = fs.readFileSync(path.resolve('scripts/seed.ts'), 'utf8');
+  const readinessSource = fs.readFileSync(
+    path.resolve('scripts/review-account-readiness.ts'),
+    'utf8',
+  );
   assert.ok(source.includes('assertSeedAllowed();'));
+  assert.ok(source.includes('resolveAppleReviewPasswordsForSeed()'));
+  assert.ok(source.includes('assertAppleReviewPasswordsUnique(APPLE_REVIEW_PASSWORDS'));
+  assert.ok(source.includes('APPLE_REVIEW_WORKER_PHONE'));
+  assert.ok(source.includes('APPLE_REVIEW_COMPANY_EMAIL'));
+  assert.ok(source.includes('APPLE_REVIEW_ADMIN_EMAIL'));
   assert.ok(source.includes("resolveSeedPassword('SEED_RESTRICTED_ADMIN_PASSWORD')"));
+  assert.ok(source.includes("resolveSeedPassword('SEED_COMPANY_PASSWORD')"));
+  assert.ok(source.includes("resolveSeedPassword('SEED_WORKER_PASSWORD')"));
+  assert.ok(source.includes('password_hash: appleReviewWorkerPasswordHash'));
+  assert.ok(source.includes('password_hash: appleReviewCompanyPasswordHash'));
+  assert.ok(source.includes('password_hash: appleReviewAdminPasswordHash'));
   assert.ok(source.includes('password_hash: restrictedAdminPasswordHash'));
+  assert.ok(source.includes('password_hash: workerPasswordHash'));
+  assert.ok(source.includes('reconcile_password: true'));
+  assert.ok(source.includes('reconcile_password?: boolean'));
+  assert.ok(source.includes("status: 'approved'"));
+  assert.ok(source.includes('permissions: APPLE_REVIEW_ADMIN_PERMISSIONS'));
   assert.ok(source.includes('prisma.order.findFirst'));
   assert.ok(!source.includes("console.log('OTP"));
   assert.ok(!source.includes('passwordSource('));
-  assert.ok(!/update:\s*\{[^}]*password_hash/s.test(source));
-  assert.ok(!/update:\s*\{[^}]*password_set_at/s.test(source));
   assert.ok(!source.includes("console.log('Worker:', input.phone"));
   assert.ok(!source.includes("console.log('Super admin:', admin.phone"));
+  assert.ok(readinessSource.includes('bcrypt.compare'));
+  assert.ok(readinessSource.includes('APPLE_REVIEW_WORKER_PHONE'));
+  assert.ok(readinessSource.includes('APPLE_REVIEW_COMPANY_PHONE'));
+  assert.ok(readinessSource.includes('APPLE_REVIEW_ADMIN_PHONE'));
+  assert.ok(readinessSource.includes('REVIEW_ADMIN_PERMISSION_ALLOWLIST_MISMATCH'));
+  assert.ok(readinessSource.includes('REVIEW_PASSWORD_REUSED_BY_SEED_ACCOUNT'));
+  assert.ok(!readinessSource.includes('seedIdentifier'));
 }
 
 function testSafeErrorName(): void {

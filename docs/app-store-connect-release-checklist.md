@@ -1,6 +1,6 @@
 # SET Service — App Store Connect release checklist
 
-Status: **manual account-holder work, not submitted**. Source candidate `1.0.0+4`; Bundle ID in the iOS project is `az.setservice.app`. Confirm that identifier exists for the intended Apple Developer team and App Store Connect record. Verify the **next unused App Store Connect build number** before upload; Play versionCode and iOS build number are independent counters. Do not reuse an old IPA/archive.
+Status: **manual account-holder work, not submitted**. Build 8 is already submitted/in testing; the responsive UI and review-account changes are prepared as source candidate `1.0.0+9`. Bundle ID in the iOS project is `az.setservice.app`. Confirm that identifier exists for the intended Apple Developer team and App Store Connect record and that build number 9 is still unused immediately before archive/upload. Play versionCode and iOS build number are independent counters. Do not reuse or overwrite the Build 8 IPA/archive.
 
 ## App Information — owner completion
 

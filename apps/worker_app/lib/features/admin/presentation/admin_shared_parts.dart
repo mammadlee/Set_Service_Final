@@ -1,5 +1,37 @@
 part of 'admin_home_shell.dart';
 
+/// Keeps Admin-role pages readable from narrow phones through tablet landscape
+/// without changing the scrollable child or its business state.
+class AdminPageFrame extends StatelessWidget {
+  const AdminPageFrame({required this.child, this.maxWidth = 960, super.key});
+
+  final Widget child;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.only(bottom: 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth.clamp(0.0, maxWidth).toDouble();
+          return Align(
+            alignment: Alignment.topCenter,
+            child: SizedBox(
+              width: width,
+              height: constraints.hasBoundedHeight
+                  ? constraints.maxHeight
+                  : null,
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class AdminStatusHeader extends StatelessWidget {
   const AdminStatusHeader({
     required this.title,
@@ -18,6 +50,7 @@ class AdminStatusHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(1);
         final heading = Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -43,7 +76,7 @@ class AdminStatusHeader extends StatelessWidget {
           constraints: BoxConstraints(maxWidth: constraints.maxWidth),
           child: StatusPill(status: status),
         );
-        if (constraints.maxWidth < 390) {
+        if (constraints.maxWidth < 480 || textScale > 1.3) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [heading, const SizedBox(height: 10), pill],

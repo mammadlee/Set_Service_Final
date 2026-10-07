@@ -298,14 +298,16 @@ class _CompanyWorkerProfileScreenState
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Şikayət qəbul edildi və admin yoxlamasına göndərildi.'),
+          content: Text(
+            'Şikayət qəbul edildi və admin yoxlamasına göndərildi.',
+          ),
         ),
       );
     } on ApiException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 
@@ -313,111 +315,115 @@ class _CompanyWorkerProfileScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.viewProfile)),
-      body: _AsyncView<CompanyVisibleWorkerProfile>(
-        future: _future,
-        onRetry: _refresh,
-        builder: (profile) => RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              PremiumHeroPanel(
-                title: profile.name,
-                subtitle: profile.position.isEmpty
-                    ? AppStrings.worker
-                    : profile.position,
-                compact: true,
-                leading: WorkerAvatar(
-                  name: profile.name,
-                  photoUrl: profile.profilePhotoUrl,
-                  radius: 26,
-                  backgroundColor: BrandColors.white.withValues(alpha: 0.18),
-                  foregroundColor: BrandColors.white,
-                ),
-                children: [
-                  PremiumChip(
-                    label:
-                        '★ ${profile.ratingAverage.toStringAsFixed(1)} (${profile.ratingCount})',
-                    icon: Icons.star_outline,
-                    dark: true,
+      body: _CompanyAdaptiveBody(
+        maxWidth: 760,
+        showBackdrop: true,
+        child: _AsyncView<CompanyVisibleWorkerProfile>(
+          future: _future,
+          onRetry: _refresh,
+          builder: (profile) => RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                PremiumHeroPanel(
+                  title: profile.name,
+                  subtitle: profile.position.isEmpty
+                      ? AppStrings.worker
+                      : profile.position,
+                  compact: true,
+                  leading: WorkerAvatar(
+                    name: profile.name,
+                    photoUrl: profile.profilePhotoUrl,
+                    radius: 26,
+                    backgroundColor: BrandColors.white.withValues(alpha: 0.18),
+                    foregroundColor: BrandColors.white,
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              _ChipSection(title: AppStrings.skills, values: profile.skills),
-              const SizedBox(height: 12),
-              _ChipSection(
-                title: AppStrings.languages,
-                values: profile.languages,
-              ),
-              const SizedBox(height: 12),
-              PremiumCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      AppStrings.workHistory,
-                      style: Theme.of(context).textTheme.titleMedium,
+                    PremiumChip(
+                      label:
+                          '★ ${profile.ratingAverage.toStringAsFixed(1)} (${profile.ratingCount})',
+                      icon: Icons.star_outline,
+                      dark: true,
                     ),
-                    const SizedBox(height: 8),
-                    if (profile.workHistory.isNotEmpty)
-                      ...profile.workHistory.map(
-                        (item) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.timeline_outlined),
-                          title: Text(item.companyName),
-                          subtitle: Text(
-                            [
-                              item.position,
-                              if (item.note.trim().isNotEmpty) item.note,
-                            ].join('\n'),
-                          ),
-                        ),
-                      )
-                    else
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _ChipSection(title: AppStrings.skills, values: profile.skills),
+                const SizedBox(height: 12),
+                _ChipSection(
+                  title: AppStrings.languages,
+                  values: profile.languages,
+                ),
+                const SizedBox(height: 12),
+                PremiumCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        profile.workHistorySummary?.trim().isNotEmpty == true
-                            ? profile.workHistorySummary!
-                            : AppStrings.noData,
+                        AppStrings.workHistory,
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              PremiumCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      AppStrings.documents,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    if (profile.documents.isEmpty)
-                      const Text(AppStrings.noDocumentsUploaded)
-                    else
-                      ...profile.documents.map(
-                        (document) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.description_outlined),
-                          title: Text(
-                            document.name?.isNotEmpty == true
-                                ? document.name!
-                                : document.type,
+                      const SizedBox(height: 8),
+                      if (profile.workHistory.isNotEmpty)
+                        ...profile.workHistory.map(
+                          (item) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.timeline_outlined),
+                            title: Text(item.companyName),
+                            subtitle: Text(
+                              [
+                                item.position,
+                                if (item.note.trim().isNotEmpty) item.note,
+                              ].join('\n'),
+                            ),
                           ),
-                          subtitle: Text(document.type),
+                        )
+                      else
+                        Text(
+                          profile.workHistorySummary?.trim().isNotEmpty == true
+                              ? profile.workHistorySummary!
+                              : AppStrings.noData,
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _reportWorkerProfile,
-                icon: const Icon(Icons.flag_outlined),
-                label: const Text('İşçi profilini şikayət et'),
-              ),
-            ],
+                const SizedBox(height: 12),
+                PremiumCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        AppStrings.documents,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      if (profile.documents.isEmpty)
+                        const Text(AppStrings.noDocumentsUploaded)
+                      else
+                        ...profile.documents.map(
+                          (document) => ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.description_outlined),
+                            title: Text(
+                              document.name?.isNotEmpty == true
+                                  ? document.name!
+                                  : document.type,
+                            ),
+                            subtitle: Text(document.type),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _reportWorkerProfile,
+                  icon: const Icon(Icons.flag_outlined),
+                  label: const Text('İşçi profilini şikayət et'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

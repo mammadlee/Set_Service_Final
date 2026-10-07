@@ -9,30 +9,40 @@ const {
   resolveSeedPassword,
   safeSeedErrorName,
 } = require('../src/lib/seed-safety');
+const {
+  APPLE_REVIEW_ADMIN_EMAIL,
+  APPLE_REVIEW_ADMIN_PERMISSIONS,
+  APPLE_REVIEW_ADMIN_PHONE,
+  APPLE_REVIEW_COMPANY_EMAIL,
+  APPLE_REVIEW_COMPANY_PHONE,
+  APPLE_REVIEW_WORKER_PHONE,
+  assertAppleReviewPasswordsUnique,
+  resolveAppleReviewPasswordsForSeed,
+} = require('../src/lib/apple-review-accounts');
 
 assertSeedAllowed();
 
 const prisma = new PrismaClient();
 
-const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@setservice.az';
+const seedIdentifier = (envName: string, fallback: string) =>
+  process.env[envName]?.trim() || fallback;
+
+const ADMIN_EMAIL = seedIdentifier('SEED_ADMIN_EMAIL', 'admin@setservice.az').toLowerCase();
 const ADMIN_PASSWORD = resolveSeedPassword('SEED_ADMIN_PASSWORD');
-const COMPANY_EMAIL = process.env.SEED_COMPANY_EMAIL ?? 'company@setservice.az';
 const COMPANY_PASSWORD = resolveSeedPassword('SEED_COMPANY_PASSWORD');
 const WORKER_PASSWORD = resolveSeedPassword('SEED_WORKER_PASSWORD');
-const OPS_ADMIN_EMAIL = process.env.SEED_OPS_ADMIN_EMAIL ?? 'ops@setservice.az';
-const REPORTS_ADMIN_EMAIL = process.env.SEED_REPORTS_ADMIN_EMAIL ?? 'reports@setservice.az';
+const REPORTS_ADMIN_EMAIL = seedIdentifier(
+  'SEED_REPORTS_ADMIN_EMAIL',
+  'reports@setservice.az',
+).toLowerCase();
 const RESTRICTED_ADMIN_PASSWORD = resolveSeedPassword('SEED_RESTRICTED_ADMIN_PASSWORD');
-
-const OPS_ADMIN_PERMISSIONS = [
-  'view_dashboard',
-  'view_workers',
-  'manage_workers',
-  'view_orders',
-  'view_assignments',
-  'manage_assignments',
-  'view_attendance',
-  'view_notifications',
-];
+const APPLE_REVIEW_PASSWORDS = resolveAppleReviewPasswordsForSeed();
+assertAppleReviewPasswordsUnique(APPLE_REVIEW_PASSWORDS, {
+  SEED_ADMIN_PASSWORD: ADMIN_PASSWORD,
+  SEED_COMPANY_PASSWORD: COMPANY_PASSWORD,
+  SEED_WORKER_PASSWORD: WORKER_PASSWORD,
+  SEED_RESTRICTED_ADMIN_PASSWORD: RESTRICTED_ADMIN_PASSWORD,
+});
 
 const REPORTS_ADMIN_PERMISSIONS = [
   'view_dashboard',
@@ -46,8 +56,10 @@ async function main() {
   console.log('Seed starting.');
   const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
   const restrictedAdminPasswordHash = await bcrypt.hash(RESTRICTED_ADMIN_PASSWORD, 12);
-  const companyPasswordHash = await bcrypt.hash(COMPANY_PASSWORD, 12);
   const workerPasswordHash = await bcrypt.hash(WORKER_PASSWORD, 12);
+  const appleReviewWorkerPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.worker, 12);
+  const appleReviewCompanyPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.company, 12);
+  const appleReviewAdminPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.admin, 12);
 
   const admin = await prisma.user.upsert({
     where: { phone: '+994700000001' },
@@ -74,11 +86,12 @@ async function main() {
   console.log('Super admin seed reconciled.');
 
   await seedRestrictedAdmin({
-    phone: '+994700000101',
-    email: OPS_ADMIN_EMAIL,
+    phone: APPLE_REVIEW_ADMIN_PHONE,
+    email: APPLE_REVIEW_ADMIN_EMAIL,
     name: 'Operations Admin',
-    permissions: OPS_ADMIN_PERMISSIONS,
-    password_hash: restrictedAdminPasswordHash,
+    permissions: APPLE_REVIEW_ADMIN_PERMISSIONS,
+    password_hash: appleReviewAdminPasswordHash,
+    reconcile_password: true,
   });
 
   await seedRestrictedAdmin({
@@ -92,17 +105,20 @@ async function main() {
   await seedTaxonomy();
 
   const companyUser = await prisma.user.upsert({
-    where: { phone: '+994700000002' },
+    where: { phone: APPLE_REVIEW_COMPANY_PHONE },
     update: {
-      email: COMPANY_EMAIL,
+      email: APPLE_REVIEW_COMPANY_EMAIL,
       role: 'company',
       name: 'Hilton Baku Əməliyyat Meneceri',
       is_active: true,
+      deleted_at: null,
+      password_hash: appleReviewCompanyPasswordHash,
+      password_set_at: new Date(),
     },
     create: {
-      phone: '+994700000002',
-      email: COMPANY_EMAIL,
-      password_hash: companyPasswordHash,
+      phone: APPLE_REVIEW_COMPANY_PHONE,
+      email: APPLE_REVIEW_COMPANY_EMAIL,
+      password_hash: appleReviewCompanyPasswordHash,
       password_set_at: new Date(),
       role: 'company',
       name: 'Hilton Baku Əməliyyat Meneceri',
@@ -111,7 +127,12 @@ async function main() {
 
   const company = await prisma.company.upsert({
     where: { user_id: companyUser.id },
-    update: { name: 'Hilton Baku', status: 'approved', approved_at: new Date() },
+    update: {
+      name: 'Hilton Baku',
+      status: 'approved',
+      approved_at: new Date(),
+      deleted_at: null,
+    },
     create: {
       user_id: companyUser.id,
       name: 'Hilton Baku',
@@ -122,13 +143,14 @@ async function main() {
   console.log('Company seed reconciled.');
 
   await seedWorker({
-    phone: '+994700000003',
+    phone: APPLE_REVIEW_WORKER_PHONE,
     name: 'Elvin Məmmədov',
     position: 'Ofisiant',
     status: 'approved',
     skills: [{ name: 'Servis', level: 4 }, { name: 'Qonaq qarşılama', level: 3 }],
     languages: ['Azərbaycan', 'English'],
-    password_hash: workerPasswordHash,
+    password_hash: appleReviewWorkerPasswordHash,
+    reconcile_password: true,
     position_slug: 'waiter-waitress',
   });
 
@@ -207,6 +229,7 @@ async function seedRestrictedAdmin(input: {
   name: string;
   permissions: string[];
   password_hash: string;
+  reconcile_password?: boolean;
 }) {
   const user = await prisma.user.upsert({
     where: { phone: input.phone },
@@ -215,6 +238,13 @@ async function seedRestrictedAdmin(input: {
       role: 'admin',
       name: input.name,
       is_active: true,
+      ...(input.reconcile_password
+        ? {
+            password_hash: input.password_hash,
+            password_set_at: new Date(),
+            deleted_at: null,
+          }
+        : {}),
     },
     create: {
       phone: input.phone,
@@ -303,6 +333,7 @@ async function seedWorker(input: {
   skills: Array<Record<string, unknown>>;
   languages: string[];
   password_hash: string;
+  reconcile_password?: boolean;
   reject_reason?: string;
   position_slug?: string;
 }) {
@@ -312,6 +343,13 @@ async function seedWorker(input: {
       role: 'worker',
       name: input.name,
       is_active: true,
+      ...(input.reconcile_password
+        ? {
+            password_hash: input.password_hash,
+            password_set_at: new Date(),
+            deleted_at: null,
+          }
+        : {}),
     },
     create: {
       phone: input.phone,
@@ -331,6 +369,7 @@ async function seedWorker(input: {
       languages: input.languages,
       reject_reason: input.reject_reason ?? null,
       approved_at: input.status === 'approved' ? new Date() : null,
+      ...(input.reconcile_password ? { deleted_at: null } : {}),
     },
     create: {
       user_id: user.id,

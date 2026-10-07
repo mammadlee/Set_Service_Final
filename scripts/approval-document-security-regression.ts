@@ -47,14 +47,22 @@ function main() {
 
   assert.ok(auth.includes('consumed_at: now'));
   assert.ok(auth.includes('registration_access_token: signRegistrationToken'));
+  assert.ok(auth.includes("required_document_types: ['health_certificate', 'criminal_record']"));
   assert.ok(worker.includes("'registration_otp_consumed'"));
-  assert.ok(worker.includes("['health_certificate', 'criminal_record']"));
-  assert.ok(worker.includes('missing.push(`document:${type}`)'));
   assert.ok(worker.includes("type WorkerDocumentType = 'health_certificate' | 'criminal_record' | 'cv'"));
   assert.ok(workerRouter.includes("z.enum(['health_certificate', 'criminal_record', 'cv'])"));
   const approvalPrerequisites = worker.slice(
     worker.indexOf('function workerApprovalPrerequisites'),
     worker.indexOf('async function deletePrivateObjectBestEffort'),
+  );
+  assert.ok(
+    !approvalPrerequisites.includes('document:'),
+    'Worker documents must not block admin approval',
+  );
+  assert.ok(
+    !approvalPrerequisites.includes("'health_certificate'")
+      && !approvalPrerequisites.includes("'criminal_record'"),
+    'Required enrollment documents stay independent from approval prerequisites',
   );
   assert.ok(!approvalPrerequisites.includes("'cv'"), 'CV must stay optional for worker approval');
   assert.ok(workerRouter.includes('work_history_summary:'));

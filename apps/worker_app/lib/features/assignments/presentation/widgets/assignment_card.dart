@@ -21,6 +21,12 @@ class AssignmentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('dd.MM, HH:mm');
     final statusHelp = AppStrings.assignmentStatusHelp(assignment.status);
+    final orderTitle = assignment.order.title.trim().isEmpty
+        ? 'Sifariş'
+        : assignment.order.title;
+    final role = assignment.category.trim().isNotEmpty
+        ? assignment.category
+        : assignment.order.category;
 
     return Premium3DCard(
       onTap: onTap,
@@ -32,14 +38,15 @@ class AssignmentCard extends StatelessWidget {
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final narrow = constraints.maxWidth < 300;
+              final narrow = constraints.maxWidth < 360;
               final title = Text(
-                assignment.order.company.name,
-                maxLines: narrow ? 3 : 2,
-                overflow: TextOverflow.ellipsis,
+                orderTitle,
+                key: ValueKey('assignment-card-title-${assignment.id}'),
+                softWrap: true,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.15,
                 ),
               );
 
@@ -83,9 +90,16 @@ class AssignmentCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
           ],
+          _MetaRow(icon: Icons.room_service_outlined, text: role),
+          const SizedBox(height: 8),
+          _MetaRow(
+            icon: Icons.business_outlined,
+            text: assignment.order.company.name,
+          ),
+          const SizedBox(height: 8),
           _MetaRow(icon: Icons.place_outlined, text: assignment.order.location),
           if (assignment.order.startDatetime != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             _MetaRow(
               icon: Icons.schedule_outlined,
               text:

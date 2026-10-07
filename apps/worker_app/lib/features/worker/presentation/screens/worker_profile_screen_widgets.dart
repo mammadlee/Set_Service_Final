@@ -172,8 +172,7 @@ class _ProfileOverview extends StatelessWidget {
                         Text(
                           worker.name,
                           textAlign: TextAlign.center,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                          softWrap: true,
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(fontWeight: FontWeight.w700),
                         ),
@@ -330,8 +329,7 @@ class _ProfileMenuRow extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      softWrap: true,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         color: Colors.black,
                         fontWeight: FontWeight.w700,
@@ -340,8 +338,7 @@ class _ProfileMenuRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       summary,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      softWrap: true,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: BrandColors.mutedBrown,
                         height: 1.25,

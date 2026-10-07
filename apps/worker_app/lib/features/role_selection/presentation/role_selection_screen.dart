@@ -228,11 +228,14 @@ class _ContactFooter extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 8.0;
+            final landscape =
+                MediaQuery.orientationOf(context) == Orientation.landscape;
             final horizontalPadding = constraints.maxWidth < 360 ? 8.0 : 12.0;
-            final verticalPadding = constraints.maxWidth >= 720 ? 18.0 : 10.0;
+            final wideLayout = constraints.maxWidth >= 720;
+            final verticalPadding = wideLayout && !landscape ? 18.0 : 10.0;
             final availableWidth =
                 constraints.maxWidth - (horizontalPadding * 2);
-            final columns = constraints.maxWidth >= 720 ? 4 : 2;
+            final columns = wideLayout || landscape ? 4 : 2;
             final itemWidth =
                 (availableWidth - (spacing * (columns - 1))) / columns;
 

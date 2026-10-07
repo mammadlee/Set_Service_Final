@@ -140,6 +140,42 @@ void main() {
     expect(find.text('İşçini təsdiqləmək mümkün olmadı.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('approval card remains scrollable with large Azerbaijani text', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ApprovalFixture((_) async {
+      return _jsonResponse(500, <String, dynamic>{});
+    });
+    addTearDown(fixture.dispose);
+
+    await tester.pumpWidget(
+      fixture.wrap(
+        AdminWorkerApprovalCard(worker: _worker(), onResolved: (_) async {}),
+        textScale: 1.6,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.widgetWithText(ElevatedButton, AppStrings.approve),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sonra təyin et'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.widgetWithText(ElevatedButton, AppStrings.approve))
+          .height,
+      greaterThanOrEqualTo(44),
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 AdminWorkerProfile _worker() => const AdminWorkerProfile(
@@ -191,20 +227,27 @@ class _ApprovalFixture {
   late final SessionCoordinator coordinator;
   late final AdminRepository repository;
 
-  Widget wrap(Widget child) => Provider<AdminRepository>.value(
-    value: repository,
-    child: MaterialApp(
-      theme: AppTheme.light(),
-      home: Scaffold(
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: child,
+  Widget wrap(Widget child, {double textScale = 1}) =>
+      Provider<AdminRepository>.value(
+        value: repository,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: child,
+              ),
+            ),
           ),
         ),
-      ),
-    ),
-  );
+      );
 
   void dispose() => coordinator.dispose();
 }

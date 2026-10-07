@@ -38,21 +38,24 @@ class _CompanyNotificationsTabState extends State<_CompanyNotificationsTab> {
             onAction: _refresh,
           );
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) {
-              final item = page.data[index];
-              return NotificationCard(
-                notification: item,
-                title: _notificationTitle(item),
-                body: _notificationBody(item),
-                onTap: () => _openNotification(item),
-              );
-            },
+        return _CompanyAdaptiveBody(
+          maxWidth: 760,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, index) {
+                final item = page.data[index];
+                return NotificationCard(
+                  notification: item,
+                  title: _notificationTitle(item),
+                  body: _notificationBody(item),
+                  onTap: () => _openNotification(item),
+                );
+              },
+            ),
           ),
         );
       },

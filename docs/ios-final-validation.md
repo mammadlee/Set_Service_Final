@@ -1,6 +1,6 @@
 # iOS final validation command pack
 
-Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands have not been run here and no signed archive or IPA has been created. Execute from the exact reviewed SHA `00754e3e8df15d3b8c52bf19bb9b402547316fc6` on `codex/play-store-live-final-hardening` (or an explicitly approved successor).
+Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands have not been run here and no signed archive or IPA has been created. Build 8 is already submitted/in testing. Execute the next validation from the exact reviewed `1.0.0+9` SHA on `codex/play-store-live-final-hardening` (or an explicitly approved successor).
 
 ## Toolchain and source checks
 
@@ -42,7 +42,7 @@ Inspect the built app before any signing step:
 
 - `CFBundleIdentifier=az.setservice.app`
 - `CFBundleShortVersionString=1.0.0`
-- `CFBundleVersion=4` unless App Store Connect evidence requires a new unused build number
+- `CFBundleVersion=9`; confirm in App Store Connect that it is unused before upload
 - HTTPS production API only; no localhost or debug endpoint
 - ATS does not allow arbitrary loads
 - camera/photo usage strings are present; no location/microphone/tracking strings

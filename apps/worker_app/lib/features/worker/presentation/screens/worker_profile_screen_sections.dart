@@ -153,8 +153,7 @@ class _TaxonomyDepartmentGroup extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             department.nameAz,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
@@ -202,8 +201,7 @@ class _TaxonomySubdepartmentGroup extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Departament: ${subdepartment.nameAz}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: Theme.of(
                     context,
                   ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
@@ -338,13 +336,11 @@ class _ExperienceEditorSection extends StatelessWidget {
               ),
               title: Text(
                 company.isEmpty ? 'İş təcrübəsi $index' : company,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                softWrap: true,
               ),
               subtitle: Text(
                 position.isEmpty ? 'Vəzifə əlavə edin' : position,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                softWrap: true,
               ),
               children: [
                 TextField(
@@ -533,8 +529,7 @@ class WorkerCvSection extends StatelessWidget {
                           const SizedBox(height: 5),
                           Text(
                             _documentName(cvDocument),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
                           const SizedBox(height: 7),
@@ -720,8 +715,7 @@ class WorkerDocumentsSection extends StatelessWidget {
                         children: [
                           Text(
                             _documentLabel(document.type),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
                             style: Theme.of(context).textTheme.titleMedium
                                 ?.copyWith(fontWeight: FontWeight.w700),
                           ),
@@ -733,8 +727,7 @@ class WorkerDocumentsSection extends StatelessWidget {
                           const SizedBox(height: 5),
                           Text(
                             _documentName(document),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(color: BrandColors.darkText),
                           ),

@@ -9,6 +9,7 @@ class CompanyCreateOrderScreen extends StatefulWidget {
 
 class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
   final _title = TextEditingController();
   final _description = TextEditingController();
   final _start = TextEditingController();
@@ -32,6 +33,7 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _title.dispose();
     _description.dispose();
     _start.dispose();
@@ -51,71 +53,62 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
     final draft = _categories[activeIndex];
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.createOrder)),
-      body: ConstrainedPage(
+      body: _CompanyAdaptiveBody(
+        maxWidth: 760,
         showBackdrop: true,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Form(
           key: _formKey,
-          child: ListView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          child: Column(
             children: [
-              if (_error != null) ...[
-                InlineMessage(message: _error!, kind: InlineMessageKind.error),
-                const SizedBox(height: 12),
-              ],
-              _OrderStepHeader(stepIndex: _stepIndex),
-              const SizedBox(height: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _stepTitle(_stepIndex),
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(_stepHelp(_stepIndex)),
-                  const SizedBox(height: 20),
-                  if (_taxonomyLoading)
-                    const LinearProgressIndicator()
-                  else if (_taxonomy.isEmpty)
-                    OutlinedButton.icon(
-                      onPressed: _loadTaxonomy,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Vəzifələri yenidən yüklə'),
-                    )
-                  else
-                    AbsorbPointer(
-                      absorbing: _loading,
-                      child: _stepContent(draft),
-                    ),
-                  const SizedBox(height: 18),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      LoadingButton(
-                        label: _stepIndex == 6
-                            ? AppStrings.createOrder
-                            : 'Davam et',
-                        icon: _stepIndex == 6
-                            ? Icons.save_outlined
-                            : Icons.arrow_forward_outlined,
-                        loading: _loading,
-                        onPressed: !_taxonomyLoading && _canContinue(draft)
-                            ? (_stepIndex == 6 ? _submit : _continue)
-                            : null,
+              Expanded(
+                child: ListView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.only(bottom: 16),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  children: [
+                    if (_error != null) ...[
+                      InlineMessage(
+                        message: _error!,
+                        kind: InlineMessageKind.error,
                       ),
-                      if (_stepIndex > 0) ...[
-                        const SizedBox(height: 8),
-                        OutlinedButton.icon(
-                          onPressed: _loading
-                              ? null
-                              : () => setState(() => _stepIndex -= 1),
-                          icon: const Icon(Icons.arrow_back_outlined),
-                          label: const Text('Geri'),
-                        ),
-                      ],
+                      const SizedBox(height: 12),
                     ],
-                  ),
-                ],
+                    _OrderStepHeader(stepIndex: _stepIndex),
+                    const SizedBox(height: 20),
+                    Text(
+                      _stepTitle(_stepIndex),
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(_stepHelp(_stepIndex)),
+                    const SizedBox(height: 20),
+                    if (_taxonomyLoading)
+                      const LinearProgressIndicator()
+                    else if (_taxonomy.isEmpty)
+                      OutlinedButton.icon(
+                        onPressed: _loadTaxonomy,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Vəzifələri yenidən yüklə'),
+                      )
+                    else
+                      AbsorbPointer(
+                        absorbing: _loading,
+                        child: _stepContent(draft),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _OrderStepActions(
+                stepIndex: _stepIndex,
+                loading: _loading,
+                canContinue: !_taxonomyLoading && _canContinue(draft),
+                onContinue: _stepIndex == 6 ? _submit : _continue,
+                onBack: _stepIndex > 0 && !_loading
+                    ? () => _goToStep(_stepIndex - 1)
+                    : null,
               ),
             ],
           ),
@@ -150,23 +143,42 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_stepIndex == 4 && !_validateDates()) return;
     FocusScope.of(context).unfocus();
+    _goToStep(_stepIndex + 1);
+  }
+
+  void _goToStep(int step) {
     setState(() {
       _error = null;
-      _stepIndex += 1;
+      _stepIndex = step.clamp(0, 6).toInt();
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _showError(String message) {
+    setState(() => _error = message);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
   }
 
   bool _validateDates() {
     if (_startDateTime == null || _endDateTime == null) {
-      setState(() => _error = AppStrings.dateRequired);
+      _showError(AppStrings.dateRequired);
       return false;
     }
     if (_startDateTime!.isBefore(DateTime.now())) {
-      setState(() => _error = AppStrings.startDateFuture);
+      _showError(AppStrings.startDateFuture);
       return false;
     }
     if (!_endDateTime!.isAfter(_startDateTime!)) {
-      setState(() => _error = AppStrings.endDateAfterStart);
+      _showError(AppStrings.endDateAfterStart);
       return false;
     }
     return true;
@@ -215,10 +227,11 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
             controller: draft.notes,
             label: AppStrings.categoryNotes,
             required: false,
+            hint: 'İstəyə bağlı qısa qeyd əlavə edin.',
           ),
         ],
       ),
-      4 => Column(
+      4 => _ResponsiveOrderFields(
         children: [
           _DateTimeField(
             controller: _start,
@@ -235,6 +248,7 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
       5 => _Field(
         controller: _location,
         label: CompanyStrings.address,
+        hint: CompanyStrings.addressHint,
         maxLines: 4,
         min: 2,
         onChanged: (_) => setState(() => _error = null),
@@ -260,29 +274,29 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
     final start = _startDateTime;
     final end = _endDateTime;
     if (start == null) {
-      setState(() => _error = AppStrings.dateRequired);
+      _showError(AppStrings.dateRequired);
       return;
     }
     if (start.isBefore(DateTime.now())) {
-      setState(() => _error = AppStrings.startDateFuture);
+      _showError(AppStrings.startDateFuture);
       return;
     }
     if (end == null) {
-      setState(() => _error = AppStrings.dateRequired);
+      _showError(AppStrings.dateRequired);
       return;
     }
     if (!end.isAfter(start)) {
-      setState(() => _error = AppStrings.endDateAfterStart);
+      _showError(AppStrings.endDateAfterStart);
       return;
     }
     final positionIds = <String>{};
     for (final category in _categories) {
       if (category.positionId == null) {
-        setState(() => _error = CompanyStrings.taxonomyRequired);
+        _showError(CompanyStrings.taxonomyRequired);
         return;
       }
       if (positionIds.contains(category.positionId)) {
-        setState(() => _error = AppStrings.duplicateCategory);
+        _showError(AppStrings.duplicateCategory);
         return;
       }
       positionIds.add(category.positionId!);
@@ -318,10 +332,10 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
       if (mounted) navigator.pop(created);
     } on ApiException catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.message);
+      _showError(error.message);
     } catch (_) {
       if (!mounted) return;
-      setState(() => _error = AppStrings.actionFailed);
+      _showError(AppStrings.actionFailed);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -354,6 +368,7 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
       _activeCategoryIndex = _categories.length - 1;
       _stepIndex = 0;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
   }
 
   void _removeCategory(int index) {
@@ -496,11 +511,13 @@ Future<T?> _showOrderOptionSheet<T>({
   required List<T> items,
   required String Function(T item) label,
 }) {
+  final viewportHeight = MediaQuery.sizeOf(context).height;
+  final listHeight = (viewportHeight * 0.62).clamp(220.0, 520.0).toDouble();
   return showPremiumBottomSheet<T>(
     context: context,
     title: title,
     child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.52,
+      height: listHeight,
       child: items.isEmpty
           ? const InlineMessage(message: 'Seçim tapılmadı.')
           : ListView.builder(
@@ -520,6 +537,84 @@ Future<T?> _showOrderOptionSheet<T>({
             ),
     ),
   );
+}
+
+class _OrderStepActions extends StatelessWidget {
+  const _OrderStepActions({
+    required this.stepIndex,
+    required this.loading,
+    required this.canContinue,
+    required this.onContinue,
+    required this.onBack,
+  });
+
+  final int stepIndex;
+  final bool loading;
+  final bool canContinue;
+  final VoidCallback onContinue;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = LoadingButton(
+      label: stepIndex == 6 ? AppStrings.createOrder : 'Davam et',
+      icon: stepIndex == 6 ? Icons.save_outlined : Icons.arrow_forward_outlined,
+      loading: loading,
+      onPressed: canContinue ? onContinue : null,
+    );
+    final back = OutlinedButton.icon(
+      onPressed: onBack,
+      icon: const Icon(Icons.arrow_back_outlined),
+      label: const Text('Geri'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560 || stepIndex == 0) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              primary,
+              if (stepIndex > 0) ...[const SizedBox(height: 10), back],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: back),
+            const SizedBox(width: 12),
+            Expanded(child: primary),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ResponsiveOrderFields extends StatelessWidget {
+  const _ResponsiveOrderFields({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560) {
+          return Column(children: children);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = 0; index < children.length; index++) ...[
+              if (index > 0) const SizedBox(width: 12),
+              Expanded(child: children[index]),
+            ],
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _OrderSelectorTile extends StatelessWidget {
@@ -754,12 +849,14 @@ class _OrderSummaryStep extends StatelessWidget {
         _Field(
           controller: title,
           label: AppStrings.orderTitle,
+          hint: 'Məsələn, banket xidməti üçün heyət',
           min: 3,
           onChanged: (_) => onChanged(),
         ),
         _Field(
           controller: description,
           label: AppStrings.description,
+          hint: 'İşin tələblərini və vacib detalları qeyd edin.',
           min: 10,
           maxLines: 3,
           onChanged: (_) => onChanged(),
@@ -811,34 +908,60 @@ class _QuantitySelector extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              AppStrings.requiredWorkers,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-            ),
-          ),
-          IconButton.filledTonal(
-            onPressed: value > 1 ? () => onChanged(value - 1) : null,
-            icon: const Icon(Icons.remove),
-          ),
-          SizedBox(
-            width: 48,
-            child: Center(
-              child: Text(
-                '$value',
-                style: Theme.of(context).textTheme.titleMedium,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final controls = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'İşçi sayını azalt',
+                onPressed: value > 1 ? () => onChanged(value - 1) : null,
+                icon: const Icon(Icons.remove),
               ),
-            ),
-          ),
-          IconButton.filledTonal(
-            onPressed: value < 500 ? () => onChanged(value + 1) : null,
-            icon: const Icon(Icons.add),
-          ),
-        ],
+              SizedBox(
+                width: 56,
+                child: Center(
+                  child: Semantics(
+                    label: 'Tələb olunan işçi sayı: $value',
+                    liveRegion: true,
+                    child: Text(
+                      '$value',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: 'İşçi sayını artır',
+                onPressed: value < 500 ? () => onChanged(value + 1) : null,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          );
+          final label = Text(
+            AppStrings.requiredWorkers,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+          );
+          if (constraints.maxWidth < 420) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label,
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: controls),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: label),
+              const SizedBox(width: 12),
+              controls,
+            ],
+          );
+        },
       ),
     );
   }
@@ -851,6 +974,7 @@ class _Field extends StatelessWidget {
     this.min = 1,
     this.required = true,
     this.maxLines = 1,
+    this.hint,
     this.onChanged,
   });
 
@@ -859,6 +983,7 @@ class _Field extends StatelessWidget {
   final int min;
   final bool required;
   final int maxLines;
+  final String? hint;
   final ValueChanged<String>? onChanged;
 
   @override
@@ -868,9 +993,15 @@ class _Field extends StatelessWidget {
       child: TextFormField(
         controller: controller,
         maxLines: maxLines,
+        textCapitalization: TextCapitalization.sentences,
+        textInputAction: maxLines == 1
+            ? TextInputAction.next
+            : TextInputAction.newline,
         onChanged: onChanged,
         decoration: InputDecoration(
           labelText: label,
+          hintText: hint,
+          hintMaxLines: maxLines > 1 ? 2 : 1,
           floatingLabelBehavior: FloatingLabelBehavior.always,
           alignLabelWithHint: true,
           errorMaxLines: 3,
@@ -910,8 +1041,8 @@ class _DateTimeField extends StatelessWidget {
           labelText: label,
           floatingLabelBehavior: FloatingLabelBehavior.always,
           errorMaxLines: 3,
-          hintText: AppStrings.dateRequired,
-          prefixIcon: const Icon(Icons.hourglass_bottom_rounded),
+          hintText: 'Tarix və saat seçin',
+          prefixIcon: const Icon(Icons.event_available_outlined),
           suffixIcon: const Icon(Icons.expand_more),
         ),
         validator: (value) {

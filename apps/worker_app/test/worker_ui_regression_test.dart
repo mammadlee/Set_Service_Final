@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:worker_app/core/theme/app_theme.dart';
+import 'package:worker_app/features/assignments/data/models/assignment.dart';
+import 'package:worker_app/features/assignments/presentation/widgets/assignment_card.dart';
 import 'package:worker_app/features/auth/data/models/auth_models.dart';
 import 'package:worker_app/features/dashboard/presentation/screens/worker_dashboard_screen.dart';
+import 'package:worker_app/features/notifications/data/models/notification_item.dart';
+import 'package:worker_app/features/notifications/presentation/widgets/notification_card.dart';
 import 'package:worker_app/features/worker/presentation/screens/worker_profile_screen.dart';
+import 'package:worker_app/shared/app_strings.dart';
 import 'package:worker_app/shared/widgets/premium_components.dart';
 import 'package:worker_app/shared/widgets/worker_avatar.dart';
 
@@ -516,6 +521,198 @@ void main() {
       expect(tester.takeException(), isNull, reason: '$size');
     }
   });
+
+  testWidgets('premium card clips the surface, not its padded text content', (
+    tester,
+  ) async {
+    const cardKey = ValueKey('premium-card-clip-regression');
+    const textKey = ValueKey('premium-card-clip-regression-text');
+
+    await tester.pumpWidget(
+      _testApp(
+        const Premium3DCard(
+          key: cardKey,
+          padding: EdgeInsets.all(24),
+          child: Text('Tədbir və qonaqpərvərlik əməliyyatları', key: textKey),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final card = find.byKey(cardKey);
+    final container = find.descendant(
+      of: card,
+      matching: find.byType(AnimatedContainer),
+    );
+    final surface = find.descendant(of: card, matching: find.byType(Material));
+    expect(container, findsOneWidget);
+    expect(surface, findsOneWidget);
+
+    final cardRect = tester.getRect(container);
+    final surfaceRect = tester.getRect(surface);
+    final textRect = tester.getRect(find.byKey(textKey));
+    expect(cardRect.contains(surfaceRect.topLeft), isTrue);
+    expect(cardRect.contains(surfaceRect.bottomRight), isTrue);
+    expect(surfaceRect.left - cardRect.left, lessThanOrEqualTo(1.1));
+    expect(surfaceRect.top - cardRect.top, lessThanOrEqualTo(1.1));
+    expect(textRect.left, greaterThanOrEqualTo(surfaceRect.left + 23));
+    expect(textRect.top, greaterThanOrEqualTo(surfaceRect.top + 23));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'worker dashboard keeps stats and complete next-job text across devices',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      final assignment = _assignment(status: 'assigned');
+      for (final testCase in const [
+        (size: Size(320, 568), scale: 1.3),
+        (size: Size(390, 844), scale: 1.0),
+        (size: Size(768, 1024), scale: 1.0),
+        (size: Size(1024, 768), scale: 1.0),
+        (size: Size(844, 390), scale: 1.0),
+      ]) {
+        tester.view.physicalSize = testCase.size;
+        await tester.pumpWidget(
+          _testApp(
+            WorkerDashboardContent(
+              worker: _worker(
+                name: _longWorkerName,
+                position: _longRole,
+                positions: const [_longRole],
+              ),
+              assignments: [assignment],
+              onRefresh: _noopAsync,
+            ),
+            scrollable: false,
+            textScaler: TextScaler.linear(testCase.scale),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 900));
+
+        await tester.scrollUntilVisible(
+          find.text('Yeni işlər'),
+          160,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Yeni işlər'), findsOneWidget);
+        expect(find.text('Qəbul edilən'), findsOneWidget);
+        expect(find.text('Tamamlanmış işlər'), findsOneWidget);
+
+        for (final label in const [
+          'Yeni işlər',
+          'Qəbul edilən',
+          'Tamamlanmış işlər',
+        ]) {
+          final text = tester.widget<Text>(find.text(label));
+          expect(text.maxLines, isNull, reason: '$label ${testCase.size}');
+          expect(text.overflow, isNull, reason: '$label ${testCase.size}');
+        }
+
+        await tester.scrollUntilVisible(
+          find.text(_longOrderTitle),
+          160,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(_longOrderTitle), findsOneWidget);
+        expect(find.text(_longRole), findsWidgets);
+        expect(find.text(_longCompany), findsOneWidget);
+        expect(find.text(_longLocation), findsOneWidget);
+
+        expect(tester.takeException(), isNull, reason: '${testCase.size}');
+      }
+    },
+  );
+
+  testWidgets(
+    'assignment and notification cards keep long Azerbaijani text complete',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      const notificationTitle = 'Yeni tədbir təyinatı və giriş-çıxış məlumatı';
+      const notificationBody =
+          'Qonaqpərvərlik tədbiri üzrə qəbul etdiyiniz işin bütün məlumatlarını yoxlayın və vaxtında məkanda olun.';
+
+      for (final testCase in const [
+        (size: Size(320, 568), scale: 1.3),
+        (size: Size(390, 844), scale: 1.0),
+        (size: Size(768, 1024), scale: 1.0),
+        (size: Size(1024, 768), scale: 1.0),
+        (size: Size(844, 390), scale: 1.0),
+      ]) {
+        tester.view.physicalSize = testCase.size;
+        await tester.pumpWidget(
+          _testApp(
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final status in const [
+                  'assigned',
+                  'accepted',
+                  'completed',
+                ]) ...[
+                  AssignmentCard(
+                    assignment: _assignment(status: status, id: status),
+                    onTap: () {},
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                NotificationCard(
+                  notification: NotificationItem(
+                    id: 'notification-1',
+                    type: 'job_assigned',
+                    channel: 'in_app',
+                    title: notificationTitle,
+                    body: notificationBody,
+                    metadata: const {},
+                    readAt: DateTime(2026, 10, 7),
+                    createdAt: DateTime(2026, 10, 7, 10, 30),
+                  ),
+                  title: notificationTitle,
+                  body: notificationBody,
+                  onTap: () {},
+                ),
+              ],
+            ),
+            textScaler: TextScaler.linear(testCase.scale),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 450));
+
+        expect(find.text(_longOrderTitle), findsNWidgets(3));
+        expect(find.text(_longRole), findsNWidgets(3));
+        expect(find.text(_longCompany), findsNWidgets(3));
+        expect(find.text(_longLocation), findsNWidgets(3));
+        expect(find.text(notificationTitle), findsOneWidget);
+        expect(find.text(notificationBody), findsOneWidget);
+        expect(find.text(AppStrings.statusLabel('accepted')), findsOneWidget);
+        expect(find.text(AppStrings.statusLabel('completed')), findsOneWidget);
+
+        for (final value in const [
+          _longOrderTitle,
+          _longRole,
+          _longCompany,
+          _longLocation,
+          notificationTitle,
+          notificationBody,
+        ]) {
+          for (final element in find.text(value).evaluate()) {
+            final text = element.widget as Text;
+            expect(text.overflow, isNull, reason: '$value ${testCase.size}');
+          }
+        }
+        expect(tester.takeException(), isNull, reason: '${testCase.size}');
+      }
+    },
+  );
 }
 
 Widget _testApp(
@@ -543,6 +740,52 @@ Widget _testApp(
 }
 
 Future<void> _noopAsync() async {}
+
+const _longWorkerName = 'Ülviyyə Məmmədova Əli qızı';
+const _longOrderTitle =
+    'Tədbir — Beynəlxalq qonaqpərvərlik və Azərbaycan mətbəxi təqdimatı';
+const _longRole =
+    'Baş qonaq münasibətləri və çoxşaxəli banket əməliyyatları koordinatoru';
+const _longCompany =
+    'Azərbaycan Qonaqpərvərlik və Tədbirlərin İdarə Edilməsi Mərkəzi';
+const _longLocation =
+    'Bakı şəhəri, Səbail rayonu, Neftçilər prospekti, əsas tədbir zalı';
+
+Assignment _assignment({required String status, String id = 'assignment-1'}) {
+  return Assignment(
+    id: id,
+    orderId: 'order-1',
+    workerId: 'worker-1',
+    category: _longRole,
+    status: status,
+    assignedAt: DateTime(2026, 10, 7, 9),
+    updatedAt: DateTime(2026, 10, 7, 9),
+    order: AssignmentOrder(
+      id: 'order-1',
+      title: _longOrderTitle,
+      category: _longRole,
+      status: status == 'completed' ? 'completed' : 'published',
+      requiredCount: 4,
+      startDatetime: DateTime(2026, 10, 8, 18, 30),
+      endDatetime: DateTime(2026, 10, 8, 23, 30),
+      location: _longLocation,
+      company: const AssignmentCompany(
+        id: 'company-1',
+        name: _longCompany,
+        status: 'approved',
+        phone: '+994702315151',
+      ),
+    ),
+    worker: const AssignmentWorker(
+      id: 'worker-1',
+      name: _longWorkerName,
+      phone: '+994501112233',
+      status: 'approved',
+      availability: true,
+      position: _longRole,
+    ),
+  );
+}
 
 WorkerMe _worker({
   String name = 'Rəna Əliyeva',

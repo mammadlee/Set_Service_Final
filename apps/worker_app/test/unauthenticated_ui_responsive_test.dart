@@ -102,6 +102,49 @@ void main() {
     }
   });
 
+  testWidgets('worker auth flow remains scrollable in landscape and tablets', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final screens = <String, Widget Function()>{
+      'worker login': () => const LoginScreen(),
+      'worker registration': () => const RegisterScreen(),
+      'worker otp': () => const OtpScreen(),
+      'worker password': () => const PasswordScreen(),
+      'worker pending': () => const PendingApprovalScreen(),
+      'worker blocked': () => const AccountBlockedScreen(),
+    };
+
+    for (final entry in screens.entries) {
+      for (final size in const [
+        Size(844, 390),
+        Size(768, 1024),
+        Size(1024, 768),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(fixture.wrap(entry.value()));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byType(Scrollable),
+          findsWidgets,
+          reason: '${entry.key} $size',
+        );
+        final position = tester
+            .state<ScrollableState>(find.byType(Scrollable).first)
+            .position;
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: '${entry.key} $size');
+      }
+    }
+  });
+
   testWidgets('worker registration preserves the complete field hierarchy', (
     tester,
   ) async {
@@ -210,56 +253,126 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('in-app account deletion remains visible on narrow iOS-sized UI', (
+  testWidgets(
+    'in-app account deletion remains visible on narrow iOS-sized UI',
+    (tester) async {
+      final fixture = _UiFixture();
+      addTearDown(fixture.dispose);
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        fixture.wrap(const CompanyAccountPrivacyScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Müəssisə hesabını sil'), findsOneWidget);
+      expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<RoleSessionController>.value(
+              value: fixture.roleSession,
+            ),
+            ChangeNotifierProvider<AuthController>.value(
+              value: fixture.workerAuth,
+            ),
+            ChangeNotifierProvider<CompanyAuthController>.value(
+              value: fixture.companyAuth,
+            ),
+            Provider<TaxonomyRepository>.value(
+              value: TaxonomyRepository(apiClient: fixture.workerClient),
+            ),
+            Provider<WorkerRepository>.value(
+              value: WorkerRepository(apiClient: fixture.workerClient),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: const Scaffold(body: WorkerProfileScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text(AppStrings.deleteAccount),
+        320,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.deleteAccount), findsOneWidget);
+      expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('worker profile menu grows for long content across devices', (
     tester,
   ) async {
     final fixture = _UiFixture();
     addTearDown(fixture.dispose);
-    tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(fixture.wrap(const CompanyAccountPrivacyScreen()));
-    await tester.pumpAndSettle();
-    expect(find.text('Müəssisə hesabını sil'), findsOneWidget);
-    expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
-
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider<RoleSessionController>.value(
-            value: fixture.roleSession,
+    for (final size in const [
+      Size(320, 568),
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1024, 768),
+      Size(844, 390),
+    ]) {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<RoleSessionController>.value(
+              value: fixture.roleSession,
+            ),
+            ChangeNotifierProvider<AuthController>.value(
+              value: fixture.workerAuth,
+            ),
+            Provider<TaxonomyRepository>.value(
+              value: TaxonomyRepository(apiClient: fixture.workerClient),
+            ),
+            Provider<WorkerRepository>.value(
+              value: WorkerRepository(apiClient: fixture.workerClient),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: Scaffold(
+              body: WorkerProfileScreen(key: ValueKey('profile-$size')),
+            ),
           ),
-          ChangeNotifierProvider<AuthController>.value(
-            value: fixture.workerAuth,
-          ),
-          ChangeNotifierProvider<CompanyAuthController>.value(
-            value: fixture.companyAuth,
-          ),
-          Provider<TaxonomyRepository>.value(
-            value: TaxonomyRepository(apiClient: fixture.workerClient),
-          ),
-          Provider<WorkerRepository>.value(
-            value: WorkerRepository(apiClient: fixture.workerClient),
-          ),
-        ],
-        child: MaterialApp(
-          theme: AppTheme.light(),
-          home: const Scaffold(body: WorkerProfileScreen()),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text(AppStrings.deleteAccount),
-      320,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.pumpAndSettle();
-    expect(find.text(AppStrings.deleteAccount), findsOneWidget);
-    expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(_responsiveWorkerName), findsOneWidget, reason: '$size');
+      expect(
+        find.text(_responsiveWorkerPosition),
+        findsOneWidget,
+        reason: '$size',
+      );
+      expect(
+        find.text(
+          'Qonaq xidmətlərinin əməliyyat idarəetməsi · Beynəlxalq tədbirlər və banket xidməti',
+        ),
+        findsOneWidget,
+        reason: '$size',
+      );
+      await tester.scrollUntilVisible(
+        find.text(AppStrings.deleteAccount),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pump();
+      expect(find.text(AppStrings.deleteAccount), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '$size');
+    }
   });
 }
 
@@ -341,6 +454,9 @@ class _UiFixture {
     dio.httpClientAdapter = _CallbackAdapter((options) async {
       if (options.path == '/taxonomy') {
         return _jsonResponse(200, _taxonomyResponse);
+      }
+      if (role == 'worker' && options.path == '/workers/me') {
+        return _jsonResponse(200, _responsiveWorkerResponse);
       }
       return _jsonResponse(200, <String, dynamic>{});
     });
@@ -448,4 +564,44 @@ const _taxonomyResponse = <String, dynamic>{
       ],
     },
   ],
+};
+
+const _responsiveWorkerName = 'Ülviyyə Məmmədova Əli qızı';
+const _responsiveWorkerPosition =
+    'Baş qonaq münasibətləri və çoxşaxəli banket əməliyyatları koordinatoru';
+
+const _responsiveWorkerResponse = <String, dynamic>{
+  'id': 'worker-responsive',
+  'name': _responsiveWorkerName,
+  'phone': '+994702315151',
+  'position': _responsiveWorkerPosition,
+  'position_ids': ['position-responsive'],
+  'positions': [
+    {
+      'id': 'position-responsive',
+      'name_az': _responsiveWorkerPosition,
+      'department': {
+        'id': 'department-responsive',
+        'name_az': 'Qonaq xidmətlərinin əməliyyat idarəetməsi',
+      },
+      'subdepartment': {
+        'id': 'subdepartment-responsive',
+        'name_az': 'Beynəlxalq tədbirlər və banket xidməti',
+      },
+    },
+  ],
+  'email': 'ulviyye@example.test',
+  'email_verified': true,
+  'email_verified_at': '2026-10-07T08:00:00.000Z',
+  'skills': ['Qonaqlarla peşəkar ünsiyyət'],
+  'languages': ['Azərbaycan dili', 'İngilis dili'],
+  'documents': <Object>[],
+  'work_history': <Object>[],
+  'gender': 'female',
+  'whatsapp_available': true,
+  'status': 'approved',
+  'availability': true,
+  'worker_class': 'A',
+  'rating_avg': 4.9,
+  'rating_count': 12,
 };

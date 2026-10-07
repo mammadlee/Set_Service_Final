@@ -46,31 +46,34 @@ class _AdminReportsTabState extends State<_AdminReportsTab> {
     return _AsyncView<_AdminDashboardData>(
       future: _future,
       onRetry: _refresh,
-      builder: (data) => RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const _AdminReportsHero(),
-            const SizedBox(height: 16),
-            _AdminReportSummaryCard(summary: data.summary),
-            const SizedBox(height: 12),
-            _WorkerReportPanel(
-              workers: data.workers,
-              selectedWorkerId: _selectedWorkerId,
-              startDate: _startDate,
-              endDate: _endDate,
-              detail: data.summary.reports.workerDetail,
-              onWorkerChanged: (value) {
-                setState(() {
-                  _selectedWorkerId = value;
-                  _future = _load();
-                });
-              },
-              onPickStart: () => _pickDate(isStart: true),
-              onPickEnd: () => _pickDate(isStart: false),
-            ),
-          ],
+      builder: (data) => AdminPageFrame(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            children: [
+              const _AdminReportsHero(),
+              const SizedBox(height: 16),
+              _AdminReportSummaryCard(summary: data.summary),
+              const SizedBox(height: 12),
+              _WorkerReportPanel(
+                workers: data.workers,
+                selectedWorkerId: _selectedWorkerId,
+                startDate: _startDate,
+                endDate: _endDate,
+                detail: data.summary.reports.workerDetail,
+                onWorkerChanged: (value) {
+                  setState(() {
+                    _selectedWorkerId = value;
+                    _future = _load();
+                  });
+                },
+                onPickStart: () => _pickDate(isStart: true),
+                onPickEnd: () => _pickDate(isStart: false),
+              ),
+            ],
+          ),
         ),
       ),
     );

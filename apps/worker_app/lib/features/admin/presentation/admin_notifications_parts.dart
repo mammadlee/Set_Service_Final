@@ -35,21 +35,24 @@ class _AdminNotificationsTabState extends State<_AdminNotificationsTab> {
             onAction: _refresh,
           );
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) {
-              final item = page.data[index];
-              return NotificationCard(
-                notification: item,
-                title: _notificationTitle(item),
-                body: _notificationBody(item),
-                onTap: () => _openNotification(item),
-              );
-            },
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, index) {
+                final item = page.data[index];
+                return NotificationCard(
+                  notification: item,
+                  title: _notificationTitle(item),
+                  body: _notificationBody(item),
+                  onTap: () => _openNotification(item),
+                );
+              },
+            ),
           ),
         );
       },

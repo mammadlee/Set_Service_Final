@@ -39,46 +39,49 @@ class _AdminAssignmentsTabState extends State<_AdminAssignmentsTab> {
               onAction: _refresh,
             );
           }
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    ChoiceChip(
-                      label: const Text(AppStrings.allJobs),
-                      selected: _filter == _AdminAssignmentFilter.all,
-                      onSelected: (_) => setState(
-                        () => _filter = _AdminAssignmentFilter.all,
+          return AdminPageFrame(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 104),
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text(AppStrings.allJobs),
+                        selected: _filter == _AdminAssignmentFilter.all,
+                        onSelected: (_) => setState(
+                          () => _filter = _AdminAssignmentFilter.all,
+                        ),
                       ),
-                    ),
-                    ChoiceChip(
-                      label: const Text(AppStrings.assignmentHistory),
-                      selected: _filter == _AdminAssignmentFilter.history,
-                      onSelected: (_) => setState(
-                        () => _filter = _AdminAssignmentFilter.history,
+                      ChoiceChip(
+                        label: const Text(AppStrings.assignmentHistory),
+                        selected: _filter == _AdminAssignmentFilter.history,
+                        onSelected: (_) => setState(
+                          () => _filter = _AdminAssignmentFilter.history,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (assignments.isEmpty)
-                  const InlineMessage(message: AppStrings.noAssignments)
-                else
-                  ...assignments.map(
-                    (assignment) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _AssignmentCard(
-                        assignment,
-                        canManageAssignments: canManageAssignments,
-                        onChanged: _refresh,
-                      ),
-                    ),
+                    ],
                   ),
-              ],
+                  const SizedBox(height: 12),
+                  if (assignments.isEmpty)
+                    const InlineMessage(message: AppStrings.noAssignments)
+                  else
+                    ...assignments.map(
+                      (assignment) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _AssignmentCard(
+                          assignment,
+                          canManageAssignments: canManageAssignments,
+                          onChanged: _refresh,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           );
         },
@@ -175,6 +178,9 @@ class _CreateAssignmentScreenState extends State<_CreateAssignmentScreen> {
 
             return ConstrainedPage(
               child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.only(bottom: 24),
                 children: [
                   if (_error != null) ...[
                     InlineMessage(
@@ -385,11 +391,15 @@ Future<T?> _showAdminOptionSheet<T>({
   required String Function(T item) label,
   required IconData icon,
 }) {
+  final sheetHeight = (MediaQuery.sizeOf(context).height * 0.62)
+      .clamp(220.0, 560.0)
+      .toDouble();
   return showPremiumBottomSheet<T>(
     context: context,
     title: title,
+    contentScrollable: false,
     child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.48,
+      height: sheetHeight,
       child: items.isEmpty
           ? const InlineMessage(message: 'Seçim tapılmadı.')
           : ListView.separated(
@@ -410,7 +420,7 @@ Future<T?> _showAdminOptionSheet<T>({
                       Expanded(
                         child: Text(
                           label(item),
-                           softWrap: true,
+                          softWrap: true,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                       ),
@@ -431,11 +441,15 @@ Future<AdminWorkerProfile?> _showWorkerPickerSheet(
   BuildContext context,
   List<AdminWorkerProfile> workers,
 ) {
+  final sheetHeight = (MediaQuery.sizeOf(context).height * 0.68)
+      .clamp(240.0, 620.0)
+      .toDouble();
   return showPremiumBottomSheet<AdminWorkerProfile>(
     context: context,
     title: AppStrings.selectWorker,
+    contentScrollable: false,
     child: SizedBox(
-      height: MediaQuery.sizeOf(context).height * 0.56,
+      height: sheetHeight,
       child: ListView.separated(
         itemCount: workers.length,
         separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -528,6 +542,8 @@ Future<String?> _askReason(BuildContext context) async {
     return await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
+        scrollable: true,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         title: const Text(AppStrings.rejectionReason),
         content: TextField(
           controller: controller,
@@ -559,6 +575,8 @@ Future<bool> _confirmAction(BuildContext context, String message) async {
   final result = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
+      scrollable: true,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       title: const Text(AppStrings.confirmActionTitle),
       content: Text(message),
       actions: [
@@ -654,6 +672,8 @@ class _AssignmentCard extends StatelessWidget {
     await showDialog<void>(
       context: context,
       builder: (_) => const AlertDialog(
+        scrollable: true,
+        insetPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         title: Text('QR kiosk idarəetməsi'),
         content: Text(
           'Məkan üçün kiosk linkləri admin panelində sifarişə və ya növbəyə əsasən aktiv edilir. Mobil admin kartı işçi təyinatını idarə etmək üçün saxlanılıb.',
@@ -672,6 +692,11 @@ class _AssignmentCard extends StatelessWidget {
       await showDialog<void>(
         context: context,
         builder: (dialogContext) => AlertDialog(
+          scrollable: true,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
           title: const Text('QR ekranı'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

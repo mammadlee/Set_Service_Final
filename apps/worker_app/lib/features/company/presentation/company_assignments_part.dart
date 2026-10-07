@@ -53,21 +53,23 @@ class _CompanyAssignmentsTabState extends State<_CompanyAssignmentsTab> {
             onAction: _refresh,
           );
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: data.assignments.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) {
-              final assignment = data.assignments.data[index];
-              return _AssignmentCard(
-                assignment,
-                checkoutCompleted: data.completedAttendanceIds.contains(
-                  assignment.id,
-                ),
-              );
-            },
+        return _CompanyAdaptiveBody(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: data.assignments.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, index) {
+                final assignment = data.assignments.data[index];
+                return _AssignmentCard(
+                  assignment,
+                  checkoutCompleted: data.completedAttendanceIds.contains(
+                    assignment.id,
+                  ),
+                );
+              },
+            ),
           ),
         );
       },

@@ -370,8 +370,7 @@ class _AttendancePanelState extends State<AttendancePanel> {
                     Expanded(
                       child: Text(
                         AppStrings.checkoutConfirmTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        softWrap: true,
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),

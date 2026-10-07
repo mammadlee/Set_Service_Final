@@ -30,18 +30,21 @@ class _AdminOrdersTabState extends State<_AdminOrdersTab> {
         if (page.data.isEmpty) {
           return _EmptyState(message: AppStrings.noOrders, onAction: _refresh);
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, index) => _OrderCard(
-              order: page.data[index],
-              onTap: () => Navigator.of(context).push<void>(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      _AdminOrderDetailScreen(orderId: page.data[index].id),
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, index) => _OrderCard(
+                order: page.data[index],
+                onTap: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        _AdminOrderDetailScreen(orderId: page.data[index].id),
+                  ),
                 ),
               ),
             ),
@@ -86,86 +89,90 @@ class _AdminOrderDetailScreenState extends State<_AdminOrderDetailScreen> {
         child: _AsyncView<MobileOrder>(
           future: _future,
           onRetry: _refresh,
-          builder: (order) => RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _OrderCard(order: order),
-                const SizedBox(height: 12),
-                PremiumCard(
-                  child: Column(
-                    children: [
-                      _DetailTile(AppStrings.company, order.companyName),
-                      _DetailTile(
-                        AppStrings.status,
-                        AppStrings.statusLabel(order.status),
-                      ),
-                      _DetailTile(AppStrings.category, order.category),
-                      _DetailTile(AppStrings.location, order.location),
-                      _DetailTile(
-                        AppStrings.requiredWorkers,
-                        '${order.assignmentCount}/${order.requiredCount}',
-                      ),
-                      _DetailTile(
-                        AppStrings.starts,
-                        _dateText(order.startDatetime),
-                      ),
-                      _DetailTile(
-                        AppStrings.ends,
-                        _dateText(order.endDatetime),
-                      ),
-                      if (order.payRate != null)
-                        _DetailTile(AppStrings.payRate, '${order.payRate}'),
-                    ],
-                  ),
-                ),
-                if (order.categoryItems.isNotEmpty) ...[
+          builder: (order) => AdminPageFrame(
+            maxWidth: 760,
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _OrderCard(order: order),
                   const SizedBox(height: 12),
                   PremiumCard(
+                    child: Column(
+                      children: [
+                        _DetailTile(AppStrings.company, order.companyName),
+                        _DetailTile(
+                          AppStrings.status,
+                          AppStrings.statusLabel(order.status),
+                        ),
+                        _DetailTile(AppStrings.category, order.category),
+                        _DetailTile(AppStrings.location, order.location),
+                        _DetailTile(
+                          AppStrings.requiredWorkers,
+                          '${order.assignmentCount}/${order.requiredCount}',
+                        ),
+                        _DetailTile(
+                          AppStrings.starts,
+                          _dateText(order.startDatetime),
+                        ),
+                        _DetailTile(
+                          AppStrings.ends,
+                          _dateText(order.endDatetime),
+                        ),
+                        if (order.payRate != null)
+                          _DetailTile(AppStrings.payRate, '${order.payRate}'),
+                      ],
+                    ),
+                  ),
+                  if (order.categoryItems.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    PremiumCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            AppStrings.categoryRequirements,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          ...order.categoryItems.map(
+                            (item) => _DetailTile(
+                              item.category,
+                              '${item.assignedCount}/${item.requiredCount}',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  PremiumCard(
+                    dark: true,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          AppStrings.categoryRequirements,
-                          style: Theme.of(context).textTheme.titleMedium,
+                          AppStrings.description,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                color: BrandColors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
                         ),
                         const SizedBox(height: 8),
-                        ...order.categoryItems.map(
-                          (item) => _DetailTile(
-                            item.category,
-                            '${item.assignedCount}/${item.requiredCount}',
-                          ),
+                        Text(
+                          order.description.isEmpty
+                              ? AppStrings.noData
+                              : order.description,
+                          style: const TextStyle(color: BrandColors.white),
                         ),
                       ],
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                PremiumCard(
-                  dark: true,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        AppStrings.description,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: BrandColors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        order.description.isEmpty
-                            ? AppStrings.noData
-                            : order.description,
-                        style: const TextStyle(color: BrandColors.white),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -211,61 +218,66 @@ class _AdminWorkerDetailScreenState extends State<_AdminWorkerDetailScreen> {
       body: _AsyncView<AdminWorkerProfile>(
         future: _future,
         onRetry: _refresh,
-        builder: (worker) => RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              PremiumHeroPanel(
-                title: worker.name,
-                subtitle: worker.position.isEmpty
-                    ? AppStrings.worker
-                    : worker.position,
-                compact: true,
-                wrapFullText: true,
-                children: [
-                  StatusPill(status: worker.status),
-                  PremiumChip(
-                    label: worker.workerClass ?? AppStrings.classNotSelected,
-                    icon: Icons.workspace_premium_outlined,
-                    dark: true,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (canManageWorkers) ...[
-                PremiumCard(
-                  child: _WorkerClassEditor(
-                    worker: worker,
-                    onUpdated: (updated) async {
-                      if (!mounted) return;
-                      setState(
-                        () =>
-                            _future = Future<AdminWorkerProfile>.value(updated),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              PremiumCard(
-                child: Column(
+        builder: (worker) => AdminPageFrame(
+          maxWidth: 760,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: [
+                PremiumHeroPanel(
+                  title: worker.name,
+                  subtitle: worker.position.isEmpty
+                      ? AppStrings.worker
+                      : worker.position,
+                  compact: true,
+                  wrapFullText: true,
                   children: [
-                    _DetailTile(AppStrings.phoneNumber, worker.phone),
-                    _DetailTile(
-                      AppStrings.status,
-                      AppStrings.statusLabel(worker.status),
-                    ),
-                    _DetailTile(
-                      AppStrings.available,
-                      worker.availability
-                          ? AppStrings.available
-                          : AppStrings.unavailable,
+                    StatusPill(status: worker.status),
+                    PremiumChip(
+                      label: worker.workerClass ?? AppStrings.classNotSelected,
+                      icon: Icons.workspace_premium_outlined,
+                      dark: true,
                     ),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                if (canManageWorkers) ...[
+                  PremiumCard(
+                    child: _WorkerClassEditor(
+                      worker: worker,
+                      onUpdated: (updated) async {
+                        if (!mounted) return;
+                        setState(
+                          () => _future = Future<AdminWorkerProfile>.value(
+                            updated,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                PremiumCard(
+                  child: Column(
+                    children: [
+                      _DetailTile(AppStrings.phoneNumber, worker.phone),
+                      _DetailTile(
+                        AppStrings.status,
+                        AppStrings.statusLabel(worker.status),
+                      ),
+                      _DetailTile(
+                        AppStrings.available,
+                        worker.availability
+                            ? AppStrings.available
+                            : AppStrings.unavailable,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -308,33 +320,37 @@ class _AdminCompanyDetailScreenState extends State<_AdminCompanyDetailScreen> {
       body: _AsyncView<AdminCompanyProfile>(
         future: _future,
         onRetry: _refresh,
-        builder: (company) => RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              PremiumHeroPanel(
-                title: company.name,
-                subtitle: company.contactName.isEmpty
-                    ? AppStrings.company
-                    : company.contactName,
-                compact: true,
-                wrapFullText: true,
-                children: [StatusPill(status: company.status)],
-              ),
-              const SizedBox(height: 12),
-              PremiumCard(
-                child: Column(
-                  children: [
-                    _DetailTile(AppStrings.phoneNumber, company.phone),
-                    _DetailTile(
-                      AppStrings.status,
-                      AppStrings.statusLabel(company.status),
-                    ),
-                  ],
+        builder: (company) => AdminPageFrame(
+          maxWidth: 760,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: [
+                PremiumHeroPanel(
+                  title: company.name,
+                  subtitle: company.contactName.isEmpty
+                      ? AppStrings.company
+                      : company.contactName,
+                  compact: true,
+                  wrapFullText: true,
+                  children: [StatusPill(status: company.status)],
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                PremiumCard(
+                  child: Column(
+                    children: [
+                      _DetailTile(AppStrings.phoneNumber, company.phone),
+                      _DetailTile(
+                        AppStrings.status,
+                        AppStrings.statusLabel(company.status),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

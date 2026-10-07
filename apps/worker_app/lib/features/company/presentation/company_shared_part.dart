@@ -1,5 +1,62 @@
 part of 'company_home_shell.dart';
 
+class _CompanyAdaptiveBody extends StatelessWidget {
+  const _CompanyAdaptiveBody({
+    required this.child,
+    this.maxWidth = 920,
+    this.padding = EdgeInsets.zero,
+    this.showBackdrop = false,
+  });
+
+  final Widget child;
+  final double maxWidth;
+  final EdgeInsetsGeometry padding;
+  final bool showBackdrop;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final resolved = padding.resolve(Directionality.of(context));
+          final compact = constraints.maxWidth < 380;
+          final adaptivePadding = EdgeInsets.fromLTRB(
+            compact
+                ? resolved.left.clamp(12.0, 16.0).toDouble()
+                : resolved.left,
+            resolved.top,
+            compact
+                ? resolved.right.clamp(12.0, 16.0).toDouble()
+                : resolved.right,
+            resolved.bottom,
+          );
+
+          return Stack(
+            children: [
+              if (showBackdrop)
+                const Positioned.fill(
+                  child: IgnorePointer(child: LuxuryHotelBackdrop()),
+                ),
+              Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxWidth),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: constraints.maxHeight,
+                    child: Padding(padding: adaptivePadding, child: child),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _AsyncView<T> extends StatelessWidget {
   const _AsyncView({
     required this.future,
@@ -55,18 +112,30 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedPage(
-      child: PremiumEmptyState(
-        title: AppStrings.elegantEmptyTitle,
-        message: message,
-        icon: Icons.inbox_outlined,
-        action: onAction == null
-            ? null
-            : OutlinedButton.icon(
-                onPressed: onAction,
-                icon: const Icon(Icons.refresh),
-                label: const Text(AppStrings.tryAgain),
+    return _CompanyAdaptiveBody(
+      maxWidth: 560,
+      padding: const EdgeInsets.all(20),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: PremiumEmptyState(
+                title: AppStrings.elegantEmptyTitle,
+                message: message,
+                icon: Icons.inbox_outlined,
+                action: onAction == null
+                    ? null
+                    : OutlinedButton.icon(
+                        onPressed: onAction,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text(AppStrings.tryAgain),
+                      ),
               ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -79,34 +148,46 @@ class _ActivityEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ConstrainedPage(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.person_off_outlined,
-            size: 82,
-            color: BrandColors.accentGold,
-          ),
-          const SizedBox(height: 28),
-          Text(
-            'Hələ məlumat yoxdur',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.displaySmall?.copyWith(
-              color: BrandColors.darkText,
-              fontWeight: FontWeight.w800,
+    return _CompanyAdaptiveBody(
+      maxWidth: 560,
+      padding: const EdgeInsets.all(20),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.person_off_outlined,
+                    size: 82,
+                    color: BrandColors.accentGold,
+                  ),
+                  const SizedBox(height: 28),
+                  Text(
+                    'Hələ məlumat yoxdur',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                      color: BrandColors.darkText,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onRetry,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Yenidən cəhd et'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 28),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Yenidən cəhd et'),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

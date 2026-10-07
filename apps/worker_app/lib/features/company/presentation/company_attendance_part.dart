@@ -32,13 +32,16 @@ class _CompanyAttendanceTabState extends State<_CompanyAttendanceTab> {
         if (page.data.isEmpty) {
           return _ActivityEmptyState(onRetry: _refresh);
         }
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: page.data.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) => _AttendanceCard(page.data[index]),
+        return _CompanyAdaptiveBody(
+          maxWidth: 760,
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: page.data.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, index) => _AttendanceCard(page.data[index]),
+            ),
           ),
         );
       },

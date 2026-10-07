@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/network/api_exception.dart';
@@ -205,8 +206,6 @@ class WorkerIdentityCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           displayName,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(
                                 color: BrandColors.white,
@@ -217,8 +216,6 @@ class WorkerIdentityCard extends StatelessWidget {
                         const SizedBox(height: 5),
                         Text(
                           position,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.bodyMedium
                               ?.copyWith(
                                 color: BrandColors.accentGold,
@@ -293,8 +290,7 @@ class _IdentityFact extends StatelessWidget {
           Flexible(
             child: Text(
               label,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
               style: const TextStyle(
                 color: BrandColors.white,
                 fontWeight: FontWeight.w600,
@@ -345,7 +341,7 @@ class _SummaryGrid extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth < 280) {
+        if (constraints.maxWidth < 320) {
           return Column(
             children: [
               newJobs,
@@ -451,8 +447,7 @@ class _StatLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       label,
-      maxLines: 3,
-      overflow: TextOverflow.ellipsis,
+      softWrap: true,
       style: Theme.of(context).textTheme.titleSmall?.copyWith(
         color: BrandColors.darkText,
         fontWeight: FontWeight.w700,
@@ -486,6 +481,7 @@ class _NextJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dateFormat = DateFormat('dd.MM.yyyy, HH:mm');
     final active =
         assignments
             .where(
@@ -515,7 +511,7 @@ class _NextJobCard extends StatelessWidget {
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final narrow = constraints.maxWidth < 300;
+              final narrow = constraints.maxWidth < 360;
               final title = Text(
                 'Gələcək iş',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -544,42 +540,74 @@ class _NextJobCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            next.order.company.name,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
+            next.order.title.trim().isEmpty ? 'Sifariş' : next.order.title,
+            softWrap: true,
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
               color: BrandColors.darkText,
               fontWeight: FontWeight.w800,
+              height: 1.15,
             ),
           ),
           const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.room_service_outlined,
-                  color: BrandColors.primaryBurgundy,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  next.category.isNotEmpty
-                      ? next.category
-                      : next.order.category,
-                  softWrap: true,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: BrandColors.primaryBurgundy,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+          _NextJobMetaRow(
+            icon: Icons.room_service_outlined,
+            text: next.category.isNotEmpty
+                ? next.category
+                : next.order.category,
           ),
+          const SizedBox(height: 8),
+          _NextJobMetaRow(
+            icon: Icons.business_outlined,
+            text: next.order.company.name,
+          ),
+          if (next.order.location.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _NextJobMetaRow(
+              icon: Icons.place_outlined,
+              text: next.order.location,
+            ),
+          ],
+          if (next.order.startDatetime != null) ...[
+            const SizedBox(height: 8),
+            _NextJobMetaRow(
+              icon: Icons.schedule_outlined,
+              text: dateFormat.format(next.order.startDatetime!),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _NextJobMetaRow extends StatelessWidget {
+  const _NextJobMetaRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 20, color: BrandColors.primaryBurgundy),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text.trim().isEmpty ? '-' : text,
+            softWrap: true,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: BrandColors.primaryBurgundy,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

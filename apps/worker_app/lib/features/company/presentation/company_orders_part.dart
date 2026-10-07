@@ -48,53 +48,37 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
         onRetry: _refresh,
         builder: (page) {
           final visibleOrders = _filterOrders(page.data);
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  child: SegmentedButton<_OrderHistoryFilter>(
-                    expandedInsets: EdgeInsets.zero,
-                    segments: const [
-                      ButtonSegment(
-                        value: _OrderHistoryFilter.active,
-                        label: Text(AppStrings.activeOrders),
-                      ),
-                      ButtonSegment(
-                        value: _OrderHistoryFilter.past,
-                        label: Text(AppStrings.pastOrders),
-                      ),
-                      ButtonSegment(
-                        value: _OrderHistoryFilter.all,
-                        label: Text(AppStrings.allOrders),
-                      ),
-                    ],
-                    selected: {_filter},
-                    onSelectionChanged: (value) => setState(() {
-                      _filter = value.first;
+          return _CompanyAdaptiveBody(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
+                children: [
+                  _OrderHistoryFilterControl(
+                    value: _filter,
+                    onChanged: (value) => setState(() {
+                      _filter = value;
                       _future = _load();
                     }),
                   ),
-                ),
-                const SizedBox(height: 12),
-                if (visibleOrders.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: InlineMessage(message: 'Hələ sifariş yoxdur.'),
-                  )
-                else
-                  ...visibleOrders.map(
-                    (order) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: _OrderCard(
-                        order: order,
-                        onTap: () => _showOrderDetail(context, order.id),
+                  const SizedBox(height: 12),
+                  if (visibleOrders.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: InlineMessage(message: 'Hələ sifariş yoxdur.'),
+                    )
+                  else
+                    ...visibleOrders.map(
+                      (order) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _OrderCard(
+                          order: order,
+                          onTap: () => _showOrderDetail(context, order.id),
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -155,6 +139,62 @@ class _CompanyOrdersTabState extends State<_CompanyOrdersTab> {
 
 enum _OrderHistoryFilter { active, past, all }
 
+class _OrderHistoryFilterControl extends StatelessWidget {
+  const _OrderHistoryFilterControl({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final _OrderHistoryFilter value;
+  final ValueChanged<_OrderHistoryFilter> onChanged;
+
+  static const _labels = <_OrderHistoryFilter, String>{
+    _OrderHistoryFilter.active: AppStrings.activeOrders,
+    _OrderHistoryFilter.past: AppStrings.pastOrders,
+    _OrderHistoryFilter.all: AppStrings.allOrders,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560) {
+          return DropdownButtonFormField<_OrderHistoryFilter>(
+            value: value,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Sifarişlərin görünüşü',
+              prefixIcon: Icon(Icons.filter_list_rounded),
+            ),
+            items: _OrderHistoryFilter.values
+                .map(
+                  (filter) => DropdownMenuItem(
+                    value: filter,
+                    child: Text(_labels[filter]!, softWrap: true),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (next) {
+              if (next != null && next != value) onChanged(next);
+            },
+          );
+        }
+        return SegmentedButton<_OrderHistoryFilter>(
+          expandedInsets: EdgeInsets.zero,
+          segments: _OrderHistoryFilter.values
+              .map(
+                (filter) =>
+                    ButtonSegment(value: filter, label: Text(_labels[filter]!)),
+              )
+              .toList(growable: false),
+          selected: {value},
+          onSelectionChanged: (next) => onChanged(next.first),
+        );
+      },
+    );
+  }
+}
+
 class _CompanyOrderDetailScreen extends StatefulWidget {
   const _CompanyOrderDetailScreen({
     required this.orderId,
@@ -211,110 +251,104 @@ class _CompanyOrderDetailScreenState extends State<_CompanyOrderDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.details)),
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: IgnorePointer(child: LuxuryHotelBackdrop()),
-          ),
-          _AsyncView<_CompanyOrderDetailData>(
-            future: _future,
-            onRetry: _refresh,
-            builder: (data) => RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
-                children: [
-                  _OrderCard(order: data.order),
-                  const SizedBox(height: 12),
-                  _CompanyOrderInformation(
-                    order: data.order,
-                    assignments: data.assignments,
-                  ),
-                  const SizedBox(height: 12),
-                  CompanyOrderQrCard(order: data.order),
-                  const SizedBox(height: 24),
-                  Text(
-                    AppStrings.assignedWorkers,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  if (data.assignments.isEmpty)
-                    const InlineMessage(message: AppStrings.noAssignments)
-                  else
-                    ...data.assignments.map(
-                      (assignment) => _AssignmentCard(
-                        assignment,
-                        checkoutCompleted: data.completedAttendanceIds.contains(
-                          assignment.id,
-                        ),
+      body: _CompanyAdaptiveBody(
+        showBackdrop: true,
+        child: _AsyncView<_CompanyOrderDetailData>(
+          future: _future,
+          onRetry: _refresh,
+          builder: (data) => RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+              children: [
+                _OrderCard(order: data.order),
+                const SizedBox(height: 12),
+                _CompanyOrderInformation(
+                  order: data.order,
+                  assignments: data.assignments,
+                ),
+                const SizedBox(height: 12),
+                CompanyOrderQrCard(order: data.order),
+                const SizedBox(height: 24),
+                Text(
+                  AppStrings.assignedWorkers,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                if (data.assignments.isEmpty)
+                  const InlineMessage(message: AppStrings.noAssignments)
+                else
+                  ...data.assignments.map(
+                    (assignment) => _AssignmentCard(
+                      assignment,
+                      checkoutCompleted: data.completedAttendanceIds.contains(
+                        assignment.id,
                       ),
                     ),
-                  const SizedBox(height: 20),
-                  if (_actionError != null) ...[
-                    InlineMessage(
-                      message: _actionError!,
-                      kind: InlineMessageKind.error,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  if (_companyOrderIsCurrent(data.order, DateTime.now()))
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _cancelling
-                            ? null
-                            : () async {
-                                final confirmed = await _confirmAction(
-                                  context,
-                                  AppStrings.cancelOrderConfirm,
-                                );
-                                if (!confirmed || !context.mounted) {
-                                  return;
-                                }
-                                final repo = context.read<CompanyRepository>();
-                                setState(() {
-                                  _cancelling = true;
-                                  _actionError = null;
-                                });
-                                try {
-                                  await repo.cancelOrder(data.order.id);
-                                  if (mounted) await _refresh();
-                                } on ApiException catch (error) {
-                                  if (mounted) {
-                                    setState(
-                                      () => _actionError = error.message,
-                                    );
-                                  }
-                                } catch (_) {
-                                  if (mounted) {
-                                    setState(
-                                      () => _actionError =
-                                          AppStrings.actionFailed,
-                                    );
-                                  }
-                                } finally {
-                                  if (mounted) {
-                                    setState(() => _cancelling = false);
-                                  }
-                                }
-                              },
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: BrandColors.error,
-                        ),
-                        icon: const Icon(Icons.cancel_outlined),
-                        label: Text(
-                          _cancelling
-                              ? AppStrings.working
-                              : AppStrings.cancelOrder,
-                        ),
-                      ),
-                    ),
+                  ),
+                const SizedBox(height: 20),
+                if (_actionError != null) ...[
+                  InlineMessage(
+                    message: _actionError!,
+                    kind: InlineMessageKind.error,
+                  ),
+                  const SizedBox(height: 12),
                 ],
-              ),
+                if (_companyOrderIsCurrent(data.order, DateTime.now()))
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _cancelling
+                          ? null
+                          : () async {
+                              final confirmed = await _confirmAction(
+                                context,
+                                AppStrings.cancelOrderConfirm,
+                              );
+                              if (!confirmed || !context.mounted) {
+                                return;
+                              }
+                              final repo = context.read<CompanyRepository>();
+                              setState(() {
+                                _cancelling = true;
+                                _actionError = null;
+                              });
+                              try {
+                                await repo.cancelOrder(data.order.id);
+                                if (mounted) await _refresh();
+                              } on ApiException catch (error) {
+                                if (mounted) {
+                                  setState(() => _actionError = error.message);
+                                }
+                              } catch (_) {
+                                if (mounted) {
+                                  setState(
+                                    () =>
+                                        _actionError = AppStrings.actionFailed,
+                                  );
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _cancelling = false);
+                                }
+                              }
+                            },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: BrandColors.error,
+                      ),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: Text(
+                        _cancelling
+                            ? AppStrings.working
+                            : AppStrings.cancelOrder,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

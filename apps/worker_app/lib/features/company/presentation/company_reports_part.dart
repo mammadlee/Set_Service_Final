@@ -48,182 +48,178 @@ class _CompanyReportsScreenState extends State<_CompanyReportsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text(AppStrings.reports)),
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: IgnorePointer(child: LuxuryHotelBackdrop()),
-          ),
-          _AsyncView<_CompanyReportsData>(
-            future: _future,
-            onRetry: _refresh,
-            builder: (data) {
-              final workers = _workerOptions(data.assignments);
-              final categories = _categoryOptions(data);
-              return RefreshIndicator(
-                onRefresh: _refresh,
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    const PremiumHeroPanel(
-                      title: AppStrings.reports,
-                      subtitle:
-                          'Hesabat yalnız müəssisənizin sifarişlərini əhatə edir.',
-                      compact: true,
+      body: _CompanyAdaptiveBody(
+        showBackdrop: true,
+        child: _AsyncView<_CompanyReportsData>(
+          future: _future,
+          onRetry: _refresh,
+          builder: (data) {
+            final workers = _workerOptions(data.assignments);
+            final categories = _categoryOptions(data);
+            return RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const PremiumHeroPanel(
+                    title: AppStrings.reports,
+                    subtitle:
+                        'Hesabat yalnız müəssisənizin sifarişlərini əhatə edir.',
+                    compact: true,
+                    children: [
+                      PremiumChip(
+                        label: 'Telefon və e-poçt məlumatları göstərilmir',
+                        icon: Icons.privacy_tip_outlined,
+                        dark: true,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  PremiumCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        PremiumChip(
-                          label: 'Telefon və e-poçt məlumatları göstərilmir',
-                          icon: Icons.privacy_tip_outlined,
-                          dark: true,
+                        Text(
+                          'Filtrlər',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          itemHeight: null,
+                          value: _workerId,
+                          decoration: const InputDecoration(
+                            labelText: AppStrings.worker,
+                            prefixIcon: Icon(Icons.person_search_outlined),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: null,
+                              child: Text('Bütün işçilər'),
+                            ),
+                            ...workers.map(
+                              (worker) => DropdownMenuItem(
+                                value: worker.id,
+                                child: Text(worker.name, softWrap: true),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _workerId = value;
+                            _future = _load();
+                          }),
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          isExpanded: true,
+                          itemHeight: null,
+                          value: _category,
+                          decoration: const InputDecoration(
+                            labelText: AppStrings.category,
+                            prefixIcon: Icon(Icons.room_service_outlined),
+                          ),
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: null,
+                              child: Text('Bütün vəzifələr'),
+                            ),
+                            ...categories.map(
+                              (category) => DropdownMenuItem(
+                                value: category,
+                                child: Text(category, softWrap: true),
+                              ),
+                            ),
+                          ],
+                          onChanged: (value) => setState(() {
+                            _category = value;
+                            _future = _load();
+                          }),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _pickDate(isStart: true),
+                              icon: const Icon(Icons.date_range_outlined),
+                              label: Text(
+                                _startDate == null
+                                    ? 'Başlama tarixi'
+                                    : _dateLabel(_startDate!),
+                              ),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => _pickDate(isStart: false),
+                              icon: const Icon(Icons.event_outlined),
+                              label: Text(
+                                _endDate == null
+                                    ? 'Bitmə tarixi'
+                                    : _dateLabel(_endDate!),
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: _clearFilters,
+                              icon: const Icon(Icons.clear_all_outlined),
+                              label: const Text('Təmizlə'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    PremiumCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Filtrlər',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            isExpanded: true,
-                            itemHeight: null,
-                            value: _workerId,
-                            decoration: const InputDecoration(
-                              labelText: AppStrings.worker,
-                              prefixIcon: Icon(Icons.person_search_outlined),
-                            ),
-                            items: [
-                              const DropdownMenuItem<String>(
-                                value: null,
-                                child: Text('Bütün işçilər'),
-                              ),
-                              ...workers.map(
-                                (worker) => DropdownMenuItem(
-                                  value: worker.id,
-                                  child: Text(worker.name, softWrap: true),
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) => setState(() {
-                              _workerId = value;
-                              _future = _load();
-                            }),
-                          ),
-                          const SizedBox(height: 10),
-                          DropdownButtonFormField<String>(
-                            isExpanded: true,
-                            itemHeight: null,
-                            value: _category,
-                            decoration: const InputDecoration(
-                              labelText: AppStrings.category,
-                              prefixIcon: Icon(Icons.room_service_outlined),
-                            ),
-                            items: [
-                              const DropdownMenuItem<String>(
-                                value: null,
-                                child: Text('Bütün vəzifələr'),
-                              ),
-                              ...categories.map(
-                                (category) => DropdownMenuItem(
-                                  value: category,
-                                  child: Text(category, softWrap: true),
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) => setState(() {
-                              _category = value;
-                              _future = _load();
-                            }),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: () => _pickDate(isStart: true),
-                                icon: const Icon(Icons.date_range_outlined),
-                                label: Text(
-                                  _startDate == null
-                                      ? 'Başlama tarixi'
-                                      : _dateLabel(_startDate!),
-                                ),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed: () => _pickDate(isStart: false),
-                                icon: const Icon(Icons.event_outlined),
-                                label: Text(
-                                  _endDate == null
-                                      ? 'Bitmə tarixi'
-                                      : _dateLabel(_endDate!),
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed: _clearFilters,
-                                icon: const Icon(Icons.clear_all_outlined),
-                                label: const Text('Təmizlə'),
-                              ),
-                            ],
-                          ),
-                        ],
+                  ),
+                  const SizedBox(height: 14),
+                  _SummaryGrid(
+                    items: [
+                      _SummaryItem(
+                        'Çağırılan işçi',
+                        data.report.dashboard.activeAssignments,
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    _SummaryGrid(
-                      items: [
-                        _SummaryItem(
-                          'Çağırılan işçi',
-                          data.report.dashboard.activeAssignments,
+                      _SummaryItem(
+                        'Giriş edən işçilər',
+                        data.report.reports.attendance.totalCount,
+                      ),
+                      _SummaryItem(
+                        'Çıxış edən işçilər',
+                        data.report.reports.attendance.completedCount,
+                      ),
+                      _SummaryItem(
+                        'Orta reytinq',
+                        data.report.reports.ratingStats.average.round(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  PremiumCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Göndərilən işçilər',
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
-                        _SummaryItem(
-                          'Giriş edən işçilər',
-                          data.report.reports.attendance.totalCount,
-                        ),
-                        _SummaryItem(
-                          'Çıxış edən işçilər',
-                          data.report.reports.attendance.completedCount,
-                        ),
-                        _SummaryItem(
-                          'Orta reytinq',
-                          data.report.reports.ratingStats.average.round(),
-                        ),
+                        const SizedBox(height: 8),
+                        if (workers.isEmpty)
+                          const Text(AppStrings.noData)
+                        else
+                          ...workers
+                              .take(8)
+                              .map(
+                                (worker) => ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: const Icon(Icons.badge_outlined),
+                                  title: Text(worker.name),
+                                  subtitle: Text(worker.position),
+                                ),
+                              ),
                       ],
                     ),
-                    const SizedBox(height: 14),
-                    PremiumCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Göndərilən işçilər',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8),
-                          if (workers.isEmpty)
-                            const Text(AppStrings.noData)
-                          else
-                            ...workers
-                                .take(8)
-                                .map(
-                                  (worker) => ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    leading: const Icon(Icons.badge_outlined),
-                                    title: Text(worker.name),
-                                    subtitle: Text(worker.position),
-                                  ),
-                                ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

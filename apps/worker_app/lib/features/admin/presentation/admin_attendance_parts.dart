@@ -31,42 +31,44 @@ class _AdminAttendanceTabState extends State<_AdminAttendanceTab> {
         final attendance = _filter == _AdminAttendanceFilter.today
             ? page.data.where(_isTodayAttendance).toList()
             : page.data;
-        return RefreshIndicator(
-          onRefresh: _refresh,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ChoiceChip(
-                    label: const Text(AppStrings.todayAttendance),
-                    selected: _filter == _AdminAttendanceFilter.today,
-                    onSelected: (_) => setState(
-                      () => _filter = _AdminAttendanceFilter.today,
+        return AdminPageFrame(
+          child: RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text(AppStrings.todayAttendance),
+                      selected: _filter == _AdminAttendanceFilter.today,
+                      onSelected: (_) => setState(
+                        () => _filter = _AdminAttendanceFilter.today,
+                      ),
                     ),
-                  ),
-                  ChoiceChip(
-                    label: const Text(AppStrings.allAttendance),
-                    selected: _filter == _AdminAttendanceFilter.all,
-                    onSelected: (_) => setState(
-                      () => _filter = _AdminAttendanceFilter.all,
+                    ChoiceChip(
+                      label: const Text(AppStrings.allAttendance),
+                      selected: _filter == _AdminAttendanceFilter.all,
+                      onSelected: (_) =>
+                          setState(() => _filter = _AdminAttendanceFilter.all),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (attendance.isEmpty)
-                const InlineMessage(message: AppStrings.noAttendance)
-              else
-                ...attendance.map(
-                  (item) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _AttendanceCard(item),
-                  ),
+                  ],
                 ),
-            ],
+                const SizedBox(height: 12),
+                if (attendance.isEmpty)
+                  const InlineMessage(message: AppStrings.noAttendance)
+                else
+                  ...attendance.map(
+                    (item) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _AttendanceCard(item),
+                    ),
+                  ),
+              ],
+            ),
           ),
         );
       },

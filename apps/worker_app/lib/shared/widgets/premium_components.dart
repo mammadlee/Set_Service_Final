@@ -54,7 +54,7 @@ class Premium3DCard extends StatelessWidget {
     final content = AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      padding: padding,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: borderRadius,
         color: dark ? BrandColors.primaryBurgundy : BrandColors.cardCream,
@@ -66,9 +66,7 @@ class Premium3DCard extends StatelessWidget {
       ),
       child: Material(
         type: MaterialType.transparency,
-        borderRadius: borderRadius,
-        clipBehavior: Clip.antiAlias,
-        child: child,
+        child: Padding(padding: padding, child: child),
       ),
     );
 
@@ -452,8 +450,7 @@ class PremiumStatCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: BrandColors.mutedBrown,
               fontWeight: FontWeight.w600,
@@ -1087,8 +1084,7 @@ class PremiumChip extends StatelessWidget {
           Flexible(
             child: Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
               style: TextStyle(
                 color: fg,
                 fontWeight: FontWeight.w600,
@@ -1173,9 +1169,7 @@ class PremiumSelectableChip extends StatelessWidget {
                   Flexible(
                     child: Text(
                       label,
-                      maxLines: 3,
                       softWrap: true,
-                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: foreground,
                         fontWeight: FontWeight.w600,

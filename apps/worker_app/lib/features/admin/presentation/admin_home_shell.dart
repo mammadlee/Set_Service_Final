@@ -245,9 +245,15 @@ class _AdminDrawer extends StatelessWidget {
     final visibleIndexes = allowedIndexes
         .where((index) => index >= 0 && index < items.length)
         .toList(growable: false);
+    final media = MediaQuery.of(context);
+    final drawerWidth = (media.size.width * 0.86)
+        .clamp(280.0, 380.0)
+        .toDouble();
+    final shortViewport = media.size.height < 500;
+    final headerHeight = media.padding.top + (shortViewport ? 116 : 146);
 
     return Drawer(
-      width: MediaQuery.sizeOf(context).width * 0.79,
+      width: drawerWidth,
       backgroundColor: BrandColors.cardCream,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.horizontal(right: Radius.circular(28)),
@@ -258,14 +264,14 @@ class _AdminDrawer extends StatelessWidget {
           children: [
             Container(
               width: double.infinity,
-              height: 170,
-              padding: const EdgeInsets.fromLTRB(18, 36, 18, 18),
+              height: headerHeight,
+              padding: EdgeInsets.fromLTRB(18, media.padding.top + 14, 18, 16),
               color: BrandColors.primaryBurgundy,
               child: Stack(
                 children: [
                   Positioned(
                     left: -4,
-                    top: 34,
+                    top: shortViewport ? 4 : 24,
                     right: -38,
                     child: Opacity(
                       opacity: 0.34,

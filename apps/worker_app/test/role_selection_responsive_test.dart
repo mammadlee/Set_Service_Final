@@ -239,4 +239,58 @@ void main() {
     expect(find.byType(RoleSelectionScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'contact footer stays below role actions in phone and tablet landscape',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      for (final size in const [
+        Size(568, 320),
+        Size(844, 390),
+        Size(1024, 768),
+        Size(768, 1024),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.light(),
+            home: const RoleSelectionScreen(),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final companyAction = find.bySemanticsLabel(
+          AppStrings.continueAsCompany,
+        );
+        final footer = find.byKey(
+          const ValueKey('role-selection-contact-footer'),
+        );
+        expect(companyAction, findsOneWidget, reason: '$size');
+        expect(footer, findsOneWidget, reason: '$size');
+        expect(
+          tester.getRect(companyAction).bottom,
+          lessThanOrEqualTo(tester.getRect(footer).top + 0.1),
+          reason: '$size',
+        );
+        for (final key in const [
+          'contact-website',
+          'contact-facebook',
+          'contact-instagram',
+          'contact-phone',
+        ]) {
+          final target = find.byKey(ValueKey(key));
+          expect(
+            tester.getSize(target).height,
+            greaterThanOrEqualTo(44),
+            reason: '$key $size',
+          );
+        }
+        expect(find.byType(Scrollable), findsNothing, reason: '$size');
+        expect(tester.takeException(), isNull, reason: '$size');
+      }
+    },
+  );
 }

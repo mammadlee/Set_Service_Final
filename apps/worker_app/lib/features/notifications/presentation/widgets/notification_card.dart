@@ -41,8 +41,7 @@ class NotificationCard extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     color: Colors.black,
                     fontWeight: FontWeight.w700,
@@ -51,8 +50,7 @@ class NotificationCard extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   body,
-                  maxLines: compact ? 5 : 4,
-                  overflow: TextOverflow.ellipsis,
+                  softWrap: true,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: BrandColors.mutedBrown,
                     height: 1.35,
@@ -248,7 +246,7 @@ class _DetailLine extends StatelessWidget {
       padding: const EdgeInsets.only(top: 8),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final stacked = constraints.maxWidth < 300;
+          final stacked = constraints.maxWidth < 400;
           final labelWidget = Text(
             label,
             style: const TextStyle(
@@ -272,9 +270,9 @@ class _DetailLine extends StatelessWidget {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(width: 112, child: labelWidget),
+              Expanded(flex: 2, child: labelWidget),
               const SizedBox(width: 8),
-              Expanded(child: valueWidget),
+              Expanded(flex: 3, child: valueWidget),
             ],
           );
         },

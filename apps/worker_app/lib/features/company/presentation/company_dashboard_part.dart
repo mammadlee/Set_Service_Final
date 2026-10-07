@@ -71,88 +71,90 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
     return _AsyncView<_CompanyDashboardData>(
       future: _future,
       onRetry: _refresh,
-      builder: (data) => RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
-          children: [
-            PremiumEntrance(
-              child: PremiumHeroPanel(
-                title: data.company.name,
-                subtitle: 'Müəssisə idarə paneli',
-                children: [
-                  StatusPill(status: data.company.status),
-                  const SizedBox(height: 14),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final compact = constraints.maxWidth < 360;
-                      final createButton = PremiumActionButton(
-                        secondary: true,
-                        icon: Icons.add_rounded,
-                        label: AppStrings.createOrder,
-                        onPressed: _openCreateOrder,
-                      );
-                      if (compact) {
-                        return SizedBox(
-                          width: double.infinity,
-                          child: createButton,
+      builder: (data) => _CompanyAdaptiveBody(
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
+            children: [
+              PremiumEntrance(
+                child: PremiumHeroPanel(
+                  title: data.company.name,
+                  subtitle: 'Müəssisə idarə paneli',
+                  children: [
+                    StatusPill(status: data.company.status),
+                    const SizedBox(height: 14),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 360;
+                        final createButton = PremiumActionButton(
+                          secondary: true,
+                          icon: Icons.add_rounded,
+                          label: AppStrings.createOrder,
+                          onPressed: _openCreateOrder,
                         );
-                      }
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 280),
-                          child: SizedBox(
+                        if (compact) {
+                          return SizedBox(
                             width: double.infinity,
                             child: createButton,
+                          );
+                        }
+                        return Align(
+                          alignment: Alignment.centerLeft,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 280),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: createButton,
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 18),
-            const SectionHeader(title: AppStrings.operationsSummary),
-            PremiumEntrance(
-              delay: const Duration(milliseconds: 90),
-              child: _SummaryGrid(
-                items: [
-                  _SummaryItem(
-                    AppStrings.activeOrders,
-                    data.orders
-                        .where(
-                          (item) =>
-                              _companyOrderIsCurrent(item, DateTime.now()),
-                        )
-                        .length,
-                  ),
-                  _SummaryItem(
-                    AppStrings.activeWorkers,
-                    data.assignments
-                        .where((item) => item.status == 'accepted')
-                        .length,
-                  ),
-                  _SummaryItem(
-                    AppStrings.totalAssignments,
-                    data.assignments.length,
-                  ),
-                  _SummaryItem(
-                    AppStrings.todayCheckIns,
-                    data.attendance.where((item) {
-                      final time = item.checkinTime;
-                      final now = DateTime.now();
-                      return time != null &&
-                          time.year == now.year &&
-                          time.month == now.month &&
-                          time.day == now.day;
-                    }).length,
-                  ),
-                ],
+              const SizedBox(height: 18),
+              const SectionHeader(title: AppStrings.operationsSummary),
+              PremiumEntrance(
+                delay: const Duration(milliseconds: 90),
+                child: _SummaryGrid(
+                  items: [
+                    _SummaryItem(
+                      AppStrings.activeOrders,
+                      data.orders
+                          .where(
+                            (item) =>
+                                _companyOrderIsCurrent(item, DateTime.now()),
+                          )
+                          .length,
+                    ),
+                    _SummaryItem(
+                      AppStrings.activeWorkers,
+                      data.assignments
+                          .where((item) => item.status == 'accepted')
+                          .length,
+                    ),
+                    _SummaryItem(
+                      AppStrings.totalAssignments,
+                      data.assignments.length,
+                    ),
+                    _SummaryItem(
+                      AppStrings.todayCheckIns,
+                      data.attendance.where((item) {
+                        final time = item.checkinTime;
+                        final now = DateTime.now();
+                        return time != null &&
+                            time.year == now.year &&
+                            time.month == now.month &&
+                            time.day == now.day;
+                      }).length,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
