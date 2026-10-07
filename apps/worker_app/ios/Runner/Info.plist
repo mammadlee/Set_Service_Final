@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -28,11 +28,13 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
-	</dict>
+		<key>NSLocationWhenInUseUsageDescription</key>
+	<string>SET Service uses your location to find and assign nearby workers.</string>
+</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>QR kodları oxutmaq və giriş-çıxış əməliyyatlarını təsdiqləmək üçün kameraya giriş lazımdır.</string>
+	<string>QR kodlarÄ± oxutmaq vÉ™ giriÅŸ-Ã§Ä±xÄ±ÅŸ É™mÉ™liyyatlarÄ±nÄ± tÉ™sdiqlÉ™mÉ™k Ã¼Ã§Ã¼n kameraya giriÅŸ lazÄ±mdÄ±r.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Profil şəkli və təsdiq sənədlərini seçmək üçün foto kitabxanasına giriş lazımdır.</string>
+	<string>Profil ÅŸÉ™kli vÉ™ tÉ™sdiq sÉ™nÉ™dlÉ™rini seÃ§mÉ™k Ã¼Ã§Ã¼n foto kitabxanasÄ±na giriÅŸ lazÄ±mdÄ±r.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -54,5 +56,8 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>SET Service uses your location to find and assign nearby workers.</string>
 </dict>
 </plist>
+
