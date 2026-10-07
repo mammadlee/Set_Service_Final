@@ -15,7 +15,8 @@ class RoleSelectionScreen extends StatelessWidget {
 
   static const _backgroundAsset = 'assets/brand/role_selection_background.png';
   static const _designSize = Size(1080, 2338);
-  static const _contactFreeArtworkHeight = 2100.0;
+  static const _maxArtworkWidth = 430.0;
+  static const _minimumReadableWidth = 288.0;
   static final _websiteUri = Uri.parse('https://www.setservice.az');
   static final _facebookUri = Uri.parse(
     'https://www.facebook.com/setservice.az/',
@@ -41,108 +42,80 @@ class RoleSelectionScreen extends StatelessWidget {
         body: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final scale = math.min(
-                constraints.maxWidth / _designSize.width,
-                constraints.maxHeight / _designSize.height,
+              final availableSize = Size(
+                constraints.maxWidth,
+                constraints.maxHeight,
               );
-              final artworkSize = _designSize * scale;
+              final cappedWidth = math.min(
+                availableSize.width,
+                _maxArtworkWidth,
+              );
+              final fittedWidth = math.min(
+                cappedWidth,
+                availableSize.height * (_designSize.width / _designSize.height),
+              );
+              final shouldScroll =
+                  fittedWidth < math.min(cappedWidth, _minimumReadableWidth);
+              final landscape = availableSize.width > availableSize.height;
+              final scrollWidth = math.min(
+                cappedWidth,
+                landscape ? 320.0 : availableSize.width,
+              );
 
-              return ClipRect(
-                child: Stack(
-                  key: const ValueKey('role-selection-viewport'),
-                  fit: StackFit.expand,
-                  children: [
-                    const DecoratedBox(
-                      key: ValueKey('role-selection-edge-fill'),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Color(0xFFFDFBF9), Color(0xFFFDEFD4)],
-                        ),
+              final artwork = _RoleArtwork(
+                onOpen: _openExternalUri,
+                onAdmin: () => context.read<RoleSessionController>().selectRole(
+                  AppRole.admin,
+                ),
+                onWorker: () => context
+                    .read<RoleSessionController>()
+                    .selectRole(AppRole.worker),
+                onCompany: () => context
+                    .read<RoleSessionController>()
+                    .selectRole(AppRole.company),
+              );
+
+              return Stack(
+                key: const ValueKey('role-selection-viewport'),
+                fit: StackFit.expand,
+                children: [
+                  const DecoratedBox(
+                    key: ValueKey('role-selection-edge-fill'),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFDFBF9), Color(0xFFFDEFD4)],
                       ),
                     ),
-                    Align(
-                      alignment: Alignment.center,
+                  ),
+                  if (shouldScroll)
+                    SingleChildScrollView(
+                      key: const ValueKey('role-selection-scroll'),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Center(
+                        child: SizedBox(
+                          key: const ValueKey('role-selection-artwork'),
+                          width: scrollWidth,
+                          height:
+                              scrollWidth *
+                              (_designSize.height / _designSize.width),
+                          child: artwork,
+                        ),
+                      ),
+                    )
+                  else
+                    Center(
                       child: SizedBox(
                         key: const ValueKey('role-selection-artwork'),
-                        width: artworkSize.width,
-                        height: artworkSize.height,
-                        child: FittedBox(
-                          fit: BoxFit.fill,
-                          child: SizedBox(
-                            width: _designSize.width,
-                            height: _designSize.height,
-                            child: Stack(
-                              children: [
-                                Positioned(
-                                  top: 0,
-                                  left: 0,
-                                  right: 0,
-                                  height: _contactFreeArtworkHeight,
-                                  child: ClipRect(
-                                    key: const ValueKey(
-                                      'role-selection-contact-free-artwork',
-                                    ),
-                                    child: Align(
-                                      alignment: Alignment.topCenter,
-                                      child: SizedBox(
-                                        width: _designSize.width,
-                                        height: _designSize.height,
-                                        child: Image.asset(
-                                          _backgroundAsset,
-                                          fit: BoxFit.fill,
-                                          filterQuality: FilterQuality.high,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                _RoleHitTarget(
-                                  rect: const Rect.fromLTWH(260, 135, 560, 385),
-                                  label: AppStrings.adminLogin,
-                                  onLongPress: () => context
-                                      .read<RoleSessionController>()
-                                      .selectRole(AppRole.admin),
-                                ),
-                                _RoleHitTarget(
-                                  rect: const Rect.fromLTWH(
-                                    124,
-                                    1055,
-                                    890,
-                                    220,
-                                  ),
-                                  label: AppStrings.continueAsWorker,
-                                  onTap: () => context
-                                      .read<RoleSessionController>()
-                                      .selectRole(AppRole.worker),
-                                ),
-                                _RoleHitTarget(
-                                  rect: const Rect.fromLTWH(
-                                    124,
-                                    1337,
-                                    890,
-                                    220,
-                                  ),
-                                  label: AppStrings.continueAsCompany,
-                                  onTap: () => context
-                                      .read<RoleSessionController>()
-                                      .selectRole(AppRole.company),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                        width: fittedWidth,
+                        height:
+                            fittedWidth *
+                            (_designSize.height / _designSize.width),
+                        child: artwork,
                       ),
                     ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: _ContactFooter(onOpen: _openExternalUri),
-                    ),
-                  ],
-                ),
+                ],
               );
             },
           ),
@@ -173,159 +146,200 @@ class RoleSelectionScreen extends StatelessWidget {
   }
 }
 
-class _ContactFooter extends StatelessWidget {
-  const _ContactFooter({required this.onOpen});
+class _RoleArtwork extends StatelessWidget {
+  const _RoleArtwork({
+    required this.onOpen,
+    required this.onAdmin,
+    required this.onWorker,
+    required this.onCompany,
+  });
 
   final Future<void> Function(BuildContext context, Uri uri) onOpen;
+  final VoidCallback onAdmin;
+  final VoidCallback onWorker;
+  final VoidCallback onCompany;
 
   @override
   Widget build(BuildContext context) {
-    final links = <_ContactLinkData>[
-      _ContactLinkData(
-        key: const ValueKey('contact-website'),
-        icon: Icons.language_rounded,
-        label: AppStrings.website,
-        uri: RoleSelectionScreen._websiteUri,
-      ),
-      _ContactLinkData(
-        key: const ValueKey('contact-facebook'),
-        icon: Icons.facebook_rounded,
-        label: AppStrings.contactFacebook,
-        uri: RoleSelectionScreen._facebookUri,
-      ),
-      _ContactLinkData(
-        key: const ValueKey('contact-instagram'),
-        icon: Icons.camera_alt_outlined,
-        label: AppStrings.contactInstagram,
-        uri: RoleSelectionScreen._instagramUri,
-      ),
-      _ContactLinkData(
-        key: const ValueKey('contact-phone'),
-        icon: Icons.phone_outlined,
-        label: AppStrings.contactPhone,
-        uri: RoleSelectionScreen._phoneUri,
-      ),
-    ];
-
-    return Material(
-      key: const ValueKey('role-selection-contact-footer'),
-      color: BrandColors.transparent,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFFFF4E3), Color(0xFFFFEED0)],
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Color(0x14000000),
-              blurRadius: 10,
-              offset: Offset(0, -2),
+    return FittedBox(
+      fit: BoxFit.fill,
+      child: SizedBox(
+        key: const ValueKey('role-selection-design-canvas'),
+        width: RoleSelectionScreen._designSize.width,
+        height: RoleSelectionScreen._designSize.height,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                RoleSelectionScreen._backgroundAsset,
+                key: const ValueKey('role-selection-background-image'),
+                fit: BoxFit.fill,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
+            _RoleHitTarget(
+              rect: const Rect.fromLTWH(260, 135, 560, 385),
+              label: AppStrings.adminLogin,
+              onLongPress: onAdmin,
+            ),
+            _RoleHitTarget(
+              rect: const Rect.fromLTWH(124, 1055, 890, 220),
+              label: AppStrings.continueAsWorker,
+              onTap: onWorker,
+            ),
+            _RoleHitTarget(
+              rect: const Rect.fromLTWH(124, 1337, 890, 220),
+              label: AppStrings.continueAsCompany,
+              onTap: onCompany,
+            ),
+            const Positioned(
+              left: 0,
+              right: 0,
+              top: 1980,
+              bottom: 0,
+              child: DecoratedBox(
+                key: ValueKey('role-selection-contact-mask'),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0x00FFF4E3),
+                      Color(0xFFFFF1DA),
+                      Color(0xFFFFEAC7),
+                    ],
+                    stops: [0, 0.27, 1],
+                  ),
+                ),
+              ),
+            ),
+            const _ContactCard(
+              rect: Rect.fromLTWH(238, 2042, 604, 108),
+              icon: Icons.language_rounded,
+              label: AppStrings.website,
+            ),
+            const _ContactCard(
+              rect: Rect.fromLTWH(34, 2190, 310, 116),
+              icon: Icons.facebook_rounded,
+              label: AppStrings.contactFacebook,
+            ),
+            const _ContactCard(
+              rect: Rect.fromLTWH(354, 2190, 372, 116),
+              icon: Icons.phone_outlined,
+              label: AppStrings.contactPhone,
+            ),
+            const _ContactCard(
+              rect: Rect.fromLTWH(736, 2190, 310, 116),
+              icon: Icons.camera_alt_outlined,
+              label: AppStrings.contactInstagram,
+            ),
+            _ContactHitTarget(
+              key: const ValueKey('contact-website'),
+              rect: const Rect.fromLTWH(200, 2000, 680, 174),
+              label: AppStrings.website,
+              onTap: () => onOpen(context, RoleSelectionScreen._websiteUri),
+            ),
+            _ContactHitTarget(
+              key: const ValueKey('contact-facebook'),
+              rect: const Rect.fromLTWH(0, 2168, 350, 170),
+              label: AppStrings.contactFacebook,
+              onTap: () => onOpen(context, RoleSelectionScreen._facebookUri),
+            ),
+            _ContactHitTarget(
+              key: const ValueKey('contact-phone'),
+              rect: const Rect.fromLTWH(350, 2168, 380, 170),
+              label: AppStrings.contactPhone,
+              onTap: () => onOpen(context, RoleSelectionScreen._phoneUri),
+            ),
+            _ContactHitTarget(
+              key: const ValueKey('contact-instagram'),
+              rect: const Rect.fromLTWH(730, 2168, 350, 170),
+              label: AppStrings.contactInstagram,
+              onTap: () => onOpen(context, RoleSelectionScreen._instagramUri),
             ),
           ],
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const spacing = 8.0;
-            final landscape =
-                MediaQuery.orientationOf(context) == Orientation.landscape;
-            final horizontalPadding = constraints.maxWidth < 360 ? 8.0 : 12.0;
-            final wideLayout = constraints.maxWidth >= 720;
-            final verticalPadding = wideLayout && !landscape ? 18.0 : 10.0;
-            final availableWidth =
-                constraints.maxWidth - (horizontalPadding * 2);
-            final columns = wideLayout || landscape ? 4 : 2;
-            final itemWidth =
-                (availableWidth - (spacing * (columns - 1))) / columns;
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                horizontalPadding,
-                verticalPadding,
-                horizontalPadding,
-                verticalPadding,
-              ),
-              child: Wrap(
-                spacing: spacing,
-                runSpacing: spacing,
-                children: [
-                  for (final link in links)
-                    SizedBox(
-                      width: itemWidth,
-                      child: _ContactLink(
-                        data: link,
-                        onTap: () => onOpen(context, link.uri),
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
         ),
       ),
     );
   }
 }
 
-class _ContactLinkData {
-  const _ContactLinkData({
-    required this.key,
+class _ContactCard extends StatelessWidget {
+  const _ContactCard({
+    required this.rect,
     required this.icon,
     required this.label,
-    required this.uri,
   });
 
-  final Key key;
+  final Rect rect;
   final IconData icon;
   final String label;
-  final Uri uri;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fromRect(
+      rect: rect,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xD9FFFFFF),
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0x66F0B44D), width: 2),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 38, color: BrandColors.primaryBurgundy),
+                const SizedBox(width: 16),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        color: BrandColors.urbanGraphite,
+                        fontSize: 34,
+                        height: 1.1,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _ContactLink extends StatelessWidget {
-  const _ContactLink({required this.data, required this.onTap});
+class _ContactHitTarget extends StatelessWidget {
+  const _ContactHitTarget({
+    required this.rect,
+    required this.label,
+    required this.onTap,
+    super.key,
+  });
 
-  final _ContactLinkData data;
+  final Rect rect;
+  final String label;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      link: true,
-      label: data.label,
-      child: Material(
-        color: const Color(0xBFFFFFFF),
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          key: data.key,
-          borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 44),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(data.icon, size: 19, color: BrandColors.primaryBurgundy),
-                  const SizedBox(width: 7),
-                  Flexible(
-                    child: Text(
-                      data.label,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: BrandColors.urbanGraphite,
-                        fontSize: 12,
-                        height: 1.2,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+    return Positioned.fromRect(
+      rect: rect,
+      child: Semantics(
+        button: true,
+        link: true,
+        label: label,
+        child: Material(
+          color: BrandColors.transparent,
+          child: InkWell(onTap: onTap),
         ),
       ),
     );

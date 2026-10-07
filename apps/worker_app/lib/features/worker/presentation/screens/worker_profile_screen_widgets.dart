@@ -422,8 +422,7 @@ class _PremiumEditSheet extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
                             style: Theme.of(context).textTheme.titleLarge
                                 ?.copyWith(fontWeight: FontWeight.w700),
                           ),

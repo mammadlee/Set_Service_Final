@@ -212,7 +212,6 @@ class _AdminWorkerApprovalCardState extends State<AdminWorkerApprovalCard> {
               labelText: AppStrings.workerClass,
               helperText:
                   'Məcburi deyil. “Sonra təyin et” seçimi ilə də təsdiqləyə bilərsiniz.',
-              helperMaxLines: 2,
             ),
             items: const [
               DropdownMenuItem<String>(
@@ -464,7 +463,6 @@ class _WorkerClassEditorState extends State<_WorkerClassEditor> {
         helperText: _saving
             ? 'Yadda saxlanılır…'
             : 'Sinfi istənilən vaxt dəyişə bilərsiniz.',
-        helperMaxLines: 2,
       ),
       items: const [
         DropdownMenuItem<String>(

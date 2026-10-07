@@ -79,22 +79,24 @@ class _AsyncView<T> extends StatelessWidget {
         if (snapshot.hasError) {
           final error = snapshot.error;
           return ConstrainedPage(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                InlineMessage(
-                  message: error is ApiException
-                      ? error.message
-                      : AppStrings.loadFailed,
-                  kind: InlineMessageKind.error,
-                ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text(AppStrings.tryAgain),
-                ),
-              ],
+            child: ScrollableCenteredContent(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InlineMessage(
+                    message: error is ApiException
+                        ? error.message
+                        : AppStrings.loadFailed,
+                    kind: InlineMessageKind.error,
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text(AppStrings.tryAgain),
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -115,26 +117,18 @@ class _EmptyState extends StatelessWidget {
     return _CompanyAdaptiveBody(
       maxWidth: 560,
       padding: const EdgeInsets.all(20),
-      child: LayoutBuilder(
-        builder: (context, constraints) => SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Center(
-              child: PremiumEmptyState(
-                title: AppStrings.elegantEmptyTitle,
-                message: message,
-                icon: Icons.inbox_outlined,
-                action: onAction == null
-                    ? null
-                    : OutlinedButton.icon(
-                        onPressed: onAction,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text(AppStrings.tryAgain),
-                      ),
-              ),
-            ),
-          ),
+      child: ScrollableCenteredContent(
+        child: PremiumEmptyState(
+          title: AppStrings.elegantEmptyTitle,
+          message: message,
+          icon: Icons.inbox_outlined,
+          action: onAction == null
+              ? null
+              : OutlinedButton.icon(
+                  onPressed: onAction,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text(AppStrings.tryAgain),
+                ),
         ),
       ),
     );

@@ -332,6 +332,7 @@ class _CompanyWorkerProfileScreenState
                       ? AppStrings.worker
                       : profile.position,
                   compact: true,
+                  wrapFullText: true,
                   leading: WorkerAvatar(
                     name: profile.name,
                     photoUrl: profile.profilePhotoUrl,

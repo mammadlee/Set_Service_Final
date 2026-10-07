@@ -15,6 +15,12 @@ import 'package:worker_app/core/theme/app_theme.dart';
 import 'package:worker_app/features/admin/data/admin_repository.dart';
 import 'package:worker_app/features/admin/presentation/admin_auth_controller.dart';
 import 'package:worker_app/features/admin/presentation/admin_home_shell.dart';
+import 'package:worker_app/shared/app_strings.dart';
+
+const _longOrderTitle =
+    'Four Seasons beynəlxalq banket xidməti üçün çox uzun sifariş adı';
+const _longWorkerName =
+    'Məhəmməd Əli Hüseynzadə Məmmədov uzun adlı təsdiqlənmiş işçi';
 
 void main() {
   for (final size in <Size>[const Size(320, 640), const Size(1024, 768)]) {
@@ -62,6 +68,53 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'Admin assignment selectors render empty and selected text exactly once',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _AdminShellFixture();
+      addTearDown(fixture.dispose);
+
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+
+      tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Təyinatlar'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(FloatingActionButton, AppStrings.assignWorker),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(AppStrings.selectOrder), findsOneWidget);
+      expect(find.text(AppStrings.selectWorker), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text(AppStrings.selectOrder));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(_longOrderTitle));
+      await tester.pumpAndSettle();
+
+      expect(find.text(AppStrings.selectOrder), findsNothing);
+      expect(find.text(_longOrderTitle), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text(AppStrings.selectWorker));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(_longWorkerName));
+      await tester.pumpAndSettle();
+
+      expect(find.text(AppStrings.selectWorker), findsNothing);
+      expect(find.text(_longWorkerName), findsOneWidget);
+      expect(find.text(_longOrderTitle), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 class _AdminShellFixture {
@@ -87,6 +140,56 @@ class _AdminShellFixture {
             },
             'rating_stats': <String, dynamic>{'average': 4.8, 'count': 10},
           },
+        });
+      }
+      if (options.path == '/assignments') {
+        return _jsonResponse(200, <String, dynamic>{
+          'data': <Object>[],
+          'meta': _pageMeta(),
+        });
+      }
+      if (options.path == '/orders') {
+        return _jsonResponse(200, <String, dynamic>{
+          'data': <Object>[
+            <String, dynamic>{
+              'id': 'order-review-1',
+              'title': _longOrderTitle,
+              'description': 'Banket xidməti',
+              'category': 'Baş ofisiant köməkçisi',
+              'status': 'published',
+              'required_count': 2,
+              'assignment_count': 0,
+              'location': 'Bakı şəhəri, uzun ünvan',
+              'category_items': <Object>[
+                <String, dynamic>{
+                  'id': 'category-review-1',
+                  'category': 'Baş ofisiant köməkçisi',
+                  'required_count': 2,
+                  'assigned_count': 0,
+                  'remaining_count': 2,
+                },
+              ],
+            },
+          ],
+          'meta': _pageMeta(total: 1),
+        });
+      }
+      if (options.path == '/admin/workers') {
+        return _jsonResponse(200, <String, dynamic>{
+          'data': <Object>[
+            <String, dynamic>{
+              'id': 'worker-review-1',
+              'name': _longWorkerName,
+              'phone': '+994700000003',
+              'status': 'approved',
+              'position': 'Baş ofisiant köməkçisi',
+              'availability': true,
+              'worker_class': 'A',
+              'rating_avg': 4.9,
+              'rating_count': 18,
+            },
+          ],
+          'meta': _pageMeta(total: 1),
         });
       }
       return _jsonResponse(200, <String, dynamic>{});
@@ -135,6 +238,13 @@ class _AdminShellFixture {
     coordinator.dispose();
   }
 }
+
+Map<String, dynamic> _pageMeta({int total = 0}) => <String, dynamic>{
+  'page': 1,
+  'limit': 50,
+  'total': total,
+  'total_pages': total == 0 ? 0 : 1,
+};
 
 class _NoopPushRegistrationService extends PushRegistrationService {
   _NoopPushRegistrationService(ApiClient apiClient)

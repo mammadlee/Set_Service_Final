@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,164 +9,193 @@ import 'package:worker_app/features/role_selection/presentation/role_selection_s
 import 'package:worker_app/shared/app_strings.dart';
 
 void main() {
-  const designSize = Size(1080, 2338);
-  const phoneSizes = <Size>[
-    Size(320, 480),
-    Size(320, 568),
-    Size(360, 640),
-    Size(375, 667),
-    Size(375, 812),
-    Size(390, 844),
-    Size(412, 915),
-    Size(430, 932),
-  ];
+  const designAspect = 1080 / 2338;
 
   testWidgets(
-    'opening role screen fills every tested phone and keeps artwork visible',
+    'standard iPhone shows one complete centered composition inside SafeArea',
     (tester) async {
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      for (final phoneSize in phoneSizes) {
-        tester.view.physicalSize = phoneSize;
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: AppTheme.light(),
-            home: const RoleSelectionScreen(),
-          ),
-        );
-        await tester.pumpAndSettle();
-
-        final artwork = find.byKey(const ValueKey('role-selection-artwork'));
-        final edgeFill = find.byKey(const ValueKey('role-selection-edge-fill'));
-        final scale = math.min(
-          phoneSize.width / designSize.width,
-          phoneSize.height / designSize.height,
-        );
-        final expectedSize = designSize * scale;
-        final topLeft = tester.getTopLeft(artwork);
-        final bottomRight = tester.getBottomRight(artwork);
-
-        expect(find.byType(Scrollable), findsNothing, reason: '$phoneSize');
-        expect(tester.getSize(edgeFill), phoneSize, reason: '$phoneSize');
-        expect(tester.getTopLeft(edgeFill), Offset.zero, reason: '$phoneSize');
-        expect(tester.getSize(artwork).width, closeTo(expectedSize.width, 0.1));
-        expect(
-          tester.getSize(artwork).height,
-          closeTo(expectedSize.height, 0.1),
-        );
-        expect(topLeft.dx, greaterThanOrEqualTo(0), reason: '$phoneSize');
-        expect(topLeft.dy, greaterThanOrEqualTo(0), reason: '$phoneSize');
-        expect(
-          bottomRight.dx,
-          lessThanOrEqualTo(phoneSize.width + 0.1),
-          reason: '$phoneSize',
-        );
-        expect(
-          bottomRight.dy,
-          lessThanOrEqualTo(phoneSize.height + 0.1),
-          reason: '$phoneSize',
-        );
-        expect(tester.takeException(), isNull, reason: '$phoneSize');
-      }
-    },
-  );
-
-  testWidgets('opening artwork stays centered on a wide display', (
-    tester,
-  ) async {
-    const displaySize = Size(1024, 700);
-    tester.view.physicalSize = displaySize;
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(
-      MaterialApp(theme: AppTheme.light(), home: const RoleSelectionScreen()),
-    );
-    await tester.pumpAndSettle();
-
-    final artwork = find.byKey(const ValueKey('role-selection-artwork'));
-    final artworkRect = tester.getRect(artwork);
-    expect(find.byType(Scrollable), findsNothing);
-    expect(
-      artworkRect.center,
-      within(distance: 0.1, from: displaySize.center(Offset.zero)),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('scaled worker and company hit targets remain functional', (
-    tester,
-  ) async {
-    FlutterSecureStorage.setMockInitialValues({});
-    final roleSession = RoleSessionController();
-    addTearDown(roleSession.dispose);
-    tester.view.physicalSize = const Size(320, 480);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<RoleSessionController>.value(
-        value: roleSession,
-        child: MaterialApp(
-          theme: AppTheme.light(),
-          home: const RoleSelectionScreen(),
-        ),
-      ),
-    );
-
-    await tester.tap(
-      find.bySemanticsLabel(AppStrings.continueAsWorker),
-      warnIfMissed: true,
-    );
-    await tester.pumpAndSettle();
-    expect(roleSession.activeRole, AppRole.worker);
-
-    await tester.tap(
-      find.bySemanticsLabel(AppStrings.continueAsCompany),
-      warnIfMissed: true,
-    );
-    await tester.pumpAndSettle();
-    expect(roleSession.activeRole, AppRole.company);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets(
-    'opening artwork respects notches and gesture navigation insets',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      tester.view.padding = const FakeViewPadding(top: 44, bottom: 34);
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetPadding);
-
-      await tester.pumpWidget(
-        MaterialApp(theme: AppTheme.light(), home: const RoleSelectionScreen()),
+      _setViewport(
+        tester,
+        const Size(390, 844),
+        padding: const FakeViewPadding(top: 44, bottom: 34),
       );
-      await tester.pumpAndSettle();
+
+      await _pumpRoleScreen(tester);
 
       final artwork = find.byKey(const ValueKey('role-selection-artwork'));
       final artworkRect = tester.getRect(artwork);
-      expect(find.byType(Scrollable), findsNothing);
+      final expectedHeight = 844 - 44 - 34;
+
+      expect(find.byKey(const ValueKey('role-selection-scroll')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('role-selection-background-image')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('role-selection-contact-mask')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('role-selection-contact-footer')),
+        findsNothing,
+      );
+      expect(artworkRect.height, closeTo(expectedHeight, 0.1));
+      expect(
+        artworkRect.width / artworkRect.height,
+        closeTo(designAspect, 0.001),
+      );
       expect(artworkRect.top, greaterThanOrEqualTo(44));
-      expect(artworkRect.bottom, lessThanOrEqualTo(810));
-      expect(tester.takeException(), isNull);
+      expect(artworkRect.bottom, lessThanOrEqualTo(810.1));
+      expect(artworkRect.center.dx, closeTo(195, 0.1));
+      _expectContactTextRenderedOnce();
+      _expectNoException(tester, const Size(390, 844));
     },
   );
 
-  testWidgets('contact details are responsive links with production URIs', (
+  for (final size in const [Size(320, 480), Size(320, 568)]) {
+    testWidgets(
+      'short phone uses readable controlled scrolling at ${size.width}x${size.height}',
+      (tester) async {
+        _setViewport(tester, size);
+        await _pumpRoleScreen(tester);
+
+        final scroll = find.byKey(const ValueKey('role-selection-scroll'));
+        final artwork = find.byKey(const ValueKey('role-selection-artwork'));
+        expect(scroll, findsOneWidget);
+        expect(tester.getSize(artwork).width, closeTo(320, 0.1));
+        expect(
+          tester.getSize(artwork).height,
+          closeTo(320 / designAspect, 0.1),
+        );
+        final scrollable = tester.state<ScrollableState>(
+          find.descendant(of: scroll, matching: find.byType(Scrollable)),
+        );
+        expect(scrollable.position.maxScrollExtent, greaterThan(0));
+
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('contact-instagram')),
+          240,
+          scrollable: find.descendant(
+            of: scroll,
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('contact-instagram')), findsOneWidget);
+        _expectNoException(tester, size);
+      },
+    );
+  }
+
+  for (final size in const [
+    Size(600, 960),
+    Size(768, 1024),
+    Size(1024, 1366),
+  ]) {
+    testWidgets(
+      'tablet keeps the role composition centered and capped at ${size.width}x${size.height}',
+      (tester) async {
+        _setViewport(tester, size);
+        await _pumpRoleScreen(tester);
+
+        final artworkRect = tester.getRect(
+          find.byKey(const ValueKey('role-selection-artwork')),
+        );
+        expect(artworkRect.width, lessThanOrEqualTo(430.1));
+        expect(artworkRect.center.dx, closeTo(size.width / 2, 0.1));
+        expect(
+          artworkRect.width / artworkRect.height,
+          closeTo(designAspect, 0.001),
+        );
+        expect(
+          find.byKey(const ValueKey('role-selection-background-image')),
+          findsOneWidget,
+        );
+        _expectNoException(tester, size);
+      },
+    );
+  }
+
+  for (final size in const [Size(568, 320), Size(844, 390)]) {
+    testWidgets('short landscape remains readable with scrolling at $size', (
+      tester,
+    ) async {
+      _setViewport(tester, size);
+      await _pumpRoleScreen(tester);
+
+      expect(
+        find.byKey(const ValueKey('role-selection-scroll')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('role-selection-artwork')))
+            .width,
+        closeTo(320, 0.1),
+      );
+      _expectNoException(tester, size);
+    });
+  }
+
+  testWidgets('1024x768 landscape uses a centered readable composition', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final openedUris = <Uri>[];
+    const size = Size(1024, 768);
+    _setViewport(tester, size);
+    await _pumpRoleScreen(tester);
 
+    final artworkRect = tester.getRect(
+      find.byKey(const ValueKey('role-selection-artwork')),
+    );
+    expect(find.byKey(const ValueKey('role-selection-scroll')), findsNothing);
+    expect(artworkRect.width, greaterThanOrEqualTo(320));
+    expect(artworkRect.width, lessThanOrEqualTo(430));
+    expect(
+      artworkRect.center,
+      within(distance: 0.1, from: size.center(Offset.zero)),
+    );
+    _expectNoException(tester, size);
+  });
+
+  testWidgets(
+    'worker and company hit targets remain functional when scrolled',
+    (tester) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final roleSession = RoleSessionController();
+      addTearDown(roleSession.dispose);
+      _setViewport(tester, const Size(320, 480));
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RoleSessionController>.value(
+          value: roleSession,
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: const RoleSelectionScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.bySemanticsLabel(AppStrings.continueAsWorker));
+      await tester.pumpAndSettle();
+      expect(roleSession.activeRole, AppRole.worker);
+
+      await tester.ensureVisible(
+        find.bySemanticsLabel(AppStrings.continueAsCompany),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel(AppStrings.continueAsCompany));
+      await tester.pumpAndSettle();
+      expect(roleSession.activeRole, AppRole.company);
+      _expectNoException(tester, const Size(320, 480));
+    },
+  );
+
+  testWidgets('contact cards are separate links with production URIs', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final openedUris = <Uri>[];
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),
@@ -182,48 +209,56 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final contactFreeArtwork = find.byKey(
-      const ValueKey('role-selection-contact-free-artwork'),
-    );
-    expect(contactFreeArtwork, findsOneWidget);
-    expect(tester.getSize(contactFreeArtwork).height, 2100);
-
     const expectedLinks = <String, String>{
       'contact-website': 'https://www.setservice.az',
       'contact-facebook': 'https://www.facebook.com/setservice.az/',
-      'contact-instagram': 'https://www.instagram.com/setservice.az/',
       'contact-phone': 'tel:+994702315151',
+      'contact-instagram': 'https://www.instagram.com/setservice.az/',
     };
 
     for (final link in expectedLinks.entries) {
       final target = find.byKey(ValueKey(link.key));
       expect(target, findsOneWidget);
-      expect(
-        tester.getSize(target).height,
-        greaterThanOrEqualTo(44),
-        reason: link.key,
-      );
+      final top = tester.getTopLeft(target);
+      final bottom = tester.getBottomRight(target);
+      expect(bottom.dy - top.dy, greaterThanOrEqualTo(44), reason: link.key);
       await tester.tap(target);
       await tester.pump();
       expect(openedUris.last.toString(), link.value);
     }
 
-    expect(find.text(AppStrings.website), findsOneWidget);
-    expect(find.text(AppStrings.contactFacebook), findsOneWidget);
-    expect(find.text(AppStrings.contactInstagram), findsOneWidget);
-    expect(find.text(AppStrings.contactPhone), findsOneWidget);
-    expect(find.byType(Scrollable), findsNothing);
-    expect(tester.takeException(), isNull);
+    _expectContactTextRenderedOnce();
+    _expectNoException(tester, const Size(390, 844));
   });
+
+  for (final scale in const [1.3, 2.0]) {
+    testWidgets('role composition has no overflow at ${scale}x text scale', (
+      tester,
+    ) async {
+      _setViewport(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: const RoleSelectionScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      _expectContactTextRenderedOnce();
+      _expectNoException(tester, const Size(390, 844));
+    });
+  }
 
   testWidgets('failed contact launch reports an error without leaving screen', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
+    _setViewport(tester, const Size(390, 844));
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),
@@ -237,60 +272,37 @@ void main() {
 
     expect(find.text(AppStrings.contactLinkFailed), findsOneWidget);
     expect(find.byType(RoleSelectionScreen), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    _expectNoException(tester, const Size(390, 844));
   });
+}
 
-  testWidgets(
-    'contact footer stays below role actions in phone and tablet landscape',
-    (tester) async {
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+void _setViewport(
+  WidgetTester tester,
+  Size size, {
+  FakeViewPadding padding = FakeViewPadding.zero,
+}) {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = size;
+  tester.view.padding = padding;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.view.resetPadding);
+}
 
-      for (final size in const [
-        Size(568, 320),
-        Size(844, 390),
-        Size(1024, 768),
-        Size(768, 1024),
-      ]) {
-        tester.view.physicalSize = size;
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: AppTheme.light(),
-            home: const RoleSelectionScreen(),
-          ),
-        );
-        await tester.pumpAndSettle();
-
-        final companyAction = find.bySemanticsLabel(
-          AppStrings.continueAsCompany,
-        );
-        final footer = find.byKey(
-          const ValueKey('role-selection-contact-footer'),
-        );
-        expect(companyAction, findsOneWidget, reason: '$size');
-        expect(footer, findsOneWidget, reason: '$size');
-        expect(
-          tester.getRect(companyAction).bottom,
-          lessThanOrEqualTo(tester.getRect(footer).top + 0.1),
-          reason: '$size',
-        );
-        for (final key in const [
-          'contact-website',
-          'contact-facebook',
-          'contact-instagram',
-          'contact-phone',
-        ]) {
-          final target = find.byKey(ValueKey(key));
-          expect(
-            tester.getSize(target).height,
-            greaterThanOrEqualTo(44),
-            reason: '$key $size',
-          );
-        }
-        expect(find.byType(Scrollable), findsNothing, reason: '$size');
-        expect(tester.takeException(), isNull, reason: '$size');
-      }
-    },
+Future<void> _pumpRoleScreen(WidgetTester tester) async {
+  await tester.pumpWidget(
+    MaterialApp(theme: AppTheme.light(), home: const RoleSelectionScreen()),
   );
+  await tester.pumpAndSettle();
+}
+
+void _expectContactTextRenderedOnce() {
+  expect(find.text(AppStrings.website), findsOneWidget);
+  expect(find.text(AppStrings.contactFacebook), findsOneWidget);
+  expect(find.text(AppStrings.contactPhone), findsOneWidget);
+  expect(find.text(AppStrings.contactInstagram), findsOneWidget);
+}
+
+void _expectNoException(WidgetTester tester, Size size) {
+  expect(tester.takeException(), isNull, reason: '$size');
 }

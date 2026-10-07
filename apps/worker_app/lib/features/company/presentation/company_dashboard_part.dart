@@ -81,6 +81,7 @@ class _CompanyDashboardTabState extends State<_CompanyDashboardTab> {
                 child: PremiumHeroPanel(
                   title: data.company.name,
                   subtitle: 'Müəssisə idarə paneli',
+                  wrapFullText: true,
                   children: [
                     StatusPill(status: data.company.status),
                     const SizedBox(height: 14),

@@ -57,8 +57,21 @@ class _WorkerRatingsScreenState extends State<WorkerRatingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scaledTitleSize = MediaQuery.textScalerOf(context).scale(22);
+    final toolbarHeight = scaledTitleSize > 30
+        ? scaledTitleSize * 2.4
+        : kToolbarHeight;
+    final compactAccessibleTitle =
+        scaledTitleSize > 30 && MediaQuery.sizeOf(context).width < 600;
     return Scaffold(
-      appBar: AppBar(title: const Text('Reytinqlər və rəylər')),
+      appBar: AppBar(
+        toolbarHeight: toolbarHeight,
+        title: Text(
+          compactAccessibleTitle ? 'Reytinqlər' : 'Reytinqlər və rəylər',
+          maxLines: 2,
+          softWrap: true,
+        ),
+      ),
       body: ConstrainedPage(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         child: FutureBuilder<WorkerRatingSummary>(

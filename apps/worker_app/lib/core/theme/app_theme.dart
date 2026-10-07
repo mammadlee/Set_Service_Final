@@ -1,6 +1,5 @@
 // ignore_for_file: undefined_shown_name, unused_import
-import 'package:flutter/cupertino.dart'
-    show CupertinoPageTransitionsBuilder;
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 class BrandColors {
@@ -142,6 +141,8 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: BrandColors.white,
+        errorMaxLines: 3,
+        helperMaxLines: 3,
         labelStyle: const TextStyle(color: BrandColors.mutedBrown),
         hintStyle: const TextStyle(color: BrandColors.mutedBrown),
         border: OutlineInputBorder(

@@ -59,49 +59,40 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
         child: Form(
           key: _formKey,
-          child: Column(
-            children: [
-              Expanded(
-                child: ListView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.only(bottom: 16),
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  children: [
-                    if (_error != null) ...[
-                      InlineMessage(
-                        message: _error!,
-                        kind: InlineMessageKind.error,
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    _OrderStepHeader(stepIndex: _stepIndex),
-                    const SizedBox(height: 20),
-                    Text(
-                      _stepTitle(_stepIndex),
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(_stepHelp(_stepIndex)),
-                    const SizedBox(height: 20),
-                    if (_taxonomyLoading)
-                      const LinearProgressIndicator()
-                    else if (_taxonomy.isEmpty)
-                      OutlinedButton.icon(
-                        onPressed: _loadTaxonomy,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Vəzifələri yenidən yüklə'),
-                      )
-                    else
-                      AbsorbPointer(
-                        absorbing: _loading,
-                        child: _stepContent(draft),
-                      ),
-                  ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final content = <Widget>[
+                if (_error != null) ...[
+                  InlineMessage(
+                    message: _error!,
+                    kind: InlineMessageKind.error,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                _OrderStepHeader(stepIndex: _stepIndex),
+                const SizedBox(height: 20),
+                Text(
+                  _stepTitle(_stepIndex),
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-              ),
-              const SizedBox(height: 12),
-              _OrderStepActions(
+                const SizedBox(height: 8),
+                Text(_stepHelp(_stepIndex)),
+                const SizedBox(height: 20),
+                if (_taxonomyLoading)
+                  const LinearProgressIndicator()
+                else if (_taxonomy.isEmpty)
+                  OutlinedButton.icon(
+                    onPressed: _loadTaxonomy,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Vəzifələri yenidən yüklə'),
+                  )
+                else
+                  AbsorbPointer(
+                    absorbing: _loading,
+                    child: _stepContent(draft),
+                  ),
+              ];
+              final actions = _OrderStepActions(
                 stepIndex: _stepIndex,
                 loading: _loading,
                 canContinue: !_taxonomyLoading && _canContinue(draft),
@@ -109,8 +100,42 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
                 onBack: _stepIndex > 0 && !_loading
                     ? () => _goToStep(_stepIndex - 1)
                     : null,
-              ),
-            ],
+              );
+              final compactHeight =
+                  constraints.maxHeight < 520 ||
+                  MediaQuery.viewInsetsOf(context).bottom > 0;
+
+              if (compactHeight) {
+                return SingleChildScrollView(
+                  key: const ValueKey('company-order-form-scroll'),
+                  controller: _scrollController,
+                  padding: const EdgeInsets.only(bottom: 16),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [...content, const SizedBox(height: 20), actions],
+                  ),
+                );
+              }
+
+              return Column(
+                children: [
+                  Expanded(
+                    child: ListView(
+                      key: const ValueKey('company-order-form-scroll'),
+                      controller: _scrollController,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      children: content,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  actions,
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -135,7 +160,7 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
     2 => 'Sifariş üçün lazım olan vəzifəni seçin.',
     3 => 'Bu vəzifə üzrə işçi sayını və qeydi daxil edin.',
     4 => 'İşin başlama və bitmə vaxtını seçin.',
-    5 => CompanyStrings.addressHint,
+    5 => 'İşin keçiriləcəyi ünvanı dəqiq qeyd edin.',
     _ => 'Sifarişin adını, təsvirini və seçdiyiniz məlumatları yoxlayın.',
   };
 
@@ -1001,7 +1026,7 @@ class _Field extends StatelessWidget {
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          hintMaxLines: maxLines > 1 ? 2 : 1,
+          hintMaxLines: maxLines > 1 ? 2 : 3,
           floatingLabelBehavior: FloatingLabelBehavior.always,
           alignLabelWithHint: true,
           errorMaxLines: 3,

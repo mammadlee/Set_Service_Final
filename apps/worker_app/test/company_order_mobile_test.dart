@@ -113,9 +113,12 @@ void main() {
   );
 
   const orderViewports = <Size>[
+    Size(320, 568),
     Size(360, 800),
+    Size(375, 667),
     Size(390, 844),
     Size(430, 900),
+    Size(600, 960),
     Size(844, 390),
     Size(768, 1024),
     Size(1024, 768),
@@ -147,13 +150,19 @@ void main() {
       );
       await tester.tap(find.text('Open form'));
       await tester.pumpAndSettle();
+      expect(find.text(CompanyStrings.chooseDepartment), findsOneWidget);
       await _select(tester, CompanyStrings.chooseDepartment, _department);
+      expect(find.text(CompanyStrings.chooseDepartment), findsNothing);
       expect(find.text(_department), findsOneWidget);
       expect(tester.takeException(), isNull);
       await _next(tester);
+      expect(find.text(CompanyStrings.chooseSubdepartment), findsOneWidget);
       await _select(tester, CompanyStrings.chooseSubdepartment, _subdepartment);
+      expect(find.text(CompanyStrings.chooseSubdepartment), findsNothing);
       await _next(tester);
+      expect(find.text(CompanyStrings.choosePosition), findsOneWidget);
       await _select(tester, CompanyStrings.choosePosition, _position);
+      expect(find.text(CompanyStrings.choosePosition), findsNothing);
       await _next(tester);
       await _next(tester);
       await _date(
@@ -167,12 +176,23 @@ void main() {
         DateTime.now().add(const Duration(days: 3)),
       );
       await _next(tester);
+      expect(find.text(CompanyStrings.addressHint), findsOneWidget);
       await tester.enterText(find.byType(TextFormField), _address);
       tester.view.viewInsets = const FakeViewPadding(bottom: 220);
       await tester.pump();
+      await tester.ensureVisible(find.text('Davam et'));
+      await tester.pumpAndSettle();
+      expect(find.text('Davam et'), findsOneWidget);
       expect(tester.takeException(), isNull);
       tester.view.resetViewInsets();
       await _next(tester);
+      expect(find.text(CompanyStrings.addressHint), findsNothing);
+      final submit = find.widgetWithText(LoadingButton, AppStrings.createOrder);
+      await _revealOrderAction(tester, submit);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.requiredField), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
       await tester.enterText(
         find.byType(TextFormField).at(0),
         'İllik beynəlxalq tədbir',
@@ -181,13 +201,7 @@ void main() {
         find.byType(TextFormField).at(1),
         'Qonaqların qarşılanması və tədbir boyu banket xidməti.',
       );
-      final submit = find.widgetWithText(LoadingButton, AppStrings.createOrder);
-      await tester.scrollUntilVisible(
-        submit,
-        180,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealOrderAction(tester, submit);
       await tester.tap(submit);
       await tester.pumpAndSettle();
       expect(
@@ -252,6 +266,31 @@ void main() {
       );
     });
   }
+
+  testWidgets(
+    'company order selector keeps empty and long selected text distinct at 320px with scaled text',
+    (tester) async {
+      final fixture = _Fixture();
+      addTearDown(fixture.dispose);
+      _size(tester, 320, height: 568);
+      await tester.pumpWidget(
+        fixture.wrap(
+          const CompanyCreateOrderScreen(),
+          textScaler: const TextScaler.linear(1.3),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(CompanyStrings.chooseDepartment), findsOneWidget);
+      expect(find.text(_department), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      await _select(tester, CompanyStrings.chooseDepartment, _department);
+      expect(find.text(CompanyStrings.chooseDepartment), findsNothing);
+      expect(find.text(_department), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final viewport in const <Size>[
     Size(360, 800),
@@ -411,6 +450,23 @@ Future<void> _next(WidgetTester tester) async {
   expect(tester.takeException(), isNull);
 }
 
+Future<void> _revealOrderAction(WidgetTester tester, Finder action) async {
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump();
+  final formScroll = find.byKey(const ValueKey('company-order-form-scroll'));
+  if (formScroll.evaluate().isNotEmpty) {
+    final scrollable = find
+        .descendant(of: formScroll, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    return;
+  }
+  await tester.ensureVisible(action);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _date(WidgetTester tester, String label, DateTime date) async {
   await tester.tap(find.widgetWithText(TextFormField, label));
   await tester.pumpAndSettle();
@@ -474,7 +530,7 @@ class _Fixture {
   bool failActivation = false;
   bool orderCreated = true;
 
-  Widget wrap(Widget home) => MultiProvider(
+  Widget wrap(Widget home, {TextScaler? textScaler}) => MultiProvider(
     providers: [
       ChangeNotifierProvider<CompanyAuthController>(
         create: (_) => CompanyAuthController(
@@ -491,7 +547,16 @@ class _Fixture {
         value: TaxonomyRepository(apiClient: client),
       ),
     ],
-    child: MaterialApp(theme: AppTheme.light(), home: home),
+    child: MaterialApp(
+      theme: AppTheme.light(),
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child!,
+            ),
+      home: home,
+    ),
   );
 
   Future<ResponseBody> _handle(RequestOptions options) async {

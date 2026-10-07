@@ -341,41 +341,49 @@ class _AdminSelectorTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final displayValue = value?.trim() ?? '';
     final enabled = onTap != null;
-    return Material(
-      color: BrandColors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: InputDecorator(
-          isEmpty: displayValue.isEmpty,
-          decoration: InputDecoration(
-            labelText: label,
-            contentPadding: const EdgeInsets.fromLTRB(24, 22, 18, 22),
-            filled: true,
-            fillColor: BrandColors.cardCream,
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(32),
-              borderSide: const BorderSide(color: BrandColors.accentGold),
+    final visibleText = displayValue.isEmpty ? placeholder : displayValue;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: displayValue.isEmpty ? placeholder : '$label: $displayValue',
+      excludeSemantics: true,
+      child: Material(
+        color: BrandColors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(32),
+          onTap: onTap,
+          child: InputDecorator(
+            isEmpty: false,
+            decoration: InputDecoration(
+              contentPadding: const EdgeInsets.fromLTRB(24, 22, 18, 22),
+              filled: true,
+              fillColor: BrandColors.cardCream,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(32),
+                borderSide: const BorderSide(color: BrandColors.accentGold),
+              ),
+              disabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(32),
+                borderSide: const BorderSide(color: BrandColors.accentGold),
+              ),
+              suffixIcon: Icon(
+                Icons.arrow_drop_down_rounded,
+                size: 34,
+                color: enabled
+                    ? BrandColors.darkText
+                    : BrandColors.urbanGraphite,
+              ),
             ),
-            disabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(32),
-              borderSide: const BorderSide(color: BrandColors.accentGold),
-            ),
-            suffixIcon: Icon(
-              Icons.arrow_drop_down_rounded,
-              size: 34,
-              color: enabled ? BrandColors.darkText : BrandColors.urbanGraphite,
-            ),
-          ),
-          child: Text(
-            displayValue.isEmpty ? placeholder : displayValue,
-            softWrap: true,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: displayValue.isEmpty
-                  ? BrandColors.urbanGraphite
-                  : BrandColors.darkText,
-              fontWeight: FontWeight.w700,
-              fontSize: 19,
+            child: Text(
+              visibleText,
+              softWrap: true,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: displayValue.isEmpty
+                    ? BrandColors.urbanGraphite
+                    : BrandColors.darkText,
+                fontWeight: FontWeight.w700,
+                fontSize: 19,
+              ),
             ),
           ),
         ),

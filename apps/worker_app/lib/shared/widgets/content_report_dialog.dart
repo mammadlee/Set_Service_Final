@@ -55,18 +55,19 @@ class _ContentReportDialogState extends State<_ContentReportDialog> {
         children: [
           DropdownButtonFormField<String>(
             value: _reason,
+            isExpanded: true,
+            itemHeight: null,
             decoration: const InputDecoration(labelText: 'Səbəb'),
             items: _reasons.entries
                 .map(
                   (entry) => DropdownMenuItem(
                     value: entry.key,
-                    child: Text(entry.value),
+                    child: Text(entry.value, softWrap: true),
                   ),
                 )
                 .toList(growable: false),
-            onChanged: (value) => setState(
-              () => _reason = value ?? 'inappropriate_content',
-            ),
+            onChanged: (value) =>
+                setState(() => _reason = value ?? 'inappropriate_content'),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -92,10 +93,7 @@ class _ContentReportDialogState extends State<_ContentReportDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(
-            ContentReportInput(
-              reason: _reason,
-              details: _details.text.trim(),
-            ),
+            ContentReportInput(reason: _reason, details: _details.text.trim()),
           ),
           child: const Text('Şikayət et'),
         ),

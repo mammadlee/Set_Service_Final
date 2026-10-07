@@ -13,6 +13,7 @@ import '../../../shared/widgets/constrained_page.dart';
 import '../../../shared/widgets/inline_message.dart';
 import '../../../shared/widgets/loading_button.dart';
 import '../../../shared/widgets/premium_components.dart';
+import '../../../shared/widgets/scrollable_centered_content.dart';
 import '../../../shared/widgets/status_pill.dart';
 import '../../assignments/data/models/assignment.dart';
 import '../../attendance/data/models/attendance.dart';
