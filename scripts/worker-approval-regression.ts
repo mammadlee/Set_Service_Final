@@ -103,9 +103,13 @@ function workerRecord(status = 'pending_approval', workerClass: 'A' | 'B' | 'C' 
 async function approve(
   workerClass?: 'A' | 'B' | 'C' | null,
   documentsOverride?: unknown[],
+  registrationOtpCodesOverride?: unknown[],
 ) {
   const pending = workerRecord();
   if (documentsOverride !== undefined) pending.documents = documentsOverride as typeof pending.documents;
+  if (registrationOtpCodesOverride !== undefined) {
+    pending.user.otp_codes = registrationOtpCodesOverride as typeof pending.user.otp_codes;
+  }
   let updateQuery: any;
   let auditQuery: any;
   let notificationQuery: any;
@@ -192,8 +196,45 @@ async function testApprovalDoesNotRequireDocuments(): Promise<void> {
   assert.equal(withoutDocuments.result.status, 'approved');
 }
 
+async function testApprovalDoesNotDependOnRetainedOtpHistory(): Promise<void> {
+  const afterOtpRetention = await approve(undefined, undefined, []);
+  assert.equal(afterOtpRetention.result.status, 'approved');
+}
+
+async function testIncompleteProfileReturnsExactMissingRequirements(): Promise<void> {
+  const incomplete: any = workerRecord();
+  incomplete.position = null;
+  incomplete.user.password_set_at = null;
+  incomplete.user.is_active = false;
+  incomplete.user.name = '   ';
+  incomplete.user.phone = '   ';
+
+  await withMethod(
+    prisma.worker as unknown as Record<string, unknown>,
+    'findFirst',
+    async () => incomplete,
+    () => assert.rejects(
+      () => WorkersService.approveWorker(
+        incomplete.id,
+        { sub: '30000000-0000-4000-8000-000000000001', role: 'admin' },
+      ),
+      (error: any) => error?.statusCode === 409
+        && error?.code === 'APPROVAL_PREREQUISITES_MISSING'
+        && error?.message === 'İşçi qeydiyyatının təsdiq üçün tələb olunan məlumatları tamamlanmayıb.'
+        && error?.details?.status === 'pending_approval'
+        && JSON.stringify(error?.details?.missing) === JSON.stringify([
+          'password_set',
+          'active_account',
+          'full_name',
+          'phone',
+          'position',
+        ]),
+    ),
+  );
+}
+
 async function testOnlyPendingWorkersCanBeApproved(): Promise<void> {
-  for (const status of ['approved', 'rejected'] as const) {
+  for (const status of ['pending_otp', 'approved', 'rejected'] as const) {
     const worker = workerRecord(status);
     await withMethod(
       prisma.worker as unknown as Record<string, unknown>,
@@ -293,6 +334,8 @@ async function main(): Promise<void> {
   testStrictApprovalPayload();
   await testApprovalWithOptionalClass();
   await testApprovalDoesNotRequireDocuments();
+  await testApprovalDoesNotDependOnRetainedOtpHistory();
+  await testIncompleteProfileReturnsExactMissingRequirements();
   await testOnlyPendingWorkersCanBeApproved();
   await testPendingListUsesExactDatabaseFilter();
   await testClassRemainsEditableAfterApproval();

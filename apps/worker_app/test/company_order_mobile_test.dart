@@ -112,6 +112,88 @@ void main() {
     },
   );
 
+  testWidgets(
+    'workplace address keeps focus and text when iOS keyboard insets rebuild the form',
+    (tester) async {
+      final fixture = _Fixture();
+      addTearDown(fixture.dispose);
+      _size(tester, 390, height: 844);
+      await tester.pumpWidget(fixture.wrap(const CompanyCreateOrderScreen()));
+      await tester.pumpAndSettle();
+
+      await _select(tester, CompanyStrings.chooseDepartment, _department);
+      await _next(tester);
+      await _select(tester, CompanyStrings.chooseSubdepartment, _subdepartment);
+      await _next(tester);
+      await _select(tester, CompanyStrings.choosePosition, _position);
+      await _next(tester);
+      await _next(tester);
+      await _date(
+        tester,
+        AppStrings.starts,
+        DateTime.now().add(const Duration(days: 2)),
+      );
+      await _date(
+        tester,
+        AppStrings.ends,
+        DateTime.now().add(const Duration(days: 3)),
+      );
+      await _next(tester);
+
+      final addressField = find.widgetWithText(
+        TextFormField,
+        CompanyStrings.address,
+      );
+      expect(addressField, findsOneWidget);
+      await tester.tap(addressField);
+      await tester.pump();
+
+      Finder editable() => find.descendant(
+        of: addressField,
+        matching: find.byType(EditableText),
+      );
+      final stateBeforeKeyboardInset = tester.state<EditableTextState>(
+        editable(),
+      );
+      expect(stateBeforeKeyboardInset.widget.focusNode.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+
+      const firstPart = 'Bakı şəhəri, Nəsimi rayonu';
+      await tester.enterText(addressField, firstPart);
+      await tester.pump();
+      expect(
+        tester.widget<EditableText>(editable()).controller.text,
+        firstPart,
+      );
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pump();
+
+      final stateAfterKeyboardInset = tester.state<EditableTextState>(
+        editable(),
+      );
+      expect(
+        identical(stateAfterKeyboardInset, stateBeforeKeyboardInset),
+        isTrue,
+      );
+      expect(stateAfterKeyboardInset.widget.focusNode.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(
+        tester.widget<EditableText>(editable()).controller.text,
+        firstPart,
+      );
+
+      await tester.enterText(addressField, _address);
+      await tester.pump();
+      expect(tester.widget<EditableText>(editable()).controller.text, _address);
+      expect(
+        tester.widget<EditableText>(editable()).focusNode.hasFocus,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   const orderViewports = <Size>[
     Size(320, 568),
     Size(360, 800),

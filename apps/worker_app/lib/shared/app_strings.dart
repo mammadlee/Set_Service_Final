@@ -501,7 +501,11 @@ class AppStrings {
     };
   }
 
-  static String backendError({String? code, String? fallback}) {
+  static String backendError({
+    String? code,
+    String? fallback,
+    Object? details,
+  }) {
     final mapped = switch (code) {
       'INVALID_OTP' || 'OTP_INVALID' => 'OTP kodu yanlışdır.',
       'VALIDATION_ERROR' => validationError,
@@ -570,6 +574,9 @@ class AppStrings {
       'RATING_NOT_AVAILABLE' =>
         'Reytinq yalnız çıxış qeydə alındıqdan sonra verilə bilər.',
       'INVALID_WORKER_CLASS' => 'İşçi sinfi düzgün deyil.',
+      'APPROVAL_PREREQUISITES_MISSING' => _approvalPrerequisitesMessage(
+        details,
+      ),
       _ => null,
     };
     if (mapped != null) return mapped;
@@ -579,6 +586,38 @@ class AppStrings {
       return fallback;
     }
     return unknownError;
+  }
+
+  static String _approvalPrerequisitesMessage(Object? details) {
+    final rawMissing = details is Map ? details['missing'] : null;
+    if (rawMissing is! List) {
+      return 'Təsdiq üçün tələb olunan qeydiyyat məlumatları tamamlanmayıb.';
+    }
+
+    const labels = <String, String>{
+      'status_pending_approval':
+          'hesab admin təsdiqini gözləyən statusda olmalıdır',
+      'password_set': 'şifrə yaradılmalıdır',
+      'active_account': 'hesab aktiv olmalıdır',
+      'registration_otp_consumed':
+          'telefon nömrəsinin OTP təsdiqi tamamlanmalıdır',
+      'full_name': 'ad və soyad daxil edilməlidir',
+      'phone': 'telefon nömrəsi daxil edilməlidir',
+      'position': 'ən azı bir vəzifə seçilməlidir',
+      'positions': 'ən azı bir vəzifə seçilməlidir',
+      'document:health_certificate':
+          'sağlamlıq arayışı yüklənib təhlükəsizlik yoxlamasından keçməlidir',
+      'document:criminal_record':
+          'məhkumluq arayışı yüklənib təhlükəsizlik yoxlamasından keçməlidir',
+    };
+    final missing = rawMissing
+        .whereType<String>()
+        .map((item) => labels[item] ?? item.replaceAll('_', ' '))
+        .toList(growable: false);
+    if (missing.isEmpty) {
+      return 'Təsdiq üçün tələb olunan qeydiyyat məlumatları tamamlanmayıb.';
+    }
+    return 'Təsdiqdən əvvəl bunlar tamamlanmalıdır: ${missing.join('; ')}.';
   }
 
   static bool _looksEnglish(String value) {

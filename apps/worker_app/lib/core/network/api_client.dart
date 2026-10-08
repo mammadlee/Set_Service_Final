@@ -314,7 +314,11 @@ ApiException mapDioException(Object error) {
     if (data is Map<String, dynamic>) {
       final code = data['code'] is String ? data['code'] as String : null;
       final fallback = data['error'] is String ? data['error'] as String : null;
-      var message = AppStrings.backendError(code: code, fallback: fallback);
+      var message = AppStrings.backendError(
+        code: code,
+        fallback: fallback,
+        details: data['details'],
+      );
       if (code == null && response?.statusCode == 429) {
         message = AppStrings.tooManyRequests;
       } else if (code == null &&

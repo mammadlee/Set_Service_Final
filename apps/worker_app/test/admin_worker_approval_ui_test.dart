@@ -108,8 +108,12 @@ void main() {
   ) async {
     final fixture = _ApprovalFixture((_) async {
       return _jsonResponse(409, <String, dynamic>{
-        'error': 'İşçini təsdiqləmək mümkün olmadı.',
+        'error': 'Worker registration prerequisites are incomplete.',
         'code': 'APPROVAL_PREREQUISITES_MISSING',
+        'details': <String, dynamic>{
+          'status': 'pending_approval',
+          'missing': <String>['password_set', 'position'],
+        },
       });
     });
     addTearDown(fixture.dispose);
@@ -137,7 +141,13 @@ void main() {
 
     expect(resolved, isFalse);
     expect(find.byType(AdminWorkerApprovalCard), findsOneWidget);
-    expect(find.text('İşçini təsdiqləmək mümkün olmadı.'), findsOneWidget);
+    expect(
+      find.text(
+        'Təsdiqdən əvvəl bunlar tamamlanmalıdır: '
+        'şifrə yaradılmalıdır; ən azı bir vəzifə seçilməlidir.',
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

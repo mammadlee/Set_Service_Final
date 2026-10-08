@@ -60,7 +60,7 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
         child: Form(
           key: _formKey,
           child: LayoutBuilder(
-            builder: (context, constraints) {
+            builder: (context, _) {
               final content = <Widget>[
                 if (_error != null) ...[
                   InlineMessage(
@@ -101,24 +101,10 @@ class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
                     ? () => _goToStep(_stepIndex - 1)
                     : null,
               );
-              final compactHeight =
-                  constraints.maxHeight < 520 ||
-                  MediaQuery.viewInsetsOf(context).bottom > 0;
-
-              if (compactHeight) {
-                return SingleChildScrollView(
-                  key: const ValueKey('company-order-form-scroll'),
-                  controller: _scrollController,
-                  padding: const EdgeInsets.only(bottom: 16),
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [...content, const SizedBox(height: 20), actions],
-                  ),
-                );
-              }
-
+              // Keep the editable subtree stable while iOS animates keyboard
+              // insets. Replacing this ListView with another ScrollView type
+              // disposes TextFormField's implicit FocusNode and closes the
+              // keyboard immediately after the first tap.
               return Column(
                 children: [
                   Expanded(

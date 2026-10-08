@@ -880,15 +880,7 @@ export async function approveWorker(
   const worker = await prisma.worker.findFirst({
     where: { id, deleted_at: null },
     include: {
-      user: {
-        include: {
-          otp_codes: {
-            where: { purpose: 'worker_registration', consumed_at: { not: null } },
-            select: { id: true },
-            take: 1,
-          },
-        },
-      },
+      user: true,
       positions: workerProfileInclude.positions,
     },
   });
@@ -903,7 +895,7 @@ export async function approveWorker(
   const missingPrerequisites = workerApprovalPrerequisites(worker);
   if (missingPrerequisites.length > 0) {
     throw Errors.conflict(
-      'Worker registration prerequisites are incomplete.',
+      'İşçi qeydiyyatının təsdiq üçün tələb olunan məlumatları tamamlanmayıb.',
       'APPROVAL_PREREQUISITES_MISSING',
       { status: worker.status, missing: missingPrerequisites }
     );
@@ -920,9 +912,6 @@ export async function approveWorker(
           password_set_at: { not: null },
           is_active: true,
           deleted_at: null,
-          otp_codes: {
-            some: { purpose: 'worker_registration', consumed_at: { not: null } },
-          },
         },
       },
       data: {
@@ -1595,14 +1584,16 @@ function workerApprovalPrerequisites(worker: {
     password_set_at: Date | null;
     is_active: boolean;
     deleted_at: Date | null;
-    otp_codes: { id: string }[];
   };
 }): string[] {
+  // completeWorkerRegistration consumes the phone OTP, sets password_set_at,
+  // and moves pending_otp -> pending_approval in one transaction. OTP rows are
+  // short-lived security records and may be removed by retention, so their
+  // later existence must not be used as durable registration state here.
   const missing: string[] = [];
   if (worker.status !== 'pending_approval') missing.push('status_pending_approval');
   if (!worker.user.password_set_at) missing.push('password_set');
   if (!worker.user.is_active || worker.user.deleted_at) missing.push('active_account');
-  if (worker.user.otp_codes.length === 0) missing.push('registration_otp_consumed');
   if (!worker.user.name.trim()) missing.push('full_name');
   if (!worker.user.phone.trim()) missing.push('phone');
   if (!worker.position?.trim() && worker.positions.length === 0) missing.push('position');
