@@ -25,6 +25,7 @@ import '../../notifications/presentation/widgets/notification_card.dart';
 import '../../taxonomy/data/taxonomy_repository.dart';
 import '../data/company_repository.dart';
 import '../data/company_kiosk.dart';
+import '../services/qr_poster_exporter.dart';
 import 'company_account_privacy_screen.dart';
 import 'company_auth_controller.dart';
 import 'company_strings.dart';

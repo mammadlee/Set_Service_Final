@@ -158,7 +158,7 @@ void main() {
     test('accepts only the whitelisted kiosk origin and capability path', () {
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'https://kiosk.setservice.az/kiosk#capability=abc',
+          'https://qr.setservice.az/kiosk#capability=abc',
         ),
         isTrue,
       );
@@ -170,13 +170,13 @@ void main() {
       );
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'https://kiosk.setservice.az.evil.test/kiosk#capability=abc',
+          'https://qr.setservice.az.evil.test/kiosk#capability=abc',
         ),
         isFalse,
       );
       expect(
         KioskSessionResult.isSecureKioskUrl(
-          'https://user:pass@kiosk.setservice.az/kiosk#capability=abc',
+          'https://user:pass@qr.setservice.az/kiosk#capability=abc',
         ),
         isFalse,
       );

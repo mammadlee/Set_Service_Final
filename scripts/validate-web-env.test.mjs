@@ -99,7 +99,7 @@ test('localhost and private network endpoints are rejected', () => {
 test('valid public HTTPS endpoints are accepted for every target', () => {
   const admin = validateReleaseEnvironment('admin', {
     VITE_API_BASE_URL: 'https://api.setservice.az/',
-    VITE_KIOSK_BASE_URL: 'https://kiosk.setservice.az/',
+    VITE_KIOSK_BASE_URL: 'https://qr.setservice.az/',
   });
   const company = validateReleaseEnvironment('company', {
     VITE_API_BASE_URL: 'https://api.setservice.az/v1',
@@ -112,7 +112,7 @@ test('valid public HTTPS endpoints are accepted for every target', () => {
   });
 
   assert.equal(admin.VITE_API_BASE_URL, 'https://api.setservice.az');
-  assert.equal(admin.VITE_KIOSK_BASE_URL, 'https://kiosk.setservice.az');
+  assert.equal(admin.VITE_KIOSK_BASE_URL, 'https://qr.setservice.az');
   assert.equal(company.VITE_API_BASE_URL, 'https://api.setservice.az/v1');
   assert.equal(kiosk.VITE_API_BASE_URL, 'https://api.setservice.az/v1');
   assert.equal(worker.STAGING_API_BASE_URL, 'https://api.setservice.az/v1');

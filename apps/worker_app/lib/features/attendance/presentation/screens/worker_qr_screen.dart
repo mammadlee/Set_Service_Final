@@ -93,38 +93,19 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
   }
 
   Future<void> _submitScannedQr() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _success = null;
-    });
-
-    bool hasOpenAttendance;
-    try {
-      final page = await context.read<AttendanceRepository>().listOpen();
-      hasOpenAttendance = page.data.any((log) => log.isOpen);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = _friendlyAttendanceError(error);
-      });
-      return;
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = AppStrings.attendanceLoadFailed;
-      });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() => _loading = false);
-    await _submit(checkIn: !hasOpenAttendance);
+    // Let the API identify the order encoded in the signed token. Looking at
+    // any open attendance first is ambiguous when a worker has more than one
+    // active assignment: a QR for a new order could be sent as checkout for a
+    // different order. Checkout is attempted only after this exact assignment
+    // reports that it was already checked in.
+    await _submit(checkIn: true, fallbackToCheckout: true);
   }
 
-  Future<void> _submit({required bool checkIn}) async {
+  Future<void> _submit({
+    required bool checkIn,
+    bool fallbackToCheckout = false,
+    bool confirmCheckout = true,
+  }) async {
     final qrToken = _qrController.text.trim();
     if (qrToken.isEmpty) {
       setState(() {
@@ -135,7 +116,7 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
     }
 
     final repository = context.read<AttendanceRepository>();
-    if (!checkIn && !await _confirmCheckout()) return;
+    if (!checkIn && confirmCheckout && !await _confirmCheckout()) return;
     if (!mounted) return;
 
     setState(() {
@@ -164,6 +145,15 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
       _qrController.clear();
       _notesController.clear();
     } on ApiException catch (error) {
+      if (checkIn &&
+          fallbackToCheckout &&
+          error.code == 'ATTENDANCE_ALREADY_CHECKED_IN') {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        if (!await _confirmCheckout() || !mounted) return;
+        await _submit(checkIn: false, confirmCheckout: false);
+        return;
+      }
       if (!mounted) return;
       _error = _friendlyAttendanceError(error);
     } catch (_) {

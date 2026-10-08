@@ -253,6 +253,27 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text(CompanyStrings.qrOpen), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text(CompanyStrings.qrShare),
+        160,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(CompanyStrings.qrShare), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text(CompanyStrings.qrExportPng),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(CompanyStrings.qrExportPng), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text(CompanyStrings.qrExportPdf),
+        160,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(CompanyStrings.qrExportPdf), findsOneWidget);
       expect(find.textContaining('capability='), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pageBack();
@@ -359,6 +380,15 @@ void main() {
       );
       expect(kiosk.id, 'kiosk-1');
       expect(fixture.requests.where((r) => r.method == 'POST'), isEmpty);
+      // Recreating the repository simulates an app restart: the association
+      // must come back from the backend, not from a local-only cache.
+      final reopenedRepository = CompanyRepository(
+        apiClient: fixture.client,
+        tokenStorage: fixture.storage,
+      );
+      final reopened = await reopenedRepository.getOrderQrState('order-1');
+      expect(reopened.kiosks.single.orderId, 'order-1');
+      expect(reopened.kiosks.single.kioskUrl, contains('/kiosk#capability='));
       fixture.eligible = false;
       await expectLater(
         fixture.repo.createOrderQr(MobileOrder.fromJson(_order())),
@@ -624,9 +654,10 @@ class _Fixture {
     'id': 'kiosk-1',
     'name': 'İş yerinin əsas giriş QR ekranı',
     'status': 'active',
+    'company_name': 'Test müəssisə',
     'active_session': active ? {'order_id': 'order-1'} : null,
     'kiosk_url':
-        'https://kiosk.setservice.az/kiosk#capability=private-test-capability',
+        'https://qr.setservice.az/kiosk#capability=private-test-capability',
   };
   Future<void> dispose() => coordinator.dispose();
 }

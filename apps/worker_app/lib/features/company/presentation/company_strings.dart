@@ -14,7 +14,7 @@ abstract final class CompanyStrings {
   static const addressHint = 'İşin görüləcəyi məkanın tam ünvanı';
   static const additionalInformation = 'Əlavə məlumat';
   static const shift = 'Tarix və saat';
-  static const createQr = 'QR yarat';
+  static const createQr = 'QR kod yarat';
   static const viewQr = 'QR-a bax';
   static const qrTitle = 'Giriş-çıxış QR kodu';
   static const qrReady = 'QR aktivdir';
@@ -28,6 +28,12 @@ abstract final class CompanyStrings {
   static const qrOpen = 'QR ekranını aç';
   static const qrCopy = 'QR linkini köçür';
   static const qrCopied = 'QR linki köçürüldü.';
+  static const qrShare = 'QR səhifəsini paylaş';
+  static const qrExportPng = 'PNG posterini ixrac et';
+  static const qrExportPdf = 'PDF posterini ixrac et';
+  static const qrPosterExported = 'Poster paylaşım üçün hazırlandı.';
+  static const qrPosterHelp =
+      'Poster sabit QR səhifəsinə keçid verir. Səhifədəki dinamik kod hər 30 saniyədə yenilənir və davamiyyət yalnız qəbul olunmuş işçilər üçün qeydə alınır.';
   static const qrDeactivate = 'QR-ı deaktiv et';
   static const qrDeactivateConfirm =
       'QR deaktiv edilsin? İşçilər bu QR ilə giriş-çıxış edə bilməyəcək.';

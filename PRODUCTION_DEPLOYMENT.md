@@ -499,7 +499,7 @@ A later phase can deploy reviewed static builds to:
 
 - `https://admin.setservice.az`
 - `https://company.setservice.az`
-- `https://kiosk.setservice.az`
+- `https://qr.setservice.az`
 
 Each production build must inject `VITE_API_BASE_URL=https://api.setservice.az`.
 Update `CORS_ORIGINS` only when those domains are live.
@@ -511,7 +511,7 @@ release with the production API supplied at compile time, for example:
 cd apps/worker_app
 flutter build appbundle --release \
   --dart-define=BASE_URL=https://api.setservice.az \
-  --dart-define=KIOSK_BASE_URL=https://kiosk.setservice.az
+  --dart-define=KIOSK_BASE_URL=https://qr.setservice.az
 ```
 
 Mobile signing, store credentials, Firebase files, and release certificates stay

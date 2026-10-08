@@ -58,7 +58,7 @@ The app uses:
 - Provider/ChangeNotifier for app state
 - Typed models for backend responses
 - `--dart-define=BASE_URL=...` for API environment configuration
-- `--dart-define=KIOSK_BASE_URL=...` to override the exact trusted kiosk origin/path base (defaults to `https://kiosk.setservice.az`)
+- `--dart-define=KIOSK_BASE_URL=...` to override the exact trusted kiosk origin/path base (defaults to `https://qr.setservice.az`)
 
 ## Backend Requirements
 

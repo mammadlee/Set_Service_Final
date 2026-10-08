@@ -150,6 +150,8 @@ async function main() {
   const order = rows.order.find((item) => item.id === createdId)!;
   assert.equal(order.status, 'published');
   assert.equal(order.company_id, companyA.id);
+  assert.equal(order.location, 'Bakı, iş yeri');
+  assert.equal((created.response as Row).location, 'Bakı, iş yeri');
   assert.equal(rows.outboxEvent[0].aggregate_id, order.id);
   cases += 1;
   const otherOrder = { ...order, id: 'order-b', company_id: companyB.id };
@@ -231,7 +233,11 @@ async function main() {
   assert.equal(active.active_session?.order_id, order.id);
   const initialQr = await service.generateKioskQrToken(kiosk.kiosk_token);
   assert.equal(qrLib.verifyAttendanceQrToken(initialQr.token).valid, true);
-  cases += 2;
+  assert.equal(initialQr.refresh_after_seconds, 30);
+  assert.ok(initialQr.expires_at instanceof Date);
+  const qrTtlSeconds = (initialQr.expires_at.getTime() - Date.now()) / 1000;
+  assert.ok(qrTtlSeconds > 29 && qrTtlSeconds <= 30, `unexpected QR TTL: ${qrTtlSeconds}`);
+  cases += 4;
 
   // Retrying activation preserves the activation and previously issued grants.
   const retry = await service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id });

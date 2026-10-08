@@ -941,7 +941,7 @@ function throwQrUseError(kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_
   if (kind === 'qr_replayed') {
     throw Errors.conflict('This QR token was already used by the worker.', 'QR_TOKEN_REPLAYED');
   }
-  throw Errors.unauthorized('QR token yanlÄ±ÅŸdÄ±r.', 'QR_TOKEN_INVALID');
+  throw Errors.unauthorized('QR token yanlışdır.', 'QR_TOKEN_INVALID');
 }
 
 async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord> {

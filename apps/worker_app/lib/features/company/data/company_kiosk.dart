@@ -5,6 +5,7 @@ class CompanyVenueKiosk {
     required this.status,
     required this.orderId,
     required this.kioskUrl,
+    this.companyName,
   });
 
   final String id;
@@ -12,6 +13,7 @@ class CompanyVenueKiosk {
   final String status;
   final String? orderId;
   final String? kioskUrl;
+  final String? companyName;
 
   factory CompanyVenueKiosk.fromJson(Map<String, dynamic> json) {
     final session = json['active_session'] as Map<String, dynamic>?;
@@ -21,6 +23,7 @@ class CompanyVenueKiosk {
       status: json['status'] as String? ?? '',
       orderId: session?['order_id'] as String?,
       kioskUrl: json['kiosk_url'] as String?,
+      companyName: json['company_name'] as String?,
     );
   }
 }

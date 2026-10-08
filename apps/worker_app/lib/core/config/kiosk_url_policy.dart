@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 class KioskUrlPolicy {
   const KioskUrlPolicy._();
 
-  static const _productionBaseUrl = 'https://kiosk.setservice.az';
+  static const _productionBaseUrl = 'https://qr.setservice.az';
   static const _configuredBaseUrl = String.fromEnvironment(
     'KIOSK_BASE_URL',
     defaultValue: _productionBaseUrl,

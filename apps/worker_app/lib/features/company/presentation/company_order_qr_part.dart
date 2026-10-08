@@ -73,7 +73,9 @@ class _CompanyOrderQrCardState extends State<CompanyOrderQrCard> {
 
   Future<void> _showKiosk(CompanyVenueKiosk kiosk) async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => _CompanyQrScreen(kiosk: kiosk)),
+      MaterialPageRoute(
+        builder: (_) => _CompanyQrScreen(kiosk: kiosk, order: widget.order),
+      ),
     );
     if (changed == true && mounted) await _load();
   }
@@ -139,8 +141,9 @@ class _CompanyOrderQrCardState extends State<CompanyOrderQrCard> {
 }
 
 class _CompanyQrScreen extends StatefulWidget {
-  const _CompanyQrScreen({required this.kiosk});
+  const _CompanyQrScreen({required this.kiosk, required this.order});
   final CompanyVenueKiosk kiosk;
+  final MobileOrder order;
 
   @override
   State<_CompanyQrScreen> createState() => _CompanyQrScreenState();
@@ -149,6 +152,86 @@ class _CompanyQrScreen extends StatefulWidget {
 class _CompanyQrScreenState extends State<_CompanyQrScreen> {
   bool _acting = false;
   String? _error;
+
+  QrPosterData? get _posterData {
+    final url = widget.kiosk.kioskUrl;
+    if (url == null || !KioskUrlPolicy.isAllowed(url)) return null;
+    final order = widget.order;
+    final schedule = switch ((order.startDatetime, order.endDatetime)) {
+      (final start?, final end?) =>
+        '${DateFormat('dd.MM.yyyy HH:mm').format(start)} - ${DateFormat('HH:mm').format(end)}',
+      (final start?, null) => DateFormat('dd.MM.yyyy HH:mm').format(start),
+      _ => null,
+    };
+    return QrPosterData(
+      stableUrl: url,
+      orderId: order.id,
+      orderTitle: order.title,
+      companyName: widget.kiosk.companyName?.trim().isNotEmpty == true
+          ? widget.kiosk.companyName!
+          : order.companyName,
+      location: order.location,
+      schedule: schedule,
+    );
+  }
+
+  Future<void> _shareLink(BuildContext shareContext) async {
+    final data = _posterData;
+    if (_acting || data == null) return;
+    setState(() {
+      _acting = true;
+      _error = null;
+    });
+    try {
+      await QrPosterShareService.shareLink(
+        data,
+        sharePositionOrigin: _shareOrigin(shareContext),
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'QR səhifəsini paylaşmaq mümkün olmadı.');
+      }
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
+  }
+
+  Future<void> _sharePoster(
+    BuildContext shareContext, {
+    required bool pdf,
+  }) async {
+    final data = _posterData;
+    if (_acting || data == null) return;
+    setState(() {
+      _acting = true;
+      _error = null;
+    });
+    try {
+      final origin = _shareOrigin(shareContext);
+      if (pdf) {
+        await QrPosterShareService.sharePdf(data, sharePositionOrigin: origin);
+      } else {
+        await QrPosterShareService.sharePng(data, sharePositionOrigin: origin);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(CompanyStrings.qrPosterExported)),
+        );
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Posteri paylaşmaq mümkün olmadı.');
+    } finally {
+      if (mounted) setState(() => _acting = false);
+    }
+  }
+
+  Rect _shareOrigin(BuildContext context) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is RenderBox) {
+      return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+    }
+    return const Rect.fromLTWH(0, 0, 1, 1);
+  }
 
   Future<void> _open() async {
     final url = widget.kiosk.kioskUrl;
@@ -249,6 +332,45 @@ class _CompanyQrScreenState extends State<_CompanyQrScreen> {
                   : null,
               icon: const Icon(Icons.copy),
               label: const Text(CompanyStrings.qrCopy),
+            ),
+            const SizedBox(height: 10),
+            Builder(
+              builder: (shareContext) => OutlinedButton.icon(
+                onPressed: allowed && !_acting
+                    ? () => _shareLink(shareContext)
+                    : null,
+                icon: const Icon(Icons.share_outlined),
+                label: const Text(CompanyStrings.qrShare),
+              ),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              CompanyStrings.qrPosterHelp,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Builder(
+              builder: (shareContext) => Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: allowed && !_acting
+                        ? () => _sharePoster(shareContext, pdf: false)
+                        : null,
+                    icon: const Icon(Icons.image_outlined),
+                    label: const Text(CompanyStrings.qrExportPng),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: allowed && !_acting
+                        ? () => _sharePoster(shareContext, pdf: true)
+                        : null,
+                    icon: const Icon(Icons.picture_as_pdf_outlined),
+                    label: const Text(CompanyStrings.qrExportPdf),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 32),
             const Divider(),

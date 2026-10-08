@@ -68,6 +68,46 @@ test('valid company-created kiosk shows QR with header capability, preserved Aze
   }
 });
 
+test('active QR shows a countdown and refreshes from the 30-second server interval', async () => {
+  let qrCount = 0;
+  const firstQr = {
+    ...qr,
+    token: 'signed-attendance-token-first',
+    expires_at: new Date(Date.now() + 30000).toISOString(),
+    refresh_after_seconds: 30,
+  };
+  const secondQr = {
+    ...firstQr,
+    token: 'signed-attendance-token-second',
+    expires_at: new Date(Date.now() + 30000).toISOString(),
+  };
+  const f = fixture((url) => ({
+    status: 200,
+    body: url.endsWith('/context') ? active : qrCount++ === 0 ? firstQr : secondQr,
+  }));
+  await drain();
+
+  assert.match(f.nodes.get('qrImage').src, /signed-attendance-token-first/);
+  assert.ok(Number(f.nodes.get('countdownValue').textContent) > 0);
+  assert.match(f.nodes.get('countdownText').textContent, /saniyədən sonra/);
+  const refreshTimer = [...f.timeouts.values()].find((item) => item.delay === 28800);
+  assert.ok(refreshTimer, 'refresh must be scheduled 1.2s before the 30s expiry');
+
+  refreshTimer.fn();
+  await drain();
+  await drain();
+  assert.match(f.nodes.get('qrImage').src, /signed-attendance-token-second/);
+});
+
+test('expired QR is hidden and marked for refresh', async () => {
+  const f = fixture((url) => ({ status: 200, body: url.endsWith('/context') ? active : qr }));
+  await drain();
+  vm.runInContext('qrExpiresAt = Date.now() - 1000; updateCountdown()', f.context);
+  assert.equal(f.nodes.get('qrImage').src, '');
+  assert.equal(f.nodes.get('statusBadge').textContent, 'Yenilənir');
+  assert.equal(f.nodes.get('qrPlaceholder').textContent, 'QR yenilənir');
+});
+
 for (const status of [400, 401, 403, 404, 410]) {
   test(`invalid or disabled capability HTTP ${status} clears QR and stops requests`, async () => {
     const f = fixture(() => ({ status, body: { code: 'VENUE_KIOSK_DISABLED' } }));
