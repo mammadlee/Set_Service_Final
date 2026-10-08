@@ -7,6 +7,8 @@ process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = 'postgresql://unused:unused@127.0.0.1:1/qr_regression';
 process.env.QR_HMAC_SECRET = 'local-regression-only-qr-secret-32-characters';
 process.env.PUSH_NOTIFICATIONS_ENABLED = 'false';
+process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+process.env.KIOSK_TOKEN_ENCRYPTION_SECRET = 'local-regression-only-kiosk-secret-32-characters';
 
 type Row = Record<string, any>;
 const rows: Record<string, Row[]> = Object.fromEntries([
@@ -229,8 +231,46 @@ async function main() {
   const eligible = await service.listKioskEligibleOrders(companyA.user_id, 'company', {});
   assert.deepEqual(eligible.data.map((item) => [item.id, item.accepted_assignment_count]), [[order.id, 0]]);
   const kiosk = await service.createVenueKiosk(companyA.user_id, 'company', { name: 'Əsas giriş' });
+  assert.equal(new URL(kiosk.kiosk_url).origin, 'https://qr.setservice.az');
+  assert.equal(new URL(kiosk.kiosk_url).pathname, '/kiosk');
+  assert.equal(new URLSearchParams(new URL(kiosk.kiosk_url).hash.slice(1)).get('capability'), kiosk.kiosk_token);
   const active = await service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id });
   assert.equal(active.active_session?.order_id, order.id);
+  assert.equal(active.kiosk_url, kiosk.kiosk_url);
+
+  // The old backend emitted its configured host even for existing encrypted
+  // kiosks. Reproduce that response, then repair the config without rotating
+  // tokens or editing the persisted company/order association.
+  process.env.KIOSK_PUBLIC_BASE_URL = 'https://kiosk.setservice.az';
+  const legacyResponse = (await service.listVenueKiosks(companyA.user_id, 'company', {})).data[0];
+  assert.equal(new URL(legacyResponse.kiosk_url!).host, 'kiosk.setservice.az');
+  const persistedBefore = JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]);
+  process.env.NODE_ENV = 'production';
+  try {
+    for (const invalidBase of [undefined, 'https://kiosk.setservice.az', 'http://qr.setservice.az', 'https://external.example']) {
+      if (invalidBase === undefined) delete process.env.KIOSK_PUBLIC_BASE_URL;
+      else process.env.KIOSK_PUBLIC_BASE_URL = invalidBase;
+      process.env.PUBLIC_APP_URL = 'https://qr.setservice.az';
+      await rejectsCode(() => service.createVenueKiosk(companyA.user_id, 'company', { name: 'Invalid config' }), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.deactivateVenueKiosk(companyA.user_id, 'company', kiosk.id), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.disableVenueKiosk(companyA.user_id, 'company', kiosk.id), 'KIOSK_URL_CONFIG_INVALID');
+      assert.equal(JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]), persistedBefore,
+        'invalid kiosk URL config must fail before create/activation persistence');
+    }
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az/kiosk/';
+    const recovered = (await service.listVenueKiosks(companyA.user_id, 'company', {})).data[0];
+    assert.equal(recovered.kiosk_url, kiosk.kiosk_url);
+    assert.equal(recovered.id, kiosk.id);
+    assert.equal(recovered.active_session?.id, active.active_session?.id);
+    assert.equal(recovered.active_session?.order_id, order.id);
+    assert.equal(JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]), persistedBefore);
+    cases += 3;
+  } finally {
+    process.env.NODE_ENV = 'test';
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+    delete process.env.PUBLIC_APP_URL;
+  }
   const initialQr = await service.generateKioskQrToken(kiosk.kiosk_token);
   assert.equal(qrLib.verifyAttendanceQrToken(initialQr.token).valid, true);
   assert.equal(initialQr.refresh_after_seconds, 30);
@@ -303,6 +343,16 @@ async function main() {
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
   const accepted = await assignmentsService.acceptAssignment(assignmentId, worker.user_id, 'worker');
   assert.equal(accepted.status, 'accepted');
+  process.env.NODE_ENV = 'production';
+  process.env.KIOSK_PUBLIC_BASE_URL = 'https://kiosk.setservice.az';
+  const sessionCountBefore = rows.kioskSession.length;
+  try {
+    await rejectsCode(() => service.createKioskSession(companyA.user_id, 'company', { assignment_id: assignmentId }), 'KIOSK_URL_CONFIG_INVALID');
+    assert.equal(rows.kioskSession.length, sessionCountBefore);
+  } finally {
+    process.env.NODE_ENV = 'test';
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+  }
   cases += 2;
   await rejectsCode(() => service.checkIn('worker-user-b', 'worker', { qr_token: initialQr.token, assignment_id: assignmentId }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
   worker.status = 'pending_approval';

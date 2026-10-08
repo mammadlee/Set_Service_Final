@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
 import { sendPushToUser } from '../../lib/fcm';
 import { logger } from '../../lib/logger';
+import { buildKioskPublicUrl, resolveKioskPublicBaseUrl } from '../../lib/kiosk-public-url';
 import {
   AttendanceQrPayload,
   generateAttendanceQrToken,
@@ -93,6 +94,7 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
   }
 
   const expiresAt = parseKioskExpiry(input.expires_at);
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const kioskToken = generateKioskDisplayToken();
@@ -109,7 +111,7 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
       return {
         ...toKioskSessionResponse(session),
         kiosk_token: kioskToken,
-        kiosk_url: buildKioskUrl(kioskToken),
+        kiosk_url: buildKioskPublicUrl(kioskToken, kioskPublicBase),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) continue;
@@ -174,6 +176,7 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
   }
   const name = input.name.trim();
   const locationLabel = input.location_label?.trim();
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const kioskToken = generateKioskDisplayToken();
@@ -190,7 +193,7 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
       return {
         ...toVenueKioskPublicResponse(kiosk),
         kiosk_token: kioskToken,
-        kiosk_url: buildKioskUrl(kioskToken),
+        kiosk_url: buildKioskPublicUrl(kioskToken, kioskPublicBase),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) continue;
@@ -216,7 +219,7 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
     data: (await AttendanceRepository.listVenueKiosks({
       deleted_at: null,
       ...(companyId ? { company_id: companyId } : {}),
-    })).map(toVenueKioskManagementResponse),
+    })).map((kiosk) => toVenueKioskManagementResponse(kiosk)),
   };
 }
 
@@ -272,6 +275,7 @@ export async function activateVenueKiosk(
     throw Errors.forbidden('Kiosk yalnız öz müəssisəsinin sifarişləri üçün aktiv edilə bilər.', 'FORBIDDEN');
   }
   assertKioskEligibleOrder(order);
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
   const activated = await AttendanceRepository.activateVenueKiosk({
     kioskId: kiosk.id,
@@ -281,7 +285,7 @@ export async function activateVenueKiosk(
     expiresAt: parseOptionalFutureDate(input.expires_at, 'Kiosk aktiv sessiyasının bitmə tarixi gələcək tarix olmalıdır.'),
   });
   if (!activated) throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
-  return toVenueKioskManagementResponse(activated);
+  return toVenueKioskManagementResponse(activated, kioskPublicBase);
 }
 
 export async function deactivateVenueKiosk(userId: string, roleValue: string, id: string) {
@@ -291,9 +295,10 @@ export async function deactivateVenueKiosk(userId: string, roleValue: string, id
   }
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
   const kiosk = await AttendanceRepository.deactivateVenueKiosk({ id, companyId });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskManagementResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
 export async function disableVenueKiosk(userId: string, roleValue: string, id: string) {
@@ -303,9 +308,10 @@ export async function disableVenueKiosk(userId: string, roleValue: string, id: s
   }
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
   const kiosk = await AttendanceRepository.disableVenueKiosk({ id, companyId });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskManagementResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
 export async function revokeKioskSession(userId: string, roleValue: string, id: string) {
@@ -731,12 +737,6 @@ function kioskEncryptionKey(): Buffer {
   return crypto.createHash('sha256').update(secret).digest();
 }
 
-function buildKioskUrl(token: string): string {
-  const base = (process.env.KIOSK_PUBLIC_BASE_URL ?? process.env.PUBLIC_APP_URL ?? '').replace(/\/+$/, '');
-  const path = `/kiosk#capability=${encodeURIComponent(token)}`;
-  return base ? `${base}${path}` : path;
-}
-
 function toKioskSessionResponse(session: KioskSessionRecord) {
   return {
     id: session.id,
@@ -795,12 +795,12 @@ function toVenueKioskPublicResponse(kiosk: VenueKioskRecord) {
   };
 }
 
-function toVenueKioskManagementResponse(kiosk: VenueKioskRecord) {
+function toVenueKioskManagementResponse(kiosk: VenueKioskRecord, kioskPublicBase?: string) {
   const response = toVenueKioskPublicResponse(kiosk);
   const kioskToken = decryptKioskToken(kiosk.token_ciphertext);
   return {
     ...response,
-    kiosk_url: kioskToken ? buildKioskUrl(kioskToken) : undefined,
+    kiosk_url: kioskToken ? buildKioskPublicUrl(kioskToken, kioskPublicBase) : undefined,
   };
 }
 

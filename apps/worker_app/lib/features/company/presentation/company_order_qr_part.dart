@@ -153,9 +153,14 @@ class _CompanyQrScreenState extends State<_CompanyQrScreen> {
   bool _acting = false;
   String? _error;
 
+  // Every action uses the same validated destination, including kiosks loaded
+  // from an older backend. Never launch/copy/share the unvalidated API value.
+  String? get _safeKioskUrl =>
+      KioskUrlPolicy.resolve(widget.kiosk.kioskUrl ?? '');
+
   QrPosterData? get _posterData {
-    final url = widget.kiosk.kioskUrl;
-    if (url == null || !KioskUrlPolicy.isAllowed(url)) return null;
+    final url = _safeKioskUrl;
+    if (url == null) return null;
     final order = widget.order;
     final schedule = switch ((order.startDatetime, order.endDatetime)) {
       (final start?, final end?) =>
@@ -234,8 +239,8 @@ class _CompanyQrScreenState extends State<_CompanyQrScreen> {
   }
 
   Future<void> _open() async {
-    final url = widget.kiosk.kioskUrl;
-    if (url == null || !KioskUrlPolicy.isAllowed(url)) {
+    final url = _safeKioskUrl;
+    if (url == null) {
       setState(() => _error = AppStrings.kioskUrlBlocked);
       return;
     }
@@ -278,8 +283,8 @@ class _CompanyQrScreenState extends State<_CompanyQrScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final url = widget.kiosk.kioskUrl;
-    final allowed = url != null && KioskUrlPolicy.isAllowed(url);
+    final url = _safeKioskUrl;
+    final allowed = url != null;
     return Scaffold(
       appBar: AppBar(title: const Text(CompanyStrings.qrTitle)),
       body: ConstrainedPage(

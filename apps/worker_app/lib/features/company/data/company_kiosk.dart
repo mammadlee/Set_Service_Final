@@ -1,3 +1,5 @@
+import '../../../core/config/kiosk_url_policy.dart';
+
 class CompanyVenueKiosk {
   const CompanyVenueKiosk({
     required this.id,
@@ -22,7 +24,7 @@ class CompanyVenueKiosk {
       name: json['name'] as String? ?? '',
       status: json['status'] as String? ?? '',
       orderId: session?['order_id'] as String?,
-      kioskUrl: json['kiosk_url'] as String?,
+      kioskUrl: KioskUrlPolicy.resolve(json['kiosk_url'] as String? ?? ''),
       companyName: json['company_name'] as String?,
     );
   }

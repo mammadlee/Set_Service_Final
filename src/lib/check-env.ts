@@ -1,4 +1,5 @@
 import { JWT_TTL_SPECS, JwtTtlKey, jwtTtlIssue } from './jwt-ttl';
+import { kioskPublicUrlIssue } from './kiosk-public-url';
 
 interface EnvVar {
   key: string;
@@ -217,6 +218,8 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   validateUrl(errors, 'S3_ENDPOINT', ['http:', 'https:']);
   validateUrl(errors, 'STORAGE_PUBLIC_BASE_URL', ['http:', 'https:'], true);
   validateUrl(errors, 'MALWARE_SCANNER_URL', ['http:', 'https:']);
+  const kioskUrlIssue = kioskPublicUrlIssue();
+  if (kioskUrlIssue) errors.push(`- ${kioskUrlIssue}`);
   validateTrustedProxyCidrs(errors);
   validateCorsOrigins(errors, isProduction);
 

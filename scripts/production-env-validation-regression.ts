@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { checkEnv } from '../src/lib/check-env';
+import { buildKioskPublicUrl, kioskPublicUrlIssue, resolveKioskPublicBaseUrl } from '../src/lib/kiosk-public-url';
 
 const originalEnvironment = { ...process.env };
 const originalExit = process.exit;
@@ -28,6 +29,7 @@ const productionEnvironment = environment([
   ['JWT_AUDIENCE', 'set-service-regression-clients'],
   ['QR_HMAC_SECRET', credential('qr-hmac')],
   ['KIOSK_TOKEN_ENCRYPTION_SECRET', credential('kiosk-encryption')],
+  ['KIOSK_PUBLIC_BASE_URL', 'https://qr.setservice.az'],
   ['OTP_PEPPER', credential('otp-pepper')],
   ['PROVIDER_OUTBOX_ENCRYPTION_SECRET', credential('outbox-encryption')],
   ['OUTBOX_WORKER_ENABLED', 'false'],
@@ -69,6 +71,49 @@ class ValidationExit extends Error {
 }
 
 function main(): void {
+  const token = Buffer.alloc(32, 7).toString('base64url');
+  const expectedUrl = `https://qr.setservice.az/kiosk#capability=${token}`;
+  for (const base of [
+    'https://qr.setservice.az', 'https://qr.setservice.az/',
+    'https://qr.setservice.az/kiosk', 'https://qr.setservice.az/kiosk/',
+    ' https://qr.setservice.az/ ',
+  ]) {
+    const environment = { NODE_ENV: 'production', KIOSK_PUBLIC_BASE_URL: base };
+    assert.equal(kioskPublicUrlIssue(environment), null);
+    assert.equal(buildKioskPublicUrl(token, resolveKioskPublicBaseUrl(environment)), expectedUrl);
+  }
+  for (const base of [
+    undefined, '', 'https://kiosk.setservice.az', 'https://external.example',
+    'http://qr.setservice.az', 'https://qr.setservice.az:444',
+    'https://qr.setservice.az.evil.example', 'https://qr.setservice.az/other',
+    'https://qr.setservice.az/kiosk/kiosk', 'https://qr.setservice.az/kiosk/../',
+    'https://qr.setservice.az/%6biosk', 'https://user@qr.setservice.az',
+    'https://@qr.setservice.az', 'https://qr.setservice.az?next=external',
+    `https://qr.setservice.az#capability=${token}`, 'https://qr.setservice.az?',
+    'https://qr.setservice.az#', 'https://qr.setservice.az\\kiosk',
+    'https://qr.setservice.az/\nkiosk',
+  ]) {
+    const environment = {
+      NODE_ENV: 'production', KIOSK_PUBLIC_BASE_URL: base,
+      PUBLIC_APP_URL: 'https://qr.setservice.az',
+    };
+    assert.ok(kioskPublicUrlIssue(environment), `must reject unsafe or missing kiosk base`);
+    assert.throws(() => resolveKioskPublicBaseUrl(environment), (error: any) =>
+      error.code === 'KIOSK_URL_CONFIG_INVALID' && !error.message.includes(token));
+    const validation = validate({
+      KIOSK_PUBLIC_BASE_URL: base,
+      PUBLIC_APP_URL: 'https://qr.setservice.az',
+    });
+    assert.equal(validation.ok, false);
+    assert.match(validation.output, /KIOSK_PUBLIC_BASE_URL/);
+    assert.equal(validation.output.includes(token), false);
+  }
+  assert.equal(buildKioskPublicUrl(token, resolveKioskPublicBaseUrl({ NODE_ENV: 'test' })),
+    `/kiosk#capability=${token}`);
+  assert.equal(buildKioskPublicUrl(token, resolveKioskPublicBaseUrl({
+    NODE_ENV: 'development', KIOSK_PUBLIC_BASE_URL: 'http://localhost:5174/kiosk/',
+  })), `http://localhost:5174/kiosk#capability=${token}`);
+
   const resend = validate(environment([
     ['EMAIL_PROVIDER', 'resend'],
     ['RESEND_API_KEY', credential('resend-api')],

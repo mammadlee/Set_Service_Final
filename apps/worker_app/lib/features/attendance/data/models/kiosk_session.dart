@@ -22,9 +22,9 @@ class KioskSessionResult {
   final int refreshIntervalSeconds;
 
   factory KioskSessionResult.fromJson(Map<String, dynamic> json) {
-    final kioskUrl = json['kiosk_url'] as String? ?? '';
-    if (!isSecureKioskUrl(kioskUrl)) {
-      throw const FormatException('Kiosk ünvanı HTTPS istifadə etməlidir.');
+    final kioskUrl = KioskUrlPolicy.resolve(json['kiosk_url'] as String? ?? '');
+    if (kioskUrl == null) {
+      throw const FormatException('Etibarsız QR linkinin açılması bloklandı.');
     }
 
     return KioskSessionResult(

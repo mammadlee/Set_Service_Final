@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:worker_app/core/network/api_client.dart';
@@ -27,6 +27,8 @@ const _subdepartment = 'Restoran və böyük tədbirlərin banket xidməti';
 const _position = 'Beynəlxalq tədbirlər üzrə baş ofisiant köməkçisi';
 const _address =
     'Bakı şəhəri, Nəsimi rayonu, Üzeyir Hacıbəyli küçəsi 123, üçüncü mərtəbə, böyük tədbirlər zalının xidməti girişi';
+const _canonicalKioskUrl =
+    'https://qr.setservice.az/kiosk#capability=private-test-capability';
 
 void main() {
   testWidgets(
@@ -480,6 +482,165 @@ void main() {
     },
   );
 
+  for (final host in ['qr.setservice.az', 'kiosk.setservice.az']) {
+    testWidgets(
+      'existing active QR from $host opens copies and shares canonical URL on narrow iPhone',
+      (tester) async {
+        final fixture = _Fixture()
+          ..existing = true
+          ..kioskUrl = 'https://$host/kiosk#capability=private-test-capability';
+        addTearDown(fixture.dispose);
+        _size(tester, 390, height: 844);
+        final launched = <String>[];
+        final shared = <String>[];
+        String? clipboardValue;
+        const launchChannel = MethodChannel('plugins.flutter.io/url_launcher');
+        const shareChannel = MethodChannel('dev.fluttercommunity.plus/share');
+        final messenger = tester.binding.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(launchChannel, (call) async {
+          expect(call.method, 'launch');
+          launched.add((call.arguments as Map)['url'] as String);
+          expect((call.arguments as Map)['useSafariVC'], isFalse);
+          return true;
+        });
+        messenger.setMockMethodCallHandler(shareChannel, (call) async {
+          expect(call.method, 'share');
+          shared.add((call.arguments as Map)['uri'] as String);
+          return 'shared';
+        });
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardValue = (call.arguments as Map)['text'] as String?;
+            return null;
+          }
+          if (call.method == 'Clipboard.getData') {
+            return {'text': clipboardValue};
+          }
+          return null;
+        });
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(launchChannel, null);
+          messenger.setMockMethodCallHandler(shareChannel, null);
+          messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        });
+
+        await tester.pumpWidget(
+          fixture.wrap(const CompanyOrderDetailRoute(orderId: 'order-1')),
+        );
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text(CompanyStrings.viewQr),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.ensureVisible(find.text(CompanyStrings.viewQr));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(CompanyStrings.viewQr));
+        await tester.pumpAndSettle();
+
+        // This is the active-but-blocked screen seen on the real iPhone.
+        // Labels alone are insufficient: invoke the enabled actions and check
+        // what actually leaves Flutter via each platform channel.
+        for (final label in [
+          CompanyStrings.qrOpen,
+          CompanyStrings.qrCopy,
+          CompanyStrings.qrShare,
+        ]) {
+          await tester.scrollUntilVisible(
+            find.text(label),
+            160,
+            scrollable: find.byType(Scrollable).last,
+          );
+          await tester.pumpAndSettle();
+          final button = find.ancestor(
+            of: find.text(label),
+            matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+          );
+          expect(tester.widget<ButtonStyleButton>(button).onPressed, isNotNull);
+          expect(find.text(AppStrings.kioskUrlBlocked), findsNothing);
+          await tester.ensureVisible(find.text(label));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(label));
+          await tester.pumpAndSettle();
+        }
+        expect(launched, [_canonicalKioskUrl]);
+        expect(shared, [_canonicalKioskUrl]);
+        expect(clipboardValue, _canonicalKioskUrl);
+        expect(fixture.requests.where((r) => r.method == 'POST'), isEmpty);
+        expect(tester.takeException(), isNull);
+
+        // The same persisted kiosk is still usable when the order is reopened.
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text(CompanyStrings.viewQr));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(CompanyStrings.viewQr));
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text(CompanyStrings.qrOpen),
+          160,
+          scrollable: find.byType(Scrollable).last,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(AppStrings.kioskUrlBlocked), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final unsafeUrl in [
+    'https://attacker.example/kiosk#capability=private-test-capability',
+    'http://qr.setservice.az/kiosk#capability=private-test-capability',
+    'https://qr.setservice.az/kiosk/kiosk#capability=private-test-capability',
+  ]) {
+    testWidgets('active QR with unsafe URL stays blocked: $unsafeUrl', (
+      tester,
+    ) async {
+      final fixture = _Fixture()
+        ..existing = true
+        ..kioskUrl = unsafeUrl;
+      addTearDown(fixture.dispose);
+      _size(tester, 390, height: 844);
+      await tester.pumpWidget(
+        fixture.wrap(const CompanyOrderDetailRoute(orderId: 'order-1')),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text(CompanyStrings.viewQr),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.ensureVisible(find.text(CompanyStrings.viewQr));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(CompanyStrings.viewQr));
+      await tester.pumpAndSettle();
+      for (final label in [
+        CompanyStrings.qrOpen,
+        CompanyStrings.qrCopy,
+        CompanyStrings.qrShare,
+        CompanyStrings.qrExportPng,
+        CompanyStrings.qrExportPdf,
+      ]) {
+        await tester.scrollUntilVisible(
+          find.text(label),
+          160,
+          scrollable: find.byType(Scrollable).last,
+        );
+        final button = find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+        );
+        await tester.ensureVisible(find.text(label));
+        await tester.pumpAndSettle();
+        expect(tester.widget<ButtonStyleButton>(button).onPressed, isNull);
+      }
+      expect(fixture.requests.where((r) => r.method == 'POST'), isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   test(
     'concurrent QR creation coalesces and failed activation retries same kiosk',
     () async {
@@ -641,6 +802,7 @@ class _Fixture {
   bool existing = false;
   bool failActivation = false;
   bool orderCreated = true;
+  String? kioskUrl = _canonicalKioskUrl;
 
   Widget wrap(Widget home, {TextScaler? textScaler}) => MultiProvider(
     providers: [
@@ -738,8 +900,7 @@ class _Fixture {
     'status': 'active',
     'company_name': 'Test müəssisə',
     'active_session': active ? {'order_id': 'order-1'} : null,
-    'kiosk_url':
-        'https://qr.setservice.az/kiosk#capability=private-test-capability',
+    'kiosk_url': kioskUrl,
   };
   Future<void> dispose() => coordinator.dispose();
 }
