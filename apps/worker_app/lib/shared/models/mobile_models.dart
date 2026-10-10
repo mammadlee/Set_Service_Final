@@ -1,3 +1,5 @@
+import '../../features/auth/data/models/auth_models.dart';
+
 class PageMeta {
   const PageMeta({
     required this.page,
@@ -347,22 +349,28 @@ class WorkerExperienceSummary {
   }
 }
 
-class CompanyVisibleWorkerDocument {
+class CompanyVisibleWorkerDocument extends WorkerDocument {
   const CompanyVisibleWorkerDocument({
-    required this.type,
-    required this.url,
-    this.name,
+    required super.type,
+    required super.url,
+    super.name,
+    super.available,
+    super.status,
+    super.scanStatus,
   });
 
-  final String type;
-  final String url;
-  final String? name;
+  @override
+  bool get canRequestDownload =>
+      type == 'health_certificate' && super.canRequestDownload;
 
   factory CompanyVisibleWorkerDocument.fromJson(Map<String, dynamic> json) {
     return CompanyVisibleWorkerDocument(
       type: json['type'] as String? ?? '',
       url: json['url'] as String? ?? '',
       name: json['name'] as String?,
+      available: json['available'] == true,
+      status: json['status'] as String? ?? 'legacy',
+      scanStatus: json['scan_status'] as String? ?? 'unscanned',
     );
   }
 }

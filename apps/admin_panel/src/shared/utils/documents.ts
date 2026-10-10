@@ -20,7 +20,7 @@ export function normalizeDocuments(value: unknown): DisplayDocument[] {
       type: record.type,
       name: typeof record.name === 'string' ? record.name : undefined,
       status: typeof record.status === 'string' ? record.status : 'legacy',
-      canDownload: record.status === 'ready' && record.scan_status === 'clean',
+      canDownload: record.available === true || (record.available === undefined && record.status === 'ready' && record.scan_status === 'clean'),
     }];
   });
 }
@@ -34,9 +34,34 @@ export function documentLabel(type: DisplayDocument['type']): string {
 }
 
 export function documentStatusLabel(document: DisplayDocument): string {
+  if (document.status === 'legacy' && document.canDownload) return 'Açılarkən təhlükəsizlik yoxlaması aparılır';
   if (document.canDownload) return 'Yoxlamadan keçib';
   if (document.status === 'pending' || document.status === 'quarantined') return 'Təhlükəsizlik yoxlaması gözlənilir';
   return 'Yenidən yüklənməlidir';
+}
+
+// Reserve the tab during the user's tap (Safari blocks popups after an await).
+// Never cache a signed URL: every tap must reauthorize and request a fresh link.
+export async function openPrivateDocument(
+  loadUrl: () => Promise<string>,
+  browser: Pick<Window, 'open' | 'location'> = window,
+): Promise<void> {
+  const tab = browser.open('about:blank', '_blank');
+  try {
+    if (tab) {
+      tab.opener = null;
+      const policy = tab.document.createElement('meta');
+      policy.name = 'referrer';
+      policy.content = 'no-referrer';
+      tab.document.head.append(policy);
+    }
+    const url = resolveSignedDocumentUrl(await loadUrl());
+    if (tab && !tab.closed) tab.location.replace(url);
+    else browser.location.assign(url);
+  } catch (error) {
+    tab?.close();
+    throw error;
+  }
 }
 
 export function resolveSignedDocumentUrl(value: string): string {

@@ -569,6 +569,38 @@ class AppStrings {
       'UPLOAD_FILE_REQUIRED' => 'Yükləmək üçün fayl seçin.',
       'UPLOAD_MIME_NOT_ALLOWED' => 'Yalnız şəkil və PDF faylları qəbul olunur.',
       'UPLOAD_FILE_TOO_LARGE' => 'Fayl ölçüsü limitdən böyükdür.',
+      'UPLOAD_TOO_LARGE' => 'Fayl ölçüsü 5 MB-dan böyük olmamalıdır.',
+      'UPLOAD_FILE_EMPTY' => 'Seçilmiş fayl boşdur. Başqa fayl seçin.',
+      'UPLOAD_MIME_MISMATCH' ||
+      'UPLOAD_EXTENSION_MISMATCH' ||
+      'UPLOAD_CONTENT_TYPE_NOT_ALLOWED' =>
+        'Faylın formatı uyğun deyil. PDF, JPG, JPEG və ya PNG faylı seçin.',
+      'UPLOAD_SIZE_MISMATCH' ||
+      'UPLOAD_STRUCTURE_INVALID' ||
+      'UPLOAD_IMAGE_INVALID' ||
+      'UPLOAD_PDF_INVALID' =>
+        'Fayl zədələnib və ya düzgün oxunmur. Yenidən saxlayıb yükləyin.',
+      'UPLOAD_PDF_ACTIVE_CONTENT' =>
+        'PDF-də təhlükəsiz olmayan əmrlər və ya əlavə fayllar var. Sənədi standart PDF kimi yenidən saxlayıb yükləyin.',
+      'UPLOAD_MALWARE_DETECTED' ||
+      'UPLOAD_EXECUTABLE_BLOCKED' ||
+      'UPLOAD_ACTIVE_CONTENT_BLOCKED' ||
+      'UPLOAD_POLYGLOT_BLOCKED' =>
+        'Fayl təhlükəsizlik yoxlamasından keçmədi. Başqa fayl seçin.',
+      'MALWARE_SCANNER_UNAVAILABLE' || 'UPLOAD_VALIDATOR_UNAVAILABLE' =>
+        'Sənədin təhlükəsizlik yoxlaması hazırda mümkün deyil. Bir az sonra yenidən cəhd edin.',
+      'WORKER_DOCUMENT_ACCESS_DENIED' =>
+        'Bu sənədi açmaq üçün icazəniz yoxdur.',
+      'WORKER_DOCUMENT_NOT_FOUND' || 'PRIVATE_DOCUMENT_NOT_FOUND' =>
+        'Sənəd tapılmadı. Səhifəni yeniləyib yenidən cəhd edin.',
+      'WORKER_DOCUMENT_DELETED' => 'Bu sənəd silinib.',
+      'WORKER_DOCUMENT_REJECTED' => 'Rədd edilmiş sənədi açmaq mümkün deyil.',
+      'WORKER_DOCUMENT_REUPLOAD_REQUIRED' =>
+        'Bu köhnə sənəd təhlükəsiz açılmır. Sənədi yenidən yükləyin.',
+      'WORKER_DOCUMENT_SCAN_REQUIRED' =>
+        'Sənədin təhlükəsizlik yoxlaması tamamlanmayıb. Bir az sonra yenidən cəhd edin.',
+      'WORKER_DOCUMENT_STORAGE_UNAVAILABLE' =>
+        'Sənəd xidməti hazırda əlçatan deyil. Bir az sonra yenidən cəhd edin.',
       'INVALID_DOCUMENT_TYPE' => 'Sənəd növü düzgün deyil.',
       'DUPLICATE_RATING' => 'Bu iş üzrə reytinq artıq verilib.',
       'RATING_NOT_AVAILABLE' =>

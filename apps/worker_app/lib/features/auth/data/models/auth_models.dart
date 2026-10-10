@@ -305,6 +305,32 @@ class WorkerDocument {
   final String scanStatus;
   final bool available;
 
+  // The backend may safely recover legacy documents at download time. A
+  // metadata URL is neither necessary nor sufficient to authorize access.
+  bool get canRequestDownload =>
+      available &&
+      const {'cv', 'health_certificate', 'criminal_record'}.contains(type) &&
+      !const {'deleted', 'rejected', 'quarantined'}.contains(status) &&
+      scanStatus != 'infected';
+
+  String get displayStatus {
+    if (status == 'deleted') return 'Silinib';
+    if (status == 'rejected' || scanStatus == 'infected') {
+      return 'Təhlükəsizlik yoxlamasından keçmədi';
+    }
+    if (status == 'quarantined') return 'Yoxlanılır';
+    if (status == 'legacy') {
+      return canRequestDownload ? 'Açılarkən yoxlanılacaq' : 'Yenidən yükləyin';
+    }
+    if (canRequestDownload && status == 'ready' && scanStatus == 'clean') {
+      return 'Yüklənib';
+    }
+    if (scanStatus == 'unscanned' || scanStatus == 'pending') {
+      return 'Yoxlanılır';
+    }
+    return 'Sənəd hazır deyil';
+  }
+
   String? get effectiveDownloadPath {
     final candidate = downloadUrl?.trim().isNotEmpty == true
         ? downloadUrl!.trim()

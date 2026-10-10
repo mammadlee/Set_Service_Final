@@ -266,6 +266,7 @@ class _CompanyWorkerProfileScreen extends StatefulWidget {
 class _CompanyWorkerProfileScreenState
     extends State<_CompanyWorkerProfileScreen> {
   late Future<CompanyVisibleWorkerProfile> _future;
+  String? _openingDocument;
 
   @override
   void initState() {
@@ -280,6 +281,38 @@ class _CompanyWorkerProfileScreenState
   Future<void> _refresh() async {
     setState(() => _future = _load());
     await _future;
+  }
+
+  Future<void> _openDocument(CompanyVisibleWorkerDocument document) async {
+    if (_openingDocument != null || !document.canRequestDownload) return;
+    setState(() => _openingDocument = document.type);
+    try {
+      final uri = await context
+          .read<CompanyRepository>()
+          .getWorkerDocumentDownloadUrl(
+            workerId: widget.workerId,
+            type: document.type,
+          );
+      if (!mounted) return;
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw const ApiException(
+          message: 'Sənəd açıla bilmədi. Yenidən cəhd edin.',
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error is ApiException
+                ? error.message
+                : 'Sənəd açıla bilmədi. Yenidən cəhd edin.',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingDocument = null);
+    }
   }
 
   Future<void> _reportWorkerProfile() async {
@@ -405,13 +438,37 @@ class _CompanyWorkerProfileScreenState
                         ...profile.documents.map(
                           (document) => ListTile(
                             contentPadding: EdgeInsets.zero,
+                            onTap:
+                                document.canRequestDownload &&
+                                    _openingDocument == null
+                                ? () => _openDocument(document)
+                                : null,
                             leading: const Icon(Icons.description_outlined),
                             title: Text(
                               document.name?.isNotEmpty == true
                                   ? document.name!
-                                  : document.type,
+                                  : switch (document.type) {
+                                      'health_certificate' =>
+                                        'Sağlamlıq arayışı',
+                                      'criminal_record' => 'Məhkumluq arayışı',
+                                      'cv' => 'CV',
+                                      _ => 'Sənəd',
+                                    },
                             ),
-                            subtitle: Text(document.type),
+                            subtitle: Text(document.displayStatus),
+                            trailing: _openingDocument == document.type
+                                ? const SizedBox.square(
+                                    dimension: 24,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : document.canRequestDownload
+                                ? const Icon(
+                                    Icons.open_in_new_outlined,
+                                    semanticLabel: 'Sənədi aç',
+                                  )
+                                : null,
                           ),
                         ),
                     ],

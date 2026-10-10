@@ -5,9 +5,11 @@ import {
   CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { credentialReferenceIssue } from './check-env';
 
 export type StorageProviderName = 'local' | 's3' | 'r2';
@@ -48,6 +50,22 @@ export class UploadObjectTooLargeError extends Error {
   }
 }
 
+export class PrivateDocumentTooLargeError extends Error {
+  constructor() {
+    super('Private document exceeds the maximum supported size.');
+    this.name = 'PrivateDocumentTooLargeError';
+  }
+}
+
+export class UploadStorageUnavailableError extends Error {
+  constructor() {
+    super('Private document storage is unavailable.');
+    this.name = 'UploadStorageUnavailableError';
+  }
+}
+
+export const MAX_PRIVATE_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
 export type ObjectVisibility = 'public' | 'private';
 
 export interface UploadService {
@@ -56,6 +74,7 @@ export interface UploadService {
   putPrivateObject(input: UploadObjectInput): Promise<PrivateUploadObjectResult>;
   promotePrivateObject(sourceKey: string, targetKey: string): Promise<PrivateUploadObjectResult>;
   createSignedDownloadUrl(key: string, expiresInSeconds: number, downloadName?: string): Promise<string>;
+  getPrivateObject(key: string): Promise<PublicUploadObject>;
   getPublicObject(key: string): Promise<PublicUploadObject>;
   deleteObject(key: string, visibility: ObjectVisibility): Promise<void>;
   getPublicUrl(key: string): string;
@@ -98,6 +117,20 @@ class LocalUploadService implements UploadService {
     }), 'utf8').toString('base64url');
     const signature = crypto.createHmac('sha256', localDownloadSigningSecret()).update(payload).digest('base64url');
     return `/v1/private-worker-documents/${payload}.${signature}`;
+  }
+
+  async getPrivateObject(key: string): Promise<PublicUploadObject> {
+    const filePath = resolveWithinRoot(privateUploadRoot(), key);
+    try {
+      const stat = await fs.stat(filePath);
+      if (stat.size > MAX_PRIVATE_DOCUMENT_BYTES) throw new PrivateDocumentTooLargeError();
+      const body = await fs.readFile(filePath);
+      if (body.length > MAX_PRIVATE_DOCUMENT_BYTES) throw new PrivateDocumentTooLargeError();
+      return { body, contentType: documentContentType(key) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new UploadObjectNotFoundError();
+      throw error;
+    }
   }
 
   async promotePrivateObject(sourceKey: string, targetKey: string): Promise<PrivateUploadObjectResult> {
@@ -152,22 +185,31 @@ class ObjectStorageUploadService implements UploadService {
   private readonly bucket: string;
   private readonly region: string;
   private readonly endpoint?: string;
-  private readonly accessKeyId: string;
-  private readonly secretAccessKey: string;
 
   constructor(public provider: StorageProviderName) {
     this.bucket = requireEnv('S3_BUCKET');
-    this.region = process.env.S3_REGION ?? 'auto';
+    this.region = provider === 'r2' ? 'auto' : (process.env.S3_REGION ?? 'auto');
     this.endpoint = process.env.S3_ENDPOINT?.trim() || undefined;
-    this.accessKeyId = requireRuntimeCredential('S3_ACCESS_KEY_ID');
-    this.secretAccessKey = requireRuntimeCredential('S3_SECRET_ACCESS_KEY');
+    const accessKeyId = requireRuntimeCredential('S3_ACCESS_KEY_ID');
+    const secretAccessKey = requireRuntimeCredential('S3_SECRET_ACCESS_KEY');
+    if (provider === 'r2') {
+      if (!this.endpoint) throw new UploadStorageUnavailableError();
+      const endpoint = new URL(this.endpoint);
+      if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password
+        || endpoint.port || endpoint.pathname !== '/' || endpoint.search || endpoint.hash
+        || !/^[a-z0-9-]+(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com$/i.test(endpoint.hostname)) {
+        // R2 signing uses the S3 API account endpoint, never a public custom
+        // domain, r2.dev URL or an endpoint that already includes the bucket.
+        throw new UploadStorageUnavailableError();
+      }
+    }
     this.client = new S3Client({
       region: this.region,
       endpoint: this.endpoint,
       forcePathStyle: provider === 'r2' || Boolean(this.endpoint),
       credentials: {
-        accessKeyId: this.accessKeyId,
-        secretAccessKey: this.secretAccessKey,
+        accessKeyId,
+        secretAccessKey,
       },
     });
   }
@@ -227,17 +269,50 @@ class ObjectStorageUploadService implements UploadService {
   async createSignedDownloadUrl(
     key: string,
     expiresInSeconds: number,
-    _downloadName?: string
+    downloadName?: string
   ): Promise<string> {
-    return createS3SignedGetUrl({
-      bucket: this.bucket,
-      key: normalizeUploadKey(key),
-      region: this.region,
-      endpoint: this.endpoint,
-      accessKeyId: this.accessKeyId,
-      secretAccessKey: this.secretAccessKey,
-      expiresInSeconds: normalizeSignedUrlExpiry(expiresInSeconds),
-    });
+    const safeKey = normalizeUploadKey(key);
+    const expiresIn = normalizeSignedUrlExpiry(expiresInSeconds);
+    try {
+      // Signing itself makes no storage request. Check read permission and the
+      // object first so a missing file/denied GetObject is an API error, not an
+      // AccessDenied page opened in the user's browser.
+      const object = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: safeKey }));
+      if ((object.ContentLength ?? 0) > MAX_PRIVATE_DOCUMENT_BYTES) throw new PrivateDocumentTooLargeError();
+      return await getSignedUrl(this.client, new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: safeKey,
+        ResponseContentDisposition: attachmentContentDisposition(downloadName),
+        ResponseCacheControl: 'private, no-store, max-age=0',
+        ResponseContentType: documentContentType(safeKey),
+      }), { expiresIn });
+    } catch (error) {
+      throw privateReadError(error);
+    }
+  }
+
+  async getPrivateObject(key: string): Promise<PublicUploadObject> {
+    const safeKey = normalizeUploadKey(key);
+    try {
+      const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: safeKey }));
+      if (!result.Body) throw new UploadObjectNotFoundError();
+      const stream = result.Body as AsyncIterable<Uint8Array> & { destroy?: () => void };
+      try {
+        if ((result.ContentLength ?? 0) > MAX_PRIVATE_DOCUMENT_BYTES) throw new PrivateDocumentTooLargeError();
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of stream) {
+          size += chunk.length;
+          if (size > MAX_PRIVATE_DOCUMENT_BYTES) throw new PrivateDocumentTooLargeError();
+          chunks.push(Buffer.from(chunk));
+        }
+        return { body: Buffer.concat(chunks, size), contentType: result.ContentType ?? documentContentType(safeKey) };
+      } finally {
+        stream.destroy?.();
+      }
+    } catch (error) {
+      throw privateReadError(error);
+    }
   }
 
   async getPublicObject(key: string): Promise<PublicUploadObject> {
@@ -424,71 +499,16 @@ function normalizeSignedUrlExpiry(value: number): number {
   return value;
 }
 
-function createS3SignedGetUrl(input: {
-  bucket: string;
-  key: string;
-  region: string;
-  endpoint?: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  expiresInSeconds: number;
-}): string {
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const dateStamp = amzDate.slice(0, 8);
-  const credentialScope = `${dateStamp}/${input.region}/s3/aws4_request`;
-  const endpoint = input.endpoint ? new URL(input.endpoint) : null;
-  const requestUrl = endpoint
-    ? new URL(endpoint.toString())
-    : new URL(`https://${input.bucket}.s3.${input.region}.amazonaws.com`);
-
-  const endpointPath = endpoint?.pathname.replace(/\/$/, '') ?? '';
-  const objectPath = encodePath(input.key);
-  requestUrl.pathname = endpoint
-    ? `${endpointPath}/${rfc3986Encode(input.bucket)}/${objectPath}`
-    : `/${objectPath}`;
-
-  const query: Array<[string, string]> = [
-    ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
-    ['X-Amz-Credential', `${input.accessKeyId}/${credentialScope}`],
-    ['X-Amz-Date', amzDate],
-    ['X-Amz-Expires', String(input.expiresInSeconds)],
-    ['X-Amz-SignedHeaders', 'host'],
-  ];
-  const canonicalQuery = query
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${rfc3986Encode(key)}=${rfc3986Encode(value)}`)
-    .join('&');
-  const canonicalHeaders = `host:${requestUrl.host}\n`;
-  const canonicalRequest = [
-    'GET',
-    requestUrl.pathname,
-    canonicalQuery,
-    canonicalHeaders,
-    'host',
-    'UNSIGNED-PAYLOAD',
-  ].join('\n');
-  const stringToSign = [
-    'AWS4-HMAC-SHA256',
-    amzDate,
-    credentialScope,
-    crypto.createHash('sha256').update(canonicalRequest).digest('hex'),
-  ].join('\n');
-
-  const signingKey = hmac(
-    hmac(hmac(hmac(`AWS4${input.secretAccessKey}`, dateStamp), input.region), 's3'),
-    'aws4_request'
-  );
-  const signature = crypto.createHmac('sha256', signingKey).update(stringToSign).digest('hex');
-  return `${requestUrl.origin}${requestUrl.pathname}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+function privateReadError(error: unknown): Error {
+  if (isMissingObjectError(error)) return new UploadObjectNotFoundError();
+  if (error instanceof PrivateDocumentTooLargeError) return error;
+  // Do not propagate provider error messages, endpoints or signed request data.
+  return new UploadStorageUnavailableError();
 }
 
-function hmac(key: crypto.BinaryLike, value: string): Buffer {
-  return crypto.createHmac('sha256', key).update(value).digest();
-}
-
-function encodePath(value: string): string {
-  return value.split('/').map(rfc3986Encode).join('/');
+function documentContentType(key: string): string {
+  if (path.extname(key).toLowerCase() === '.pdf') return 'application/pdf';
+  return publicImageContentType(key);
 }
 
 function rfc3986Encode(value: string): string {

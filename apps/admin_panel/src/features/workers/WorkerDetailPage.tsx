@@ -10,7 +10,7 @@ import { hasPermission } from '../../shared/auth/permissions';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { useAuth } from '../../app/auth/AuthProvider';
 import { useAsync } from '../../shared/hooks/useAsync';
-import { documentLabel, documentStatusLabel, normalizeDocuments, resolveAssetUrl, type DisplayDocument } from '../../shared/utils/documents';
+import { documentLabel, documentStatusLabel, normalizeDocuments, openPrivateDocument, resolveAssetUrl, type DisplayDocument } from '../../shared/utils/documents';
 import { formatDateTime } from '../../shared/utils/format';
 import type { WorkerClass } from '../../shared/api/types';
 import { workersService } from './workers.service';
@@ -242,18 +242,14 @@ export function WorkerDetailPage() {
 
 function WorkerDocumentItem({ workerId, document }: { workerId: string; document: DisplayDocument }) {
   const [loading, setLoading] = useState(false);
-  const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function openDocument() {
     if (loading) return;
     setLoading(true);
     setError(null);
-    setUrl(null);
     try {
-      const signedUrl = await workersService.documentUrl(workerId, document.type);
-      setUrl(signedUrl);
-      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      await openPrivateDocument(() => workersService.documentUrl(workerId, document.type));
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -274,7 +270,6 @@ function WorkerDocumentItem({ workerId, document }: { workerId: string; document
           <button className="btn secondary compact" type="button" disabled={loading} onClick={() => void openDocument()}>
             {loading ? 'Açılır…' : appStrings.workers.openDocument}
           </button>
-          {url ? <a className="link-btn" href={url} target="_blank" rel="noopener noreferrer">Açılmadısa, buraya toxunun</a> : null}
         </div>
       ) : null}
     </li>

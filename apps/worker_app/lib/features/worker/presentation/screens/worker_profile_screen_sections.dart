@@ -545,10 +545,7 @@ class WorkerCvSection extends StatelessWidget {
                   runSpacing: 8,
                   children: [
                     OutlinedButton.icon(
-                      onPressed:
-                          !busy &&
-                              cvDocument.available &&
-                              cvDocument.effectiveDownloadPath != null
+                      onPressed: !busy && cvDocument.canRequestDownload
                           ? () => onOpen(cvDocument)
                           : null,
                       icon: const Icon(Icons.open_in_new_outlined),
@@ -685,8 +682,7 @@ class WorkerDocumentsSection extends StatelessWidget {
               child: PremiumCard(
                 key: ValueKey('worker-document-${document.type}'),
                 padding: const EdgeInsets.all(14),
-                onTap:
-                    document.available && document.effectiveDownloadPath != null
+                onTap: document.canRequestDownload
                     ? () => onOpenDocument(document)
                     : null,
                 child: Row(
@@ -759,8 +755,7 @@ class WorkerDocumentsSection extends StatelessWidget {
                               ),
                             ],
                           ),
-                          if (document.available &&
-                              document.effectiveDownloadPath != null) ...[
+                          if (document.canRequestDownload) ...[
                             const SizedBox(height: 8),
                             Text(
                               'Açmaq üçün toxunun',
@@ -795,13 +790,7 @@ class _DocumentStateBadge extends StatelessWidget {
         document.available &&
         document.status == 'ready' &&
         document.scanStatus == 'clean';
-    final label = ready
-        ? 'Yüklənib'
-        : document.status == 'legacy'
-        ? 'Yenidən yükləyin'
-        : document.scanStatus == 'unscanned'
-        ? 'Yoxlanılır'
-        : document.status;
+    final label = document.displayStatus;
 
     return Container(
       constraints: const BoxConstraints(minHeight: 28),
@@ -818,8 +807,7 @@ class _DocumentStateBadge extends StatelessWidget {
       ),
       child: Text(
         label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+        softWrap: true,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           color: ready ? BrandColors.darkText : BrandColors.urbanGraphite,
           fontWeight: FontWeight.w700,

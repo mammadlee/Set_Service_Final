@@ -1,12 +1,7 @@
 import * as Sentry from '@sentry/node';
+import { redactSensitive } from './lib/logger';
 
-Sentry.init({
-  dsn: process.env.SENTRY_DSN ?? '',
-  environment: process.env.NODE_ENV ?? 'development',
-  release: process.env.RELEASE_SHA ?? process.env.GIT_SHA,
-  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
-  sendDefaultPii: false,
-  beforeSend(event) {
+function sanitizeSentryEvent<T extends Sentry.Event>(event: T): T {
     if (event.request) {
       delete event.request.cookies;
       delete event.request.data;
@@ -32,7 +27,21 @@ Sentry.init({
     if (event.user) {
       event.user = event.user.id ? { id: event.user.id } : undefined;
     }
-    return event;
+    return redactSensitive(event) as T;
+}
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN ?? '',
+  environment: process.env.NODE_ENV ?? 'development',
+  release: process.env.RELEASE_SHA ?? process.env.GIT_SHA,
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  sendDefaultPii: false,
+  beforeSend: sanitizeSentryEvent,
+  // Sentry does not call beforeSend for performance transactions. Outgoing
+  // object-storage spans must receive the same privacy filtering as errors.
+  beforeSendTransaction: sanitizeSentryEvent,
+  beforeBreadcrumb(breadcrumb) {
+    return redactSensitive(breadcrumb) as typeof breadcrumb;
   },
   // An empty DSN keeps Sentry optional and must never stop the API.
   enabled: !!process.env.SENTRY_DSN,

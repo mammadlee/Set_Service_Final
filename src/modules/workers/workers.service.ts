@@ -1,12 +1,15 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { Errors } from '../../lib/errors';
+import { AppError, Errors } from '../../lib/errors';
 import { sendPushToDeviceTargets, sendPushToUser } from '../../lib/fcm';
 import {
   createUploadService,
   PrivateUploadObjectResult,
   UploadObjectResult,
+  MAX_PRIVATE_DOCUMENT_BYTES,
+  PrivateDocumentTooLargeError,
+  UploadObjectNotFoundError,
 } from '../../lib/uploads';
 import {
   inspectUpload,
@@ -683,19 +686,14 @@ export async function getWorkerDocumentDownload(
   if (actor.role === 'company' && !document.company_visible) {
     throw Errors.forbidden('This document is not visible to companies.', 'WORKER_DOCUMENT_ACCESS_DENIED');
   }
-  if (!document.key) {
+  const documentKey = readableDocumentKey(document, worker.id);
+  if (!documentKey) {
     throw Errors.gone(
       'This legacy document must be uploaded again before it can be downloaded securely.',
       'WORKER_DOCUMENT_REUPLOAD_REQUIRED'
     );
   }
-  if (!privateDocumentKeyBelongsToWorker(document.key, worker.id, documentType)) {
-    throw Errors.gone(
-      'This document reference is not compatible with private storage and must be uploaded again.',
-      'WORKER_DOCUMENT_REUPLOAD_REQUIRED'
-    );
-  }
-  if (document.status !== 'ready' || document.scan_status !== 'clean') {
+  if (!isReadyDocument(document) && !isLegacyDocument(document)) {
     throw Errors.gone(
       'This document has not completed security scanning and must be uploaded again.',
       'WORKER_DOCUMENT_SCAN_REQUIRED'
@@ -703,11 +701,28 @@ export async function getWorkerDocumentDownload(
   }
 
   const expiresInSeconds = signedDocumentUrlTtl();
-  const url = await createUploadService().createSignedDownloadUrl(
-    document.key,
-    expiresInSeconds,
-    document.name
-  );
+  let url: string;
+  try {
+    const storage = createUploadService();
+    if (!isReadyDocument(document)) {
+      // A legacy URL is only an object locator, never a URL to fetch or expose.
+      // Revalidate and scan the stored bytes without changing the document or
+      // marking old metadata clean. Quarantine/rejected objects never reach here.
+      const object = await storage.getPrivateObject(documentKey);
+      const filename = document.name || documentKey.split('/').pop()!;
+      const file = {
+        originalname: filename,
+        mimetype: document.mime_type || object.contentType,
+        size: object.body.length,
+        buffer: object.body,
+      } as Express.Multer.File;
+      const inspection = await inspectUpload(file, WORKER_DOCUMENT_MIME_TYPES);
+      await scanUpload(object.body, inspection, { sensitive: true });
+    }
+    url = await storage.createSignedDownloadUrl(documentKey, expiresInSeconds, document.name);
+  } catch (error) {
+    throw documentStorageError(error);
+  }
   await prisma.auditLog.create({
     data: {
       actor_id: actor.sub,
@@ -718,7 +733,7 @@ export async function getWorkerDocumentDownload(
       metadata: {
         event: 'document_download_authorized',
         document_type: documentType,
-        object_key_hash: hashObjectKey(document.key),
+        object_key_hash: hashObjectKey(documentKey),
         expires_in_seconds: expiresInSeconds,
       },
     },
@@ -763,6 +778,7 @@ export async function listWorkers(filters: {
     where.is_foc_training = filters.foc_training === 'foc';
   }
   if (filters.available !== undefined) where.availability = filters.available;
+  if (filters.available === true) where.user = { is_active: true, deleted_at: null };
   if (filters.position_id) where.positions = { some: { position_id: filters.position_id } };
   if (filters.search) {
     where.OR = [
@@ -1379,6 +1395,8 @@ async function getDocumentEnrollmentWorkerRecord(userId: string) {
 
 type WorkerDocumentType = 'health_certificate' | 'criminal_record' | 'cv';
 
+const WORKER_DOCUMENT_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+
 type WorkerDocument = {
   type: string;
   name?: string;
@@ -1432,8 +1450,12 @@ async function putWorkerUpload(
 ): Promise<PublicWorkerUploadResult | PrivateWorkerUploadResult> {
   const file = input.file;
   if (!file) throw Errors.badRequest('Upload file is required.', 'UPLOAD_FILE_REQUIRED');
+  if (file.buffer.length > MAX_PRIVATE_DOCUMENT_BYTES) {
+    throw Errors.payloadTooLarge('Sənədin ölçüsü 5 MB-dan böyük olmamalıdır.', 'UPLOAD_FILE_TOO_LARGE');
+  }
 
-  const service = createUploadService();
+  let service: ReturnType<typeof createUploadService>;
+  try { service = createUploadService(); } catch (error) { throw documentStorageError(error); }
   const inspection = await inspectUpload(file, input.allowedMimeTypes);
   const finalKey = `workers/${input.workerId}/${input.folder}/${crypto.randomUUID()}${inspection.extension}`;
 
@@ -1450,21 +1472,20 @@ async function putWorkerUpload(
 
   const quarantineKey =
     `workers/${input.workerId}/quarantine/${crypto.randomUUID()}${inspection.extension}`;
-  await service.putPrivateObject({
-    key: quarantineKey,
-    contentType: inspection.detectedMimeType,
-    body: file.buffer,
-    downloadName: inspection.safeOriginalName,
-  });
-
   try {
+    await service.putPrivateObject({
+      key: quarantineKey,
+      contentType: inspection.detectedMimeType,
+      body: file.buffer,
+      downloadName: inspection.safeOriginalName,
+    });
     const scan = await scanUpload(file.buffer, inspection, { sensitive: true });
     const promoted = await service.promotePrivateObject(quarantineKey, finalKey);
     return { ...promoted, inspection, scan };
   } catch (error) {
     await deleteObjectBestEffort(quarantineKey, 'private', 'quarantine_cleanup');
     await deleteObjectBestEffort(finalKey, 'private', 'failed_promotion_cleanup');
-    throw error;
+    throw documentStorageError(error);
   }
 }
 
@@ -1476,7 +1497,10 @@ function normalizeDocuments(value: unknown): WorkerDocument[] {
     const type = typeof document.type === 'string' ? document.type : '';
     const url = typeof document.url === 'string' ? document.url : undefined;
     const key = typeof document.key === 'string' ? document.key : undefined;
-    const status = isDocumentStatus(document.status) ? document.status : undefined;
+    // Unknown explicit security states are not legacy data. Fail closed rather
+    // than turning a future/rejected state into an unscanned legacy candidate.
+    const status = document.status === undefined ? undefined
+      : isDocumentStatus(document.status) ? document.status : 'quarantine';
     if (!type || (!url && !key && status !== 'deleted')) return [];
     return [
       {
@@ -1489,7 +1513,8 @@ function normalizeDocuments(value: unknown): WorkerDocument[] {
         uploaded_at: typeof document.uploaded_at === 'string' ? document.uploaded_at : undefined,
         company_visible: type === 'health_certificate' && document.company_visible === true,
         status,
-        scan_status: isScanStatus(document.scan_status) ? document.scan_status : undefined,
+        scan_status: document.scan_status === undefined ? undefined
+          : isScanStatus(document.scan_status) ? document.scan_status : 'error',
         scanner: typeof document.scanner === 'string' ? document.scanner : undefined,
         scanned_at: typeof document.scanned_at === 'string' ? document.scanned_at : undefined,
         content_sha256: typeof document.content_sha256 === 'string' ? document.content_sha256 : undefined,
@@ -1544,12 +1569,8 @@ function documentResponseMetadata(value: unknown, workerId: string, companyOnly 
     .filter((document) => !document.deleted_at && document.status !== 'deleted' && document.status !== 'rejected')
     .filter((document) => !companyOnly || document.company_visible === true)
     .map((document) => {
-      const hasOwnedPrivateKey = Boolean(
-        document.key &&
-        document.status === 'ready' &&
-        document.scan_status === 'clean' &&
-        privateDocumentKeyBelongsToWorker(document.key, workerId, document.type)
-      );
+      const hasOwnedPrivateKey = Boolean(readableDocumentKey(document, workerId)
+        && (isReadyDocument(document) || isLegacyDocument(document)));
       const downloadUrl = hasOwnedPrivateKey
         ? `/v1/workers/${workerId}/documents/${document.type}/download`
         : undefined;
@@ -1569,7 +1590,63 @@ function documentResponseMetadata(value: unknown, workerId: string, companyOnly 
 }
 
 function privateDocumentKeyBelongsToWorker(key: string, workerId: string, type: string): boolean {
-  return key.startsWith(`workers/${workerId}/documents/${type}/`);
+  const prefix = `workers/${workerId}/documents/${type}/`;
+  if (!key.startsWith(prefix)) return false;
+  const filename = key.slice(prefix.length);
+  return filename.length > 0
+    && !/[\\/%\x00-\x1f\x7f<>:"|?*]/.test(filename)
+    && filename !== '.' && filename !== '..'
+    && /\.(?:pdf|jpe?g|png|webp)$/i.test(filename);
+}
+
+function isReadyDocument(document: WorkerDocument): boolean {
+  return document.status === 'ready' && document.scan_status === 'clean';
+}
+
+function isLegacyDocument(document: WorkerDocument): boolean {
+  return !document.deleted_at && document.status === undefined && document.scan_status === undefined;
+}
+
+function readableDocumentKey(document: WorkerDocument, workerId: string): string | null {
+  if (document.key) {
+    return privateDocumentKeyBelongsToWorker(document.key, workerId, document.type) ? document.key : null;
+  }
+  if (!document.url || !isLegacyDocument(document)) return null;
+  // Object storage uses one private bucket for both old and new keys. Local
+  // legacy public files live in a different root and require explicit backfill.
+  if (!['r2', 's3'].includes(process.env.STORAGE_PROVIDER ?? 'local')) return null;
+  const bases = [process.env.STORAGE_PUBLIC_BASE_URL];
+  if (process.env.S3_ENDPOINT && process.env.S3_BUCKET) {
+    bases.push(`${process.env.S3_ENDPOINT.replace(/\/+$/, '')}/${encodeURIComponent(process.env.S3_BUCKET)}`);
+  }
+  if ((process.env.STORAGE_PROVIDER === 's3') && process.env.S3_BUCKET && process.env.S3_REGION) {
+    bases.push(`https://${process.env.S3_BUCKET}.s3.${process.env.S3_REGION}.amazonaws.com`);
+  }
+  try {
+    if (/[\x00-\x20\x7f\\]/.test(document.url)) return null;
+    const candidate = new URL(document.url);
+    if (candidate.protocol !== 'https:' || candidate.username || candidate.password || candidate.hash) return null;
+    for (const base of bases) {
+      if (!base) continue;
+      let trusted: URL;
+      try { trusted = new URL(`${base.replace(/\/+$/, '')}/`); } catch { continue; }
+      if (candidate.origin !== trusted.origin || !candidate.pathname.startsWith(trusted.pathname)) continue;
+      const key = decodeURIComponent(candidate.pathname.slice(trusted.pathname.length));
+      if (privateDocumentKeyBelongsToWorker(key, workerId, document.type)) return key;
+    }
+  } catch { /* Malformed and foreign locators are never fetched. */ }
+  return null;
+}
+
+function documentStorageError(error: unknown): AppError {
+  if (error instanceof AppError) return error;
+  if (error instanceof UploadObjectNotFoundError) {
+    return Errors.notFound('Sənəd tapılmadı. Faylı yenidən yükləyin.', 'WORKER_DOCUMENT_NOT_FOUND');
+  }
+  if (error instanceof PrivateDocumentTooLargeError) {
+    return Errors.payloadTooLarge('Sənədin ölçüsü 5 MB-dan böyük olmamalıdır.', 'UPLOAD_FILE_TOO_LARGE');
+  }
+  return Errors.unavailable('Sənəd xidməti hazırda əlçatan deyil. Bir qədər sonra yenidən cəhd edin.', 'WORKER_DOCUMENT_STORAGE_UNAVAILABLE');
 }
 
 function workerApprovalPrerequisites(worker: {
@@ -1617,7 +1694,7 @@ async function deleteObjectBestEffort(
       reason,
       visibility,
       key_hash: crypto.createHash('sha256').update(key).digest('hex'),
-      error: error instanceof Error ? error.message : String(error),
+      error_type: error instanceof Error ? error.name : 'UnknownError',
     });
   }
 }

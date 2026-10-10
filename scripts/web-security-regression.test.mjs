@@ -80,6 +80,7 @@ test('QR kiosk suppresses token-bearing request metadata and locks hidden screen
   const headers = await source('apps/qr_kiosk/public/_headers');
   const attendanceRouter = await source('src/modules/attendance/attendance.router.ts');
   const attendanceService = await source('src/modules/attendance/attendance.service.ts');
+  const kioskPublicUrl = await source('src/lib/kiosk-public-url.ts');
 
   assert.match(main, /cache:\s*'no-store'/);
   assert.match(main, /credentials:\s*'omit'/);
@@ -101,7 +102,9 @@ test('QR kiosk suppresses token-bearing request metadata and locks hidden screen
   assert.match(headers, /frame-ancestors 'none'/);
   assert.match(headers, /Strict-Transport-Security:/);
   assert.match(headers, /Permissions-Policy:/);
-  assert.match(attendanceService, /\/kiosk#capability=\$\{encodeURIComponent\(token\)\}/);
+  assert.match(kioskPublicUrl, /\/kiosk#capability=\$\{encodeURIComponent\(token\)\}/);
+  assert.match(attendanceService, /import \{ buildKioskPublicUrl, resolveKioskPublicBaseUrl \} from '\.\.\/\.\.\/lib\/kiosk-public-url'/);
+  assert.match(attendanceService, /kiosk_url: buildKioskPublicUrl\(kioskToken, kioskPublicBase\)/);
   assert.match(attendanceService, /toVenueKioskPublicResponse/);
   assert.match(attendanceService, /toVenueKioskManagementResponse/);
 

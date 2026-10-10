@@ -4,6 +4,7 @@ import 'package:http_parser/http_parser.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/private_document_download.dart';
 import '../../../shared/app_strings.dart';
 import '../../auth/data/models/auth_models.dart';
 import 'models/worker_rating.dart';
@@ -230,30 +231,15 @@ class WorkerRepository {
     required String type,
     String? enrollmentToken,
   }) async {
-    try {
-      final response = await _dio.get<Map<String, dynamic>>(
-        enrollmentToken == null
-            ? '/workers/$workerId/documents/$type/download'
-            : '/workers/me/documents/$type/download',
-        options: enrollmentToken == null
-            ? Options(headers: const {'Cache-Control': 'no-store'})
-            : _enrollmentOptions(enrollmentToken),
-      );
-      final value = response.data?['url'];
-      final uri = resolveDocumentDownloadUrl(
-        value is String ? value : null,
-        apiBaseUrl: _dio.options.baseUrl,
-      );
-      if (uri == null) {
-        throw const ApiException(
-          message: 'Sənəd keçidi etibarlı deyil.',
-          code: 'WORKER_DOCUMENT_URL_INVALID',
-        );
-      }
-      return uri;
-    } catch (error) {
-      throw mapDioException(error);
-    }
+    return requestPrivateDocumentDownload(
+      _dio,
+      path: enrollmentToken == null
+          ? '/workers/${Uri.encodeComponent(workerId)}/documents/${Uri.encodeComponent(type)}/download'
+          : '/workers/me/documents/${Uri.encodeComponent(type)}/download',
+      options: enrollmentToken == null
+          ? null
+          : _enrollmentOptions(enrollmentToken),
+    );
   }
 
   @visibleForTesting
@@ -261,37 +247,7 @@ class WorkerRepository {
     String? value, {
     required String apiBaseUrl,
   }) {
-    final rawValue = value?.trim();
-    if (rawValue == null || rawValue.isEmpty) return null;
-
-    final parsed = Uri.tryParse(rawValue);
-    if (parsed == null || (!parsed.isAbsolute && parsed.hasAuthority)) {
-      return null;
-    }
-
-    Uri resolved = parsed;
-    if (!parsed.isAbsolute) {
-      final parsedBase = Uri.tryParse(apiBaseUrl.trim());
-      if (parsedBase == null ||
-          !parsedBase.isAbsolute ||
-          parsedBase.host.isEmpty) {
-        return null;
-      }
-      final base = parsedBase.replace(
-        path: parsedBase.path.endsWith('/')
-            ? parsedBase.path
-            : '${parsedBase.path}/',
-      );
-      resolved = base.resolveUri(parsed);
-    }
-
-    final scheme = resolved.scheme.toLowerCase();
-    if ((scheme != 'http' && scheme != 'https') ||
-        resolved.host.isEmpty ||
-        resolved.userInfo.isNotEmpty) {
-      return null;
-    }
-    return resolved;
+    return resolvePrivateDocumentDownloadUrl(value, apiBaseUrl: apiBaseUrl);
   }
 
   Future<WorkerMe> _uploadFile(

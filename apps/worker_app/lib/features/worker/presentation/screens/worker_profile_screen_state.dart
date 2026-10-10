@@ -1300,7 +1300,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   }
 
   Future<void> _openDocument(WorkerMe worker, WorkerDocument document) async {
-    if (!document.available || document.effectiveDownloadPath == null) {
+    if (!document.canRequestDownload) {
       if (!mounted) return;
       setState(() {
         _error = 'Bu sənəd təhlükəsiz baxış üçün hazır deyil.';
@@ -1314,6 +1314,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         workerId: worker.id,
         type: document.type,
       );
+      if (!mounted) return;
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened) {
         throw const ApiException(

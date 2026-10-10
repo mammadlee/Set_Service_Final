@@ -15,9 +15,11 @@ import { formatDateTime } from '../../shared/utils/format';
 import { ordersService } from '../orders/orders.service';
 import { workersService } from '../workers/workers.service';
 import { assignmentsService } from './assignments.service';
+import { hasAssignmentPositionMismatch } from './assignment-position';
 
 const statuses: Array<AssignmentStatus | ''> = ['', 'assigned', 'accepted', 'rejected', 'completed', 'cancelled'];
 const workerClasses: Array<WorkerClass | ''> = ['', 'A', 'B', 'C'];
+const maxAssignmentWorkers = 100;
 type WorkerFocFilter = '' | 'foc' | 'non_foc';
 type WorkerRatingSort = '' | 'rating_desc';
 
@@ -60,8 +62,8 @@ export function AssignmentsPage() {
   );
   const approvedWorkers = useAsync(
     () => canManageAssignments
-      ? workersService.list({ page: 1, limit: 100, status: 'approved', available: true })
-      : Promise.resolve({ data: [], meta: { page: 1, limit: 100, total: 0, total_pages: 0 } }),
+      ? workersService.listAvailableForAssignments()
+      : Promise.resolve<WorkerProfile[]>([]),
     [canManageAssignments],
   );
 
@@ -75,7 +77,7 @@ export function AssignmentsPage() {
   );
   const workerPositionOptions = useMemo(() => {
     const options = new Map<string, string>();
-    for (const worker of approvedWorkers.data?.data ?? []) {
+    for (const worker of approvedWorkers.data ?? []) {
       for (const position of worker.positions ?? []) {
         options.set(position.id, position.name_az);
       }
@@ -88,7 +90,7 @@ export function AssignmentsPage() {
       .sort((left, right) => left.label.localeCompare(right.label, 'az'));
   }, [approvedWorkers.data]);
   const visibleApprovedWorkers = useMemo(() => {
-    const workers = approvedWorkers.data?.data ?? [];
+    const workers = approvedWorkers.data ?? [];
     const search = workerSearch.trim().toLowerCase();
     const filtered = workers.filter((worker) => {
       if (search && !worker.name.toLowerCase().includes(search)) return false;
@@ -112,10 +114,23 @@ export function AssignmentsPage() {
     }
     return filtered;
   }, [approvedWorkers.data, workerSearch, workerClassFilter, workerFocFilter, workerPositionFilter, workerRatingSort]);
+  const positionMismatches = useMemo(
+    () => (approvedWorkers.data ?? []).filter((worker) => (
+      selectedWorkerIds.includes(worker.id)
+      && hasAssignmentPositionMismatch(
+        worker,
+        selectedCategoryItem?.position_id,
+        selectedCategoryItem?.category ?? selectedOrder?.category,
+      )
+    )),
+    [approvedWorkers.data, selectedWorkerIds, selectedCategoryItem, selectedOrder],
+  );
 
   function toggleWorker(id: string) {
     setSelectedWorkerIds((current) => (
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+      current.includes(id)
+        ? current.filter((item) => item !== id)
+        : current.length < maxAssignmentWorkers ? [...current, id] : current
     ));
   }
 
@@ -238,13 +253,13 @@ export function AssignmentsPage() {
                   <Search size={17} />
                   <input value={workerSearch} onChange={(event) => setWorkerSearch(event.target.value)} placeholder="İşçi adına görə axtar" />
                 </label>
-                <select value={workerPositionFilter} onChange={(event) => setWorkerPositionFilter(event.target.value)}>
+                <select aria-label="Vəzifə filtri" value={workerPositionFilter} onChange={(event) => setWorkerPositionFilter(event.target.value)}>
                   <option value="">Bütün vəzifələr</option>
                   {workerPositionOptions.map((position) => (
                     <option key={position.value} value={position.value}>{position.label}</option>
                   ))}
                 </select>
-                <select value={workerClassFilter} onChange={(event) => setWorkerClassFilter(event.target.value as WorkerClass | '')}>
+                <select aria-label="Sinif filtri" value={workerClassFilter} onChange={(event) => setWorkerClassFilter(event.target.value as WorkerClass | '')}>
                   {workerClasses.map((item) => (
                     <option key={item || 'all'} value={item}>
                       {item ? `Sinif: ${item}` : 'Bütün siniflər'}
@@ -263,6 +278,7 @@ export function AssignmentsPage() {
               </div>
               <div className="choice-list">
                 {approvedWorkers.loading ? <LoadingState compact /> : null}
+                {approvedWorkers.error ? <ErrorState message={approvedWorkers.error} onRetry={approvedWorkers.reload} /> : null}
                 {approvedWorkers.data && visibleApprovedWorkers.length === 0 ? (
                   <p className="muted">{appStrings.assignments.noAvailableWorkers}</p>
                 ) : null}
@@ -271,6 +287,7 @@ export function AssignmentsPage() {
                     <input
                       type="checkbox"
                       checked={selectedWorkerIds.includes(worker.id)}
+                      disabled={selectedWorkerIds.length >= maxAssignmentWorkers && !selectedWorkerIds.includes(worker.id)}
                       onChange={() => toggleWorker(worker.id)}
                     />
                     <span className="assignment-worker-card-content">
@@ -289,11 +306,20 @@ export function AssignmentsPage() {
               </div>
             </div>
 
+            {selectedWorkerIds.length >= maxAssignmentWorkers ? (
+              <div className="inline-note" role="status">Bir dəfəyə ən çox 100 işçi təyin edə bilərsiniz. Digər işçiləri növbəti təyinatda seçin.</div>
+            ) : null}
+            {positionMismatches.length > 0 ? (
+              <div className="form-warning break-word" role="status">
+                <strong>İşçinin əsas vəzifəsi sifarişin tələb etdiyi vəzifədən fərqlidir. Admin olaraq təyinata davam edə bilərsiniz.</strong>
+                <span>{positionMismatches.map((worker) => worker.name).join(', ')}</span>
+              </div>
+            ) : null}
             {formError ? <div className="form-error">{formError}</div> : null}
             <button
               className="btn primary full"
               type="submit"
-              disabled={creating || !createOrderId || selectedWorkerIds.length === 0}
+              disabled={creating || approvedWorkers.loading || Boolean(approvedWorkers.error) || !createOrderId || selectedWorkerIds.length === 0}
             >
               {creating ? appStrings.assignments.assigning : appStrings.assignments.assign(selectedWorkerIds.length)}
             </button>

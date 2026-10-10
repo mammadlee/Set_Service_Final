@@ -47,5 +47,47 @@ void main() {
         isNull,
       );
     });
+
+    test(
+      'rejects HTTP downgrades, credentials, fragments and control characters',
+      () {
+        for (final value in [
+          'http://objects.example.test/private.pdf?signature=abc',
+          'https://user:pass@objects.example.test/private.pdf',
+          'https://objects.example.test/private.pdf#fragment',
+          'https://objects.example.test/pri\nvate.pdf',
+          r'https://objects.example.test\private.pdf',
+          'http://localhost/private.pdf',
+        ]) {
+          expect(
+            WorkerRepository.resolveDocumentDownloadUrl(
+              value,
+              apiBaseUrl: apiBaseUrl,
+            ),
+            isNull,
+          );
+        }
+      },
+    );
+
+    test(
+      'allows local HTTP signed stream only on the configured loopback origin',
+      () {
+        expect(
+          WorkerRepository.resolveDocumentDownloadUrl(
+            '/v1/private-worker-documents/test-token',
+            apiBaseUrl: 'http://127.0.0.1:3000/v1',
+          )?.host,
+          '127.0.0.1',
+        );
+        expect(
+          WorkerRepository.resolveDocumentDownloadUrl(
+            'http://127.0.0.1:3001/private.pdf',
+            apiBaseUrl: 'http://127.0.0.1:3000/v1',
+          ),
+          isNull,
+        );
+      },
+    );
   });
 }

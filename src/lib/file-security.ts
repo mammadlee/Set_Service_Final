@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import path from 'path';
 import sharp from 'sharp';
-import { PDFDocument } from 'pdf-lib';
+import { validatePdfContent } from './pdf-validation';
 import { Errors } from './errors';
 
 const MIME_EXTENSION_MAP = {
@@ -247,7 +247,7 @@ function detectMimeType(body: Buffer): SupportedUploadMimeType | null {
   ) {
     return 'image/webp';
   }
-  if (body.length >= 8 && /^%PDF-1\.[0-7]/.test(body.subarray(0, 8).toString('ascii'))) {
+  if (body.length >= 8 && /^%PDF-(?:1\.[0-7]|2\.0)$/.test(body.subarray(0, 8).toString('ascii'))) {
     return 'application/pdf';
   }
   return null;
@@ -295,26 +295,7 @@ async function validateImage(body: Buffer, expectedMimeType: Exclude<SupportedUp
 async function validatePdf(body: Buffer): Promise<void> {
   const eof = body.lastIndexOf(Buffer.from('%%EOF', 'ascii'));
   assertNoTrailingPayload(body, eof < 0 ? -1 : eof + 5);
-  const ascii = body.toString('latin1');
-  if (/\/(JavaScript|JS|OpenAction|Launch|EmbeddedFile|RichMedia)\b/i.test(ascii)) {
-    throw Errors.unprocessable(
-      'Active or embedded PDF content is not allowed.',
-      'UPLOAD_PDF_ACTIVE_CONTENT'
-    );
-  }
-  try {
-    const document = await PDFDocument.load(body, {
-      ignoreEncryption: false,
-      updateMetadata: false,
-      throwOnInvalidObject: true,
-    });
-    if (document.getPageCount() < 1) throw new Error('empty_pdf');
-  } catch {
-    throw Errors.unprocessable(
-      'The uploaded PDF is corrupt, encrypted, or structurally invalid.',
-      'UPLOAD_PDF_INVALID'
-    );
-  }
+  await validatePdfContent(body);
 }
 
 function assertNoImmediatelyDangerousPayload(body: Buffer): void {
@@ -333,7 +314,7 @@ function assertNoImmediatelyDangerousPayload(body: Buffer): void {
     text.startsWith('<html') ||
     text.startsWith('<svg') ||
     text.startsWith('<?xml') ||
-    text.includes('<script')
+    (detectMimeType(body) !== 'application/pdf' && text.includes('<script'))
   ) {
     throw Errors.unsupportedMediaType('HTML, SVG, and script uploads are not allowed.', 'UPLOAD_ACTIVE_CONTENT_BLOCKED');
   }

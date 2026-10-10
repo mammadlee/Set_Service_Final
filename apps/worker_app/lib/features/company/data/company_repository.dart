@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../../../core/auth/jwt_utils.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_exception.dart';
+import '../../../core/network/private_document_download.dart';
 import '../../../core/storage/token_storage.dart';
 import '../../../shared/app_strings.dart';
 import '../../../shared/models/mobile_models.dart';
@@ -473,6 +474,17 @@ class CompanyRepository {
     } catch (error) {
       throw mapDioException(error);
     }
+  }
+
+  Future<Uri> getWorkerDocumentDownloadUrl({
+    required String workerId,
+    required String type,
+  }) {
+    return requestPrivateDocumentDownload(
+      _dio,
+      path:
+          '/workers/${Uri.encodeComponent(workerId)}/documents/${Uri.encodeComponent(type)}/download',
+    );
   }
 
   Future<NotificationPage> listNotifications() async {

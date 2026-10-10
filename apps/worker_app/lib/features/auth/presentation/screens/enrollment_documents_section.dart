@@ -69,7 +69,7 @@ class _EnrollmentDocumentsSectionState
       if (!mounted || result == null) return;
       final file = result.files.single;
       final repository = context.read<WorkerRepository>();
-      await repository.uploadDocument(
+      final uploaded = await repository.uploadDocument(
         type: type,
         fileName: file.name,
         bytes: file.bytes,
@@ -80,8 +80,14 @@ class _EnrollmentDocumentsSectionState
           if (mounted && total > 0) setState(() => _progress = sent / total);
         },
       );
-      final refreshed = await repository.getEnrollmentProfile(widget.token);
-      if (mounted) setState(() => _worker = refreshed);
+      if (mounted) setState(() => _worker = uploaded);
+      try {
+        final refreshed = await repository.getEnrollmentProfile(widget.token);
+        if (mounted) setState(() => _worker = refreshed);
+      } catch (_) {
+        // The successful mutation response remains authoritative when the
+        // follow-up read is temporarily unavailable.
+      }
     } catch (error) {
       if (mounted) setState(() => _error = _message(error));
     } finally {

@@ -416,6 +416,7 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
   };
   const originalHistory = JSON.stringify(persistedRecord.work_history);
   const cleanupEvents: any[] = [];
+  let failTransaction = false;
 
   await fs.rm(privateRoot, { recursive: true, force: true });
   try {
@@ -426,7 +427,9 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
       async () => withPrismaMethod(
         prismaTarget,
         '$transaction',
-        async (operation: (tx: any) => Promise<any>) => operation({
+        async (operation: (tx: any) => Promise<any>) => failTransaction
+          ? Promise.reject(new Error('regression database transaction failure'))
+          : operation({
           $queryRaw: async () => [],
           worker: {
             findFirst: async () => ({ id: workerId }),
@@ -530,6 +533,55 @@ async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<v
             .find((document) => document.type === 'cv');
           assert.equal(persistedCv.name, 'worker-cv.pdf');
           assert.equal(persistedCv.available, true);
+          const beforeFailure = JSON.stringify(storedDocuments);
+          const beforeFailureEvents = cleanupEvents.length;
+          const maliciousPdf = await PDFDocument.create();
+          maliciousPdf.addPage([200, 200]);
+          maliciousPdf.addJavaScript('replacement-regression', 'app.alert(1)');
+          const maliciousBytes = Buffer.from(await maliciousPdf.save());
+          await expectAppError(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+            uploadFile('unsafe-cv.pdf', 'application/pdf', maliciousBytes)),
+          422, 'UPLOAD_PDF_ACTIVE_CONTENT');
+          assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+            'Failed validation must preserve previous successful document metadata.');
+          assert.equal(cleanupEvents.length, beforeFailureEvents,
+            'Previous version must not be queued for deletion on failed replacement.');
+          assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf,
+            'Previous successful file must remain readable after validation failure.');
+
+          const scannerEnvironment = {
+            MALWARE_SCANNER_PROVIDER: process.env.MALWARE_SCANNER_PROVIDER,
+            MALWARE_SCAN_REQUIRED: process.env.MALWARE_SCAN_REQUIRED,
+          };
+          try {
+            process.env.MALWARE_SCANNER_PROVIDER = 'disabled';
+            process.env.MALWARE_SCAN_REQUIRED = 'true';
+            await expectAppError(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+              uploadFile('scanner-unavailable.pdf', 'application/pdf', pdf)),
+            503, 'MALWARE_SCANNER_UNAVAILABLE');
+            assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+              'Scanner failure must preserve previous metadata and status.');
+            assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf);
+            assert.equal(cleanupEvents.length, beforeFailureEvents);
+          } finally {
+            for (const [name, value] of Object.entries(scannerEnvironment)) {
+              if (value === undefined) delete process.env[name];
+              else process.env[name] = value;
+            }
+          }
+          failTransaction = true;
+          try {
+            await assert.rejects(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+              uploadFile('transaction-failure.pdf', 'application/pdf', pdf)),
+            /regression database transaction failure/);
+            assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+              'Failed DB update must not replace the stored document.');
+            assert.equal(cleanupEvents.length, beforeFailureEvents);
+            assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf);
+            const remainingCvFiles = await fs.readdir(path.dirname(path.resolve(privateRoot, storedCv.key)));
+            assert.deepEqual(remainingCvFiles, [path.basename(storedCv.key)],
+              'Failed new object must be rolled back without deleting old object.');
+          } finally { failTransaction = false; }
           await WorkersService.uploadMyDocument(ownerUserId, 'cv',
             uploadFile('updated-cv.pdf', 'application/pdf', pdf));
           const replacement = storedDocuments.find((doc) => doc.type === 'cv');
@@ -1060,11 +1112,14 @@ async function testUploadContentValidation(): Promise<void> {
     422,
     'UPLOAD_POLYGLOT_BLOCKED',
   );
+  const activePdf = await PDFDocument.create();
+  activePdf.addPage([200, 200]);
+  activePdf.addJavaScript('regression', 'app.alert(1)');
   await expectUploadError(
     uploadFile(
       'active.pdf',
       'application/pdf',
-      Buffer.concat([pdf.subarray(0, pdf.lastIndexOf(Buffer.from('%%EOF'))), Buffer.from('/JavaScript\n%%EOF')]),
+      Buffer.from(await activePdf.save()),
     ),
     documentsOnly,
     422,

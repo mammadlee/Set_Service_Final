@@ -21,6 +21,7 @@ function load(relativePath, dependencies = {}) {
 
 const strings = load('../src/shared/i18n/appStrings.ts');
 const permissions = load('../src/shared/auth/permissions.ts');
+const assignmentPosition = load('../src/features/assignments/assignment-position.ts');
 const emptyPage = { data: [], meta: { page: 1, limit: 100, total: 0, total_pages: 1 } };
 const publishedPage = {
   ...emptyPage,
@@ -42,7 +43,8 @@ async function renderSelector(user) {
     '../../shared/hooks/useAsync': {
       useAsync: (loader) => {
         loaders.push(loader());
-        return { data: hookIndex++ === 1 ? publishedPage : emptyPage, loading: false, reload: async () => {} };
+        const index = hookIndex++;
+        return { data: index === 1 ? publishedPage : index === 2 ? [] : emptyPage, loading: false, reload: async () => {} };
       },
     },
     '../../shared/i18n/appStrings': strings,
@@ -52,8 +54,9 @@ async function renderSelector(user) {
     '../../shared/components/StateBlock': { EmptyState: noUi, ErrorState: noUi, LoadingState: noUi },
     '../../shared/components/StatusBadge': { StatusBadge: noUi },
     '../orders/orders.service': orders,
-    '../workers/workers.service': { workersService: { list: async () => emptyPage } },
+    '../workers/workers.service': { workersService: { listAvailableForAssignments: async () => [] } },
     './assignments.service': { assignmentsService: { list: async () => emptyPage } },
+    './assignment-position': assignmentPosition,
   });
   const html = renderToStaticMarkup(React.createElement(AssignmentsPage));
   await Promise.all(loaders);

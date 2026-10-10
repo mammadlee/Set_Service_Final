@@ -8,7 +8,7 @@ function write(level: LogLevel, message: string, meta?: LogMeta): void {
   const context = getRequestContext();
   const payload = {
     level,
-    message,
+    message: sanitizeString(message),
     timestamp: new Date().toISOString(),
     service: 'setservice-api',
     ...(context ?? {}),
@@ -58,9 +58,26 @@ const sensitiveKeys = new Set([
   'cookie',
   'setcookie',
   'privatekey',
+  'documenturl',
+  'downloadurl',
+  'signedurl',
+  'presignedurl',
+  'objectkey',
+  'bucket',
+  's3bucket',
+  's3endpoint',
+  'accesskeyid',
+  'xamzcredential',
+  'xamzsignature',
+  'awss3bucket',
+  'awss3key',
+  'awss3copysource',
+  'awss3uploadid',
+  's3key',
+  's3objectkey',
 ]);
 
-function redactSensitive(value: unknown, seen = new WeakSet<object>()): unknown {
+export function redactSensitive(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === 'string') return sanitizeString(value);
   if (value === null || typeof value !== 'object') return value;
   if (value instanceof Date) return value.toISOString();
@@ -81,7 +98,7 @@ function redactSensitive(value: unknown, seen = new WeakSet<object>()): unknown 
 }
 
 function isSensitiveKey(key: string): boolean {
-  const normalized = key.toLowerCase().replace(/[-_\s]/g, '');
+  const normalized = key.toLowerCase().replace(/[.\-_\s]/g, '');
   return sensitiveKeys.has(normalized)
     || normalized.endsWith('apikey')
     || normalized.endsWith('token')
@@ -107,6 +124,24 @@ function maskContactField(key: string, value: unknown): unknown {
 
 function sanitizeString(value: string): string {
   return value
+    // A presigned URL is a bearer credential. Redact the complete locator,
+    // including object keys and the R2 account host, not just its signature.
+    .replace(
+      /https?:\/\/[^\s<>"']+/gi,
+      (url) => /[?&]x-amz-|\.r2\.cloudflarestorage\.com(?:[/:]|$)|\/workers\/[^/]+\/documents\//i.test(url)
+        ? '[redacted-document-url]'
+        : url,
+    )
+    // HTTP telemetry also splits locators into url.path, url.query and
+    // server.address. Redacting only the full URL leaves these fields exposed.
+    .replace(/[^\s<>"']+/g, (part) => {
+      if (/(?:^|[?&])x-amz-[^=]+=|\b[a-z0-9-]+(?:\.(?:eu|fedramp))?\.r2\.cloudflarestorage\.com\b/i.test(part)) {
+        return '[redacted-storage-locator]';
+      }
+      return /(?:^|\/)workers\/[^/]+\/(?:documents|quarantine)\//i.test(part)
+        ? '[redacted-document-path]'
+        : part;
+    })
     .replace(
       /(\/(?:kiosk-sessions|venue-kiosks|kiosk|qr-kiosk|private-worker-documents)\/)[^/?#\s]+/gi,
       '$1[redacted]',

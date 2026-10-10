@@ -255,7 +255,7 @@ export function createAssignmentsWithSideEffects(input: {
         user_id: true,
         status: true,
         availability: true,
-        user: { select: { name: true } },
+        user: { select: { name: true, is_active: true, deleted_at: true } },
         positions: { select: { position_id: true } },
       },
     });
@@ -266,7 +266,9 @@ export function createAssignmentsWithSideEffects(input: {
       return { kind: 'invalid_workers' as const, missingWorkerIds };
     }
 
-    const unavailableWorkers = workers.filter((worker) => worker.status !== 'approved' || !worker.availability);
+    const unavailableWorkers = workers.filter((worker) =>
+      worker.status !== 'approved' || !worker.availability || !worker.user.is_active || worker.user.deleted_at !== null
+    );
     if (unavailableWorkers.length > 0) {
       return {
         kind: 'unavailable_workers' as const,
@@ -284,7 +286,11 @@ export function createAssignmentsWithSideEffects(input: {
       const worker = workersById.get(assignment.workerId);
       return !worker?.positions.some((position) => position.position_id === assignment.positionId);
     });
-    if (positionMismatches.length > 0) {
+    // Authorized administrators may staff a different position. The service
+    // and route still enforce the admin role and manage_assignments permission;
+    // the selected category/position must still belong to this order above.
+    const canAssignAcrossPositions = input.actorRole === 'admin' || input.actorRole === 'super_admin';
+    if (positionMismatches.length > 0 && !canAssignAcrossPositions) {
       return {
         kind: 'position_mismatch' as const,
         workers: positionMismatches.map((assignment) => ({
