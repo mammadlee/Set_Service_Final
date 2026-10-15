@@ -47,6 +47,26 @@ assert.deepEqual(
   'package.json devDependencies and package-lock root devDependencies must match'
 );
 
+const auditedRuntimeVersions = new Map([
+  ['express', '4.22.3'],
+  ['multer', '2.4.0'],
+  ['sharp', '0.35.5'],
+  ['js-yaml', '5.4.3'],
+  ['@fastify/busboy', '3.2.3'],
+  ['@grpc/grpc-js', '1.14.6'],
+  ['body-parser', '1.20.8'],
+  ['brace-expansion', '5.0.12'],
+  ['proxy-addr', '2.0.8'],
+  ['qs', '6.16.1'],
+]);
+for (const [name, version] of auditedRuntimeVersions) {
+  assert.equal(
+    packageLock.packages?.[`node_modules/${name}`]?.version,
+    version,
+    `${name} must remain on the reviewed security-remediated version`
+  );
+}
+
 for (const dependency of ['express-rate-limit', 'morgan']) {
   assert.equal(
     packageJson.dependencies?.[dependency],
@@ -62,6 +82,28 @@ for (const dependency of ['express-rate-limit', 'morgan']) {
 assert.equal(packageJson.devDependencies?.['@types/morgan'], undefined);
 assert.equal(packageLock.packages?.['node_modules/@types/morgan'], undefined);
 
+for (const router of [
+  'src/modules/workers/workers.router.ts',
+  'src/modules/companies/companies.router.ts',
+]) {
+  assert.match(
+    source(router),
+    /fieldNameSize:\s*100/,
+    `${router} must retain a finite multipart field-name limit with Multer 2.4`
+  );
+}
+
+assert.equal(
+  packageJson.devDependencies?.nodemon,
+  undefined,
+  'Node 24 built-in watch mode replaces the vulnerable nodemon/chokidar/braces toolchain'
+);
+assert.match(
+  packageJson.scripts?.dev ?? '',
+  /^node --watch\b/,
+  'development watch mode must use the supported Node 24 runtime'
+);
+
 for (const app of ['admin_panel', 'company_dashboard', 'qr_kiosk']) {
   const appPackage = json(`apps/${app}/package.json`);
   const appLock = json(`apps/${app}/package-lock.json`);
@@ -76,6 +118,11 @@ for (const app of ['admin_panel', 'company_dashboard', 'qr_kiosk']) {
     appLockRoot.devDependencies ?? {},
     appPackage.devDependencies ?? {},
     `${app} devDependencies and lockfile must match`
+  );
+  assert.equal(
+    appLock.packages?.['node_modules/source-map-js']?.version,
+    '1.2.2',
+    `${app} must use the patched source-map-js build dependency`
   );
 }
 
@@ -168,8 +215,8 @@ const dependencyTreeJson = JSON.parse(dependencyTree.stdout);
 // Keep this exception exact and prove both artifacts are optional lock entries;
 // every other unexpected package still fails the release gate.
 const npmOptionalInstallerArtifacts = new Map([
-  ['@img/sharp-wasm32', '0.35.3'],
-  ['@emnapi/runtime', '1.11.2'],
+  ['@img/sharp-wasm32', '0.35.5'],
+  ['@emnapi/runtime', '1.11.3'],
 ]);
 for (const [name, version] of npmOptionalInstallerArtifacts) {
   const lockEntry = packageLock.packages?.[`node_modules/${name}`];

@@ -57,6 +57,11 @@ JWT_REGISTRATION_EXPIRES_IN="30m"
 
 QR_HMAC_SECRET="<secret-reference>"
 QR_TOKEN_TTL_SECONDS="300"
+KIOSK_SESSION_TTL_HOURS="12"
+ATTENDANCE_CHECKOUT_GRACE_MINUTES="240"
+KIOSK_PUBLIC_BASE_URL="http://localhost:5174"
+
+APP_TIME_ZONE="Asia/Baku"
 
 SENTRY_DSN=""
 
@@ -69,6 +74,7 @@ OUTBOX_DEAD_RETENTION_DAYS="90"
 OTP_RETENTION_DAYS="30"
 REFRESH_TOKEN_RETENTION_DAYS="90"
 AUDIT_LOG_RETENTION_DAYS="365"
+ATTENDANCE_QR_RETENTION_DAYS="30"
 
 FIREBASE_PROJECT_ID=""
 FIREBASE_CLIENT_EMAIL=""
@@ -158,7 +164,11 @@ npm run build
 | `JWT_REGISTRATION_EXPIRES_IN` | No | `30m` | One minute to one hour; enrollment only. |
 | `QR_HMAC_SECRET` | Yes | 32+ char placeholder | Must be long, random, non-placeholder, and different from JWT/OTP secrets. |
 | `KIOSK_TOKEN_ENCRYPTION_SECRET` | Production | 32+ char placeholder | Dedicated kiosk-token encryption key; do not reuse JWT/QR/OTP keys. |
-| `QR_TOKEN_TTL_SECONDS` | No | `300` | Positive integer. Invalid values fall back safely. |
+| `QR_TOKEN_TTL_SECONDS` | No | `300` | Integer from 1 through 300 seconds. Production validation rejects values outside this range; runtime token generation also caps explicit TTLs at 300 seconds. |
+| `KIOSK_SESSION_TTL_HOURS` | No | `12` | Default expiry for legacy assignment-bound kiosk display sessions. |
+| `ATTENDANCE_CHECKOUT_GRACE_MINUTES` | No | `240` | Allows checkout after a scheduled shift ends; range is 0 through 10080 minutes. |
+| `KIOSK_PUBLIC_BASE_URL` | Production | `http://localhost:5174` | Public kiosk origin used when issuing the fragment-based venue kiosk link; production is `https://qr.setservice.az`. |
+| `APP_TIME_ZONE` | No | `Asia/Baku` | IANA time zone used to interpret date-only API filters. Keep it aligned with the web apps' `VITE_APP_TIME_ZONE`. |
 | `OTP_PEPPER` | Production | 32+ char placeholder | Required in production. Must be random and different from JWT/QR secrets. |
 | `OTP_TEST_MODE` | No | `false` | Fixed codes are allowed only when `NODE_ENV=test`; keep false in development, staging, and production. |
 | `OTP_TEST_CODE` | Test only | Empty | Must be an explicitly configured six-digit value when test mode is enabled; ignored otherwise. |
@@ -178,6 +188,7 @@ npm run build
 | `OTP_RETENTION_DAYS` | No | `30` | Retention after OTP expiry; allowed range is 1-3650 days. |
 | `REFRESH_TOKEN_RETENTION_DAYS` | No | `90` | Retention after token expiry/revocation; allowed range is 1-3650 days. |
 | `AUDIT_LOG_RETENTION_DAYS` | No | `365` | Audit retention; align with the approved legal policy. |
+| `ATTENDANCE_QR_RETENTION_DAYS` | No | `30` | Expired short-lived attendance QR grants and their replay-use rows are removed after this period. |
 | `SMS_PROVIDER` | No | `console` | Production must use `pg365`; `console` is development only. |
 | `SMS_API_URL` | Provider-specific | Empty | Required when `SMS_PROVIDER=generic_http`. |
 | `SMS_API_KEY` | Provider-specific | Empty | Required when `SMS_PROVIDER=generic_http`. Store securely. |

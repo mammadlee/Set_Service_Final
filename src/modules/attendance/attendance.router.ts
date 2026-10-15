@@ -14,6 +14,7 @@ import {
   KioskTokenParamsSchema,
   ListKioskEligibleOrdersQuerySchema,
   ListVenueKiosksQuerySchema,
+  SelectVenueKioskOrderSchema,
   VenueKioskIdParamsSchema,
   ListAttendanceQuerySchema,
 } from './attendance.schema';
@@ -59,6 +60,19 @@ router.post('/venue-kiosks/qr-token', async (req: Request, res: Response, next: 
     next(e);
   }
 });
+
+router.post(
+  '/venue-kiosks/select-order',
+  validate(SelectVenueKioskOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      res.json(await Service.selectVenueKioskOrder(readKioskCapability(req), req.body));
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
 // Local-only migration bridge for kiosk links issued before capability headers
 // were introduced. These routes are not registered in production, keeping raw
@@ -112,6 +126,19 @@ if (legacyKioskPathsEnabled) {
 // LOCAL_ONLY_KIOSK_LEGACY_END
 
 router.use(requireAuth);
+
+router.get(
+  '/venue-kiosks/companies',
+  requireRoleOrPermission('manage_kiosks'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await Service.listVenueKioskCompanies(req.user!.role));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 router.get(
   '/venue-kiosks/eligible-orders',
@@ -268,6 +295,25 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       res.json(await Service.checkOut(req.user!.sub, req.user!.role, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// GET /attendance
+router.get(
+  '/monitor',
+  requireRoleOrPermission('view_attendance'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = ListAttendanceQuerySchema.parse({
+        ...req.query,
+        sort_by: req.query.sort_by ?? 'updated_at',
+      });
+      res.setHeader('Cache-Control', 'no-store, private');
+      res.json(await Service.listAttendanceMonitor(req.user!.role, query));
     } catch (e) {
       next(e);
     }

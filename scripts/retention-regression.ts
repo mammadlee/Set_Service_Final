@@ -27,6 +27,7 @@ async function main(): Promise<void> {
     outboxDeadDays: 90,
     otpDays: 30,
     refreshTokenDays: 90,
+    attendanceQrDays: 30,
     auditLogDays: 365,
   });
   assert.throws(() => loadRetentionPolicy({ AUDIT_LOG_RETENTION_DAYS: '0' }), /between 1 and 3650/);
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
     outboxEvent: delegate('outbox', queries),
     otpCode: delegate('otp', queries),
     refreshToken: delegate('refresh', queries),
+    attendanceQrToken: delegate('attendance-qr', queries),
     auditLog: delegate('audit', queries),
   } as unknown as RetentionClient;
   const result = await cleanupRetentionBatch(new Date('2026-07-22T00:00:00.000Z'), 10, client);
@@ -44,10 +46,11 @@ async function main(): Promise<void> {
     outboxDead: 2,
     otpCodes: 2,
     refreshTokens: 2,
+    attendanceQrTokens: 2,
     auditLogs: 2,
     hasMore: false,
   });
-  assert.equal(queries.length, 5);
+  assert.equal(queries.length, 6);
   assert.ok(queries.every((query) => query.take === 10));
 
   const outbox = fs.readFileSync(path.resolve('src/lib/outbox.ts'), 'utf8');

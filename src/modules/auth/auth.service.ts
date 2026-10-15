@@ -7,7 +7,7 @@ import {
   signRegistrationToken,
   verifyRefreshToken,
 } from '../../lib/jwt';
-import { Errors } from '../../lib/errors';
+import { AppError, Errors } from '../../lib/errors';
 import { generateOtpCode, hmacSha256, safeCompareHex, sha256 } from '../../lib/crypto';
 import { normalizePhone } from '../../lib/phone';
 import { hashPassword, normalizeEmail, verifyPassword } from '../../lib/password';
@@ -72,6 +72,14 @@ type VerifiedOtpCode = {
   user_id: string | null;
   phone: string;
   purpose: OtpPurpose;
+};
+
+type PendingOtpCode = VerifiedOtpCode & {
+  code_hash: string;
+  expires_at: Date;
+  blocked_until: Date | null;
+  attempts: number;
+  max_attempts: number;
 };
 
 type OtpChallengePayload = {
@@ -417,17 +425,33 @@ export async function requestWorkerPhoneChange(
     include: { worker: true },
   });
   if (!user || !user.worker) throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
+  // Require a fresh knowledge factor before inspecting target availability or
+  // queuing a code to the new handset. A bearer token alone is insufficient to
+  // change the login identity.
+  if (!(await verifyPassword(input.current_password, user.password_hash))) {
+    throw Errors.unauthorized('Cari şifrə yanlışdır.', 'INVALID_CREDENTIALS');
+  }
   if (user.phone === phone) {
     throw Errors.badRequest('Yeni telefon nömrəsi mövcud nömrədən fərqli olmalıdır.', 'PHONE_UNCHANGED');
   }
 
   const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
   if (existing && existing.id !== user.id) {
-    throw Errors.conflict('Bu telefon nömrəsindən istifadə etmək mümkün deyil.', 'PHONE_ALREADY_REGISTERED');
+    // Do not reveal another account's registered phone identity. No OTP is
+    // delivered, while the observable response remains identical to an
+    // accepted request. Confirmation still enforces uniqueness transactionally.
+    return workerPhoneChangeRequestAccepted();
   }
 
-  await requestOtp({ phone, purpose: 'worker_phone_change', user_id: user.id, ip_address: ip });
-  return { otp_sent: true, purpose: 'worker_phone_change', retry_after_seconds: 60 };
+  try {
+    await requestOtp({ phone, purpose: 'worker_phone_change', user_id: user.id, ip_address: ip });
+  } catch (error) {
+    // Cooldown, block, and OTP-specific rate state must not turn the generic
+    // acknowledgement into a target-registration oracle. The stricter HTTP
+    // auth limiter still returns 429 uniformly before this handler.
+    if (!isSuppressedPhoneChangeOtpError(error)) throw error;
+  }
+  return workerPhoneChangeRequestAccepted();
 }
 
 export async function confirmWorkerPhoneChange(
@@ -435,15 +459,116 @@ export async function confirmWorkerPhoneChange(
   input: WorkerPhoneChangeConfirmInput
 ) {
   const phone = normalizePhone(input.phone);
-  const otp = await verifyOtpCode(phone, input.otp_code, 'worker_phone_change');
+  const currentUser = await prisma.user.findFirst({
+    where: {
+      id: userId,
+      role: 'worker',
+      is_active: true,
+      deleted_at: null,
+      worker: { is: { deleted_at: null } },
+    },
+    select: { id: true, phone: true, session_version: true },
+  });
+  if (!currentUser) {
+    throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
+  }
+
+  // A successful request may be retried after the client loses the response.
+  // Only accept that retry when the submitted code matches a recently consumed
+  // phone-change OTP for this account. This keeps the endpoint idempotent without
+  // treating an arbitrary code as a successful verification.
+  if (currentUser.phone === phone) {
+    await assertRecentPhoneChangeRetry(userId, phone, input.otp_code);
+    return workerPhoneChangeResponse(currentUser, true);
+  }
+
+  const { otp, now } = await validateOtpCodeCandidate(
+    phone,
+    input.otp_code,
+    'worker_phone_change'
+  );
   if (otp.user_id !== userId) {
     throw Errors.unauthorized('OTP bu işçi hesabı ilə uyğun gəlmir.', 'OTP_ACCOUNT_NOT_FOUND');
   }
 
   try {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { phone },
+    return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id"
+        FROM "users"
+        WHERE "id" = ${userId}
+        FOR UPDATE
+      `;
+
+      const lockedUser = await tx.user.findFirst({
+        where: {
+          id: userId,
+          role: 'worker',
+          is_active: true,
+          deleted_at: null,
+          worker: { is: { deleted_at: null } },
+        },
+        select: { id: true, phone: true, session_version: true },
+      });
+      if (!lockedUser) {
+        throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
+      }
+      if (lockedUser.phone === phone) {
+        return workerPhoneChangeResponse(lockedUser, true);
+      }
+
+      const existing = await tx.user.findUnique({
+        where: { phone },
+        select: { id: true },
+      });
+      if (existing && existing.id !== userId) {
+        throw Errors.conflict('Bu telefon nömrəsindən istifadə etmək mümkün deyil.', 'PHONE_ALREADY_REGISTERED');
+      }
+
+      const consumed = await tx.$queryRaw<VerifiedOtpCode[]>`
+        UPDATE "otp_codes"
+        SET
+          "verified_at" = timezone('UTC', ${now}::timestamptz),
+          "consumed_at" = timezone('UTC', ${now}::timestamptz),
+          "expires_at" = timezone('UTC', ${now}::timestamptz)
+        WHERE "id" = ${otp.id}
+          AND "user_id" = ${userId}
+          AND "phone" = ${phone}
+          AND "purpose"::text = ${'worker_phone_change'}
+          AND "verified_at" IS NULL
+          AND "consumed_at" IS NULL
+          AND "expires_at" > timezone('UTC', ${now}::timestamptz)
+          AND "attempts" < "max_attempts"
+          AND (
+            "blocked_until" IS NULL
+            OR "blocked_until" <= timezone('UTC', ${now}::timestamptz)
+          )
+        RETURNING "id", "user_id", "phone", "purpose"
+      `;
+      if (!consumed[0] || consumed[0].purpose !== 'worker_phone_change') {
+        throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
+      }
+
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { phone },
+        select: { id: true, phone: true, session_version: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          actor_id: userId,
+          actor_role: 'worker' as Role,
+          action: 'status_changed',
+          entity_type: 'worker_phone',
+          entity_id: userId,
+          metadata: {
+            event: 'worker_phone_changed',
+            sessions_preserved: true,
+          },
+        },
+      });
+
+      return workerPhoneChangeResponse(updated, false);
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -452,7 +577,60 @@ export async function confirmWorkerPhoneChange(
     throw error;
   }
 
-  return { phone_changed: true, phone };
+}
+
+function workerPhoneChangeRequestAccepted() {
+  return {
+    otp_sent: true,
+    purpose: 'worker_phone_change' as const,
+    retry_after_seconds: 60,
+  };
+}
+
+function isSuppressedPhoneChangeOtpError(error: unknown): boolean {
+  return error instanceof AppError && [
+    'OTP_BLOCKED',
+    'OTP_COOLDOWN',
+    'OTP_RATE_LIMITED',
+  ].includes(error.code);
+}
+
+async function assertRecentPhoneChangeRetry(
+  userId: string,
+  phone: string,
+  code: string,
+): Promise<void> {
+  const retryWindowStart = new Date(Date.now() - OTP_EXPIRES_MS);
+  const consumedOtp = await prisma.otpCode.findFirst({
+    where: {
+      user_id: userId,
+      phone,
+      purpose: 'worker_phone_change',
+      consumed_at: { gte: retryWindowStart },
+    },
+    orderBy: { consumed_at: 'desc' },
+    select: { code_hash: true },
+  });
+  const expected = otpHash(phone, 'worker_phone_change', code);
+  if (!consumedOtp || !safeCompareHex(expected, consumedOtp.code_hash)) {
+    throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
+  }
+}
+
+function workerPhoneChangeResponse(
+  user: { id: string; phone: string; session_version: number },
+  alreadyApplied: boolean
+) {
+  return {
+    phone_changed: true,
+    phone: user.phone,
+    already_applied: alreadyApplied,
+    session_preserved: true,
+    user: {
+      id: user.id,
+      phone: user.phone,
+    },
+  };
 }
 
 export async function requestEmailVerification(
@@ -1398,6 +1576,34 @@ async function consumeVerifiedOtp(
 }
 
 async function verifyOtpCode(phone: string, code: string, purpose?: OtpPurpose) {
+  const { otp, now } = await validateOtpCodeCandidate(phone, code, purpose);
+
+  const verified = await prisma.$queryRaw<VerifiedOtpCode[]>`
+    UPDATE "otp_codes"
+    SET "verified_at" = timezone('UTC', ${now}::timestamptz)
+    WHERE "id" = ${otp.id}
+      AND "verified_at" IS NULL
+      AND "expires_at" > timezone('UTC', ${now}::timestamptz)
+      AND "attempts" < "max_attempts"
+      AND (
+        "blocked_until" IS NULL
+        OR "blocked_until" <= timezone('UTC', ${now}::timestamptz)
+      )
+    RETURNING "id", "user_id", "phone", "purpose"
+  `;
+
+  if (!verified[0]) {
+    throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
+  }
+
+  return verified[0];
+}
+
+async function validateOtpCodeCandidate(
+  phone: string,
+  code: string,
+  purpose?: OtpPurpose
+): Promise<{ otp: PendingOtpCode; now: Date }> {
   const now = new Date();
   const otp = await prisma.otpCode.findFirst({
     where: { phone, purpose, verified_at: null },
@@ -1421,25 +1627,7 @@ async function verifyOtpCode(phone: string, code: string, purpose?: OtpPurpose) 
     throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
   }
 
-  const verified = await prisma.$queryRaw<VerifiedOtpCode[]>`
-    UPDATE "otp_codes"
-    SET "verified_at" = timezone('UTC', ${now}::timestamptz)
-    WHERE "id" = ${otp.id}
-      AND "verified_at" IS NULL
-      AND "expires_at" > timezone('UTC', ${now}::timestamptz)
-      AND "attempts" < "max_attempts"
-      AND (
-        "blocked_until" IS NULL
-        OR "blocked_until" <= timezone('UTC', ${now}::timestamptz)
-      )
-    RETURNING "id", "user_id", "phone", "purpose"
-  `;
-
-  if (!verified[0]) {
-    throw Errors.unauthorized('OTP kodu yanlışdır və ya vaxtı bitib.', 'INVALID_OTP');
-  }
-
-  return verified[0];
+  return { otp, now };
 }
 
 async function handleFailedOtp(otp: {

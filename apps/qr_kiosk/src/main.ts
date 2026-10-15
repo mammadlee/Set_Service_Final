@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { resolveApiBaseUrl } from './config';
+import { resolveApiBaseUrl, resolveAppTimeZone } from './config';
 import './styles.css';
 
 type KioskContext = {
@@ -21,6 +21,10 @@ type KioskContext = {
   kiosk_status: string;
   expires_at?: string | null;
   refresh_interval_seconds: number;
+  qr_available?: boolean;
+  checkout_only?: boolean;
+  selection_required?: boolean;
+  eligible_orders?: KioskOrderOption[];
   active_session?: {
     id: string;
     order_id: string;
@@ -32,6 +36,17 @@ type KioskContext = {
   } | null;
 };
 
+type KioskOrderOption = {
+  id: string;
+  title: string;
+  status: string;
+  company_id: string;
+  location?: string | null;
+  shift_start?: string | null;
+  shift_end?: string | null;
+  checkout_only?: boolean;
+};
+
 type KioskQrResponse = KioskContext & {
   token: string;
   expires_at: string;
@@ -39,6 +54,7 @@ type KioskQrResponse = KioskContext & {
 };
 
 const API_BASE = resolveApiBaseUrl();
+const APP_TIME_ZONE = resolveAppTimeZone();
 
 const token = readKioskToken();
 const elements = {
@@ -54,6 +70,12 @@ const elements = {
   countdownValue: byId('countdownValue'),
   countdownText: byId('countdownText'),
   networkText: byId('networkText'),
+  currentDateTime: byId<HTMLTimeElement>('currentDateTime'),
+  connectionBadge: byId('connectionBadge'),
+  connectionText: byId('connectionText'),
+  shiftSelector: byId('shiftSelector'),
+  orderSelect: byId<HTMLSelectElement>('orderSelect'),
+  selectOrderButton: byId<HTMLButtonElement>('selectOrderButton'),
   fullscreenButton: byId<HTMLButtonElement>('fullscreenButton'),
 };
 
@@ -66,16 +88,23 @@ let contextPollTimeout: number | undefined;
 let retryDelay = 1500;
 let inFlight = false;
 let contextInFlight = false;
+let selectionInFlight = false;
 let permanentlyInactive = false;
+let waitingForShift = false;
 let requestGeneration = 0;
 let waitingMessage = 'QR ekranı üçün aktiv sifariş seçilməlidir.';
 
 elements.fullscreenButton.addEventListener('click', () => {
   void document.documentElement.requestFullscreen?.();
 });
+elements.selectOrderButton.addEventListener('click', () => {
+  void selectOrder();
+});
 document.addEventListener('visibilitychange', handleVisibilityChange);
 window.addEventListener('pagehide', handlePageHide);
 window.addEventListener('pageshow', handlePageShow);
+window.addEventListener('online', handleOnline);
+window.addEventListener('offline', handleOffline);
 
 if (!token) {
   setInactiveState('QR keçidi etibarsızdır.');
@@ -89,6 +118,8 @@ if (!token) {
 
 async function boot() {
   startTicking();
+  updateClock();
+  updateConnectionState(hasNetworkConnection() ? 'checking' : 'offline');
   await loadContext();
 }
 
@@ -101,6 +132,7 @@ async function loadContext() {
     if (document.visibilityState !== 'visible' || permanentlyInactive) return;
     currentContext = context;
     renderContext(context);
+    updateConnectionState('online');
     retryDelay = 1500;
 
     if (context.kiosk_status === 'disabled' || context.status === 'disabled') {
@@ -109,11 +141,20 @@ async function loadContext() {
     }
 
     if (!getActiveSession(context)) {
-      setWaitingState();
+      setWaitingState(context.selection_required
+        ? 'Davam etmək üçün aktiv növbəni seçin.'
+        : 'Hazırda aktiv növbə yoxdur. Ekran avtomatik yenilənəcək.');
       scheduleContextPoll();
       return;
     }
 
+    if (context.qr_available === false) {
+      setWaitingState('Növbə başlanğıc vaxtında QR avtomatik açılacaq.');
+      scheduleContextPoll();
+      return;
+    }
+
+    waitingForShift = false;
     setStatus('active', 'Aktiv');
     await refreshQr();
   } catch (error) {
@@ -142,12 +183,19 @@ async function refreshQr() {
       scheduleContextPoll();
       return;
     }
-    currentContext = qr;
-    renderContext(qr);
+    currentContext = {
+      ...(currentContext ?? {} as KioskContext),
+      ...qr,
+      eligible_orders: currentContext?.eligible_orders ?? qr.eligible_orders,
+      selection_required: currentContext?.selection_required ?? qr.selection_required,
+    };
+    renderContext(currentContext);
     await renderQr(qr.token, generation);
     if (document.visibilityState !== 'visible' || permanentlyInactive || generation !== requestGeneration) return;
     qrExpiresAt = expiresAt;
+    waitingForShift = false;
     retryDelay = 1500;
+    updateConnectionState('online');
     setStatus('active', 'Aktiv');
     scheduleRefresh(qr.refresh_after_seconds);
     scheduleContextPoll();
@@ -160,6 +208,42 @@ async function refreshQr() {
   } finally {
     inFlight = false;
     if (generation !== requestGeneration && !permanentlyInactive) scheduleContextPoll();
+  }
+}
+
+async function selectOrder() {
+  if (!token || selectionInFlight || permanentlyInactive) return;
+  const orderId = elements.orderSelect.value;
+  if (!orderId) return;
+
+  selectionInFlight = true;
+  elements.selectOrderButton.disabled = true;
+  elements.selectOrderButton.textContent = 'Açılır…';
+  requestGeneration += 1;
+  clearTimeout(refreshTimeout);
+  clearTimeout(retryTimeout);
+  clearVisibleQr('Növbə dəyişdirilir');
+  setStatus('warning', 'Növbə açılır');
+
+  try {
+    const context = await requestJson<KioskContext>('/attendance/venue-kiosks/select-order', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order_id: orderId }),
+    });
+    if (document.visibilityState !== 'visible' || permanentlyInactive) return;
+    currentContext = context;
+    renderContext(context);
+    retryDelay = 1500;
+    updateConnectionState('online');
+    await refreshQr();
+  } catch (error) {
+    const recovery = handleRequestError(error);
+    if (recovery !== 'stop') scheduleContextPoll();
+  } finally {
+    selectionInFlight = false;
+    elements.selectOrderButton.disabled = false;
+    elements.selectOrderButton.textContent = 'Növbəni aç';
   }
 }
 
@@ -224,6 +308,27 @@ function renderContext(context: KioskContext) {
     activeSession?.shift_end || context.shift_end,
   );
   elements.categoryText.textContent = context.category || context.kiosk_name || context.name || '-';
+  renderOrderSelector(context);
+}
+
+function renderOrderSelector(context: KioskContext) {
+  const orders = context.eligible_orders ?? [];
+  const activeOrderId = getActiveSession(context)?.order_id ?? context.order_id ?? null;
+  const shouldShow = orders.length > 1
+    || Boolean(context.selection_required)
+    || Boolean(context.checkout_only && orders.some((order) => order.id !== activeOrderId));
+
+  elements.shiftSelector.hidden = !shouldShow;
+  elements.orderSelect.replaceChildren();
+  for (const order of orders) {
+    const option = document.createElement('option');
+    option.value = order.id;
+    option.textContent = `${order.title} — ${formatShift(order.shift_start, order.shift_end)}${order.checkout_only ? ' (yalnız çıxış)' : ''}`;
+    option.selected = order.id === activeOrderId;
+    elements.orderSelect.append(option);
+  }
+  if (orders.length > 0 && !elements.orderSelect.value) elements.orderSelect.value = orders[0]!.id;
+  elements.selectOrderButton.disabled = selectionInFlight || orders.length === 0;
 }
 
 function scheduleRefresh(refreshAfterSeconds: number) {
@@ -255,14 +360,31 @@ function scheduleContextPoll() {
 
 function startTicking() {
   clearInterval(tickInterval);
-  tickInterval = window.setInterval(updateCountdown, 1000);
+  tickInterval = window.setInterval(() => {
+    updateCountdown();
+    updateClock();
+  }, 1000);
+}
+
+function updateClock() {
+  const now = new Date();
+  elements.currentDateTime.dateTime = now.toISOString();
+  elements.currentDateTime.textContent = new Intl.DateTimeFormat('az-Latn-AZ', {
+    timeZone: APP_TIME_ZONE,
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(now);
 }
 
 function updateCountdown() {
   if (permanentlyInactive) return;
   if (!qrExpiresAt) {
-    elements.countdownValue.textContent = currentContext && !getActiveSession(currentContext) ? '0' : '30';
-    elements.countdownText.textContent = currentContext && !getActiveSession(currentContext)
+    elements.countdownValue.textContent = waitingForShift ? '0' : '30';
+    elements.countdownText.textContent = waitingForShift
       ? waitingMessage
       : 'QR 30 saniyədən sonra yenilənəcək';
     return;
@@ -302,6 +424,7 @@ function handleRequestError(error: unknown): 'stop' | 'wait' | 'retry' {
   }
 
   setStatus('warning', 'Bağlantı yoxlanılır');
+  updateConnectionState(hasNetworkConnection() ? 'checking' : 'offline');
   elements.networkText.textContent = message;
   if (!qrExpiresAt || Date.now() >= qrExpiresAt) {
     clearQrIfExpired();
@@ -322,6 +445,7 @@ function setStatus(kind: 'active' | 'warning' | 'inactive', text: string) {
 
 function setInactiveState(message: string) {
   permanentlyInactive = true;
+  waitingForShift = true;
   requestGeneration += 1;
   stopScheduling();
   qrExpiresAt = 0;
@@ -337,19 +461,23 @@ function setInactiveState(message: string) {
 
 function setWaitingState(message = 'QR ekranı üçün aktiv sifariş seçilməlidir.') {
   requestGeneration += 1;
+  waitingForShift = true;
   waitingMessage = message;
   clearTimeout(refreshTimeout);
   clearTimeout(retryTimeout);
-  currentContext = currentContext ? { ...currentContext, active_session: null } : null;
   qrExpiresAt = 0;
-  elements.qrImage.removeAttribute('src');
-  elements.qrImage.classList.remove('visible', 'refreshed');
-  elements.qrPlaceholder.textContent = 'QR ekranı hazır deyil';
-  elements.qrPlaceholder.classList.remove('hidden');
+  clearVisibleQr('QR ekranı hazır deyil');
   elements.countdownValue.textContent = '0';
   elements.countdownText.textContent = message;
   setStatus('warning', 'Gözləyir');
   elements.networkText.textContent = message;
+}
+
+function clearVisibleQr(message: string) {
+  elements.qrImage.removeAttribute('src');
+  elements.qrImage.classList.remove('visible', 'refreshed');
+  elements.qrPlaceholder.textContent = message;
+  elements.qrPlaceholder.classList.remove('hidden');
 }
 
 function getActiveSession(context: KioskContext) {
@@ -359,10 +487,11 @@ function getActiveSession(context: KioskContext) {
 function readKioskToken(): string | null {
   const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
   const capability = fragment.get('capability')?.trim();
-  if (capability) {
-    clearCapabilityFromAddressBar(window.location.pathname);
-    return capability;
-  }
+  // Keep the capability in the URL fragment so a dedicated tablet can reload
+  // or restore the page without losing its kiosk identity. Browsers do not send
+  // fragments in HTTP requests or Referer headers, and the kiosk never copies it
+  // into local/session storage.
+  if (capability) return capability;
   if (!import.meta.env.DEV) return null;
 
   const parts = window.location.pathname.split('/').filter(Boolean);
@@ -378,14 +507,14 @@ function readKioskToken(): string | null {
       new RegExp(`/${escapeRegExp(encodedToken)}/*$`),
       '',
     );
-    clearCapabilityFromAddressBar(safePath);
+    clearLegacyPathCapability(safePath);
     return legacyCapability;
   } catch {
     return null;
   }
 }
 
-function clearCapabilityFromAddressBar(pathname: string): void {
+function clearLegacyPathCapability(pathname: string): void {
   const safePath = pathname || '/kiosk';
   window.history.replaceState(null, '', `${window.location.origin}${safePath}`);
 }
@@ -420,6 +549,35 @@ function handlePageShow(event: PageTransitionEvent) {
   void loadContext();
 }
 
+function handleOffline() {
+  if (permanentlyInactive) return;
+  updateConnectionState('offline');
+  setStatus('warning', 'Oflayn');
+  elements.networkText.textContent = 'İnternet bağlantısı kəsilib. Bərpa olunduqda ekran avtomatik yenilənəcək.';
+  if (!qrExpiresAt || Date.now() >= qrExpiresAt) clearVisibleQr('Bağlantı gözlənilir');
+}
+
+function handleOnline() {
+  if (!token || permanentlyInactive || document.visibilityState !== 'visible') return;
+  updateConnectionState('checking');
+  retryDelay = 1500;
+  clearTimeout(retryTimeout);
+  void loadContext();
+}
+
+function updateConnectionState(status: 'online' | 'offline' | 'checking') {
+  elements.connectionBadge.dataset.status = status;
+  elements.connectionText.textContent = status === 'online'
+    ? 'Bağlantı aktivdir'
+    : status === 'offline'
+      ? 'Bağlantı yoxdur'
+      : 'Bağlantı yoxlanılır';
+}
+
+function hasNetworkConnection() {
+  return typeof navigator === 'undefined' || navigator.onLine !== false;
+}
+
 function hideQrForScreenLock() {
   if (permanentlyInactive) return;
   requestGeneration += 1;
@@ -448,6 +606,7 @@ function stopScheduling() {
 function formatShift(start?: string | null, end?: string | null): string {
   if (!start && !end) return '-';
   const formatter = new Intl.DateTimeFormat('az-Latn-AZ', {
+    timeZone: APP_TIME_ZONE,
     day: '2-digit',
     month: 'short',
     hour: '2-digit',

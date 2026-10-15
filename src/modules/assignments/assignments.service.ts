@@ -1,14 +1,20 @@
 import { Prisma } from '@prisma/client';
-import { Errors } from '../../lib/errors';
+import { AppError, Errors } from '../../lib/errors';
 import { sendPushToUser } from '../../lib/fcm';
 import { AssignmentStatus, Role } from '../../types/prisma';
 import { ORDER_STAFFING_STATUSES } from '../orders/orders.lifecycle';
 import {
   CancelAssignmentInput,
+  BulkCreateAssignmentsInput,
   CreateAssignmentsInput,
   ListAssignmentsQueryInput,
 } from './assignments.schema';
 import * as AssignmentsRepository from './assignments.repository';
+import {
+  AssignmentWarning,
+  assignmentDurationMinutes,
+  assignmentStatusesForScope,
+} from './assignments.rules';
 
 type AssignmentRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsRepository.findAssignmentById>>>;
 type CompanyRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsRepository.findCompanyByUserId>>>;
@@ -16,9 +22,7 @@ type WorkerRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsRepository.
 
 export async function createAssignments(actorId: string, roleValue: string, input: CreateAssignmentsInput) {
   const role = parseRole(roleValue);
-  if (role !== 'super_admin' && role !== 'admin') {
-    throw Errors.forbidden('Only admin can create assignments.', 'ROLE_FORBIDDEN');
-  }
+  assertAssignmentManager(role);
 
   const assignmentRequests = normalizeAssignmentRequests(input);
   uniqueWorkerIds(assignmentRequests.map((assignment) => assignment.workerId));
@@ -45,9 +49,16 @@ export async function createAssignments(actorId: string, roleValue: string, inpu
           })
         )
       );
+      const creators = await loadAssignmentCreatorMap(result.assignments.map((assignment) => assignment.id));
       return {
         assigned_count: result.assignments.length,
-        assignments: result.assignments.map((assignment) => toAssignmentResponse(assignment, role)),
+        assignments: result.assignments.map((assignment) => toAssignmentResponse(
+          assignment,
+          role,
+          creators.get(assignment.id) ?? null,
+          warningsForWorker(result.warnings, assignment.worker_id),
+        )),
+        warnings: result.warnings,
       };
     case 'order_not_active':
       throw Errors.conflict('Order must exist and be active before workers can be assigned.', 'ORDER_NOT_ACTIVE');
@@ -66,9 +77,9 @@ export async function createAssignments(actorId: string, roleValue: string, inpu
       throw Errors.badRequest('All assigned workers must be approved and available.', 'WORKERS_NOT_AVAILABLE', {
         workers: result.workers,
       });
-    case 'position_mismatch':
-      throw Errors.badRequest('Seçilmiş işçi bu vəzifə üçün uyğun deyil.', 'WORKER_POSITION_MISMATCH', {
-        workers: result.workers,
+    case 'schedule_conflicts':
+      throw Errors.conflict('One or more workers already have an overlapping assignment.', 'WORKER_SCHEDULE_CONFLICT', {
+        conflicts: result.conflicts,
       });
     case 'duplicate_assignments':
       throw Errors.conflict('One or more workers are already assigned to this order.', 'DUPLICATE_ASSIGNMENT', {
@@ -89,16 +100,124 @@ export async function createAssignments(actorId: string, roleValue: string, inpu
   }
 }
 
+export async function createBulkAssignments(
+  actorId: string,
+  roleValue: string,
+  input: BulkCreateAssignmentsInput,
+) {
+  const role = parseRole(roleValue);
+  assertAssignmentManager(role);
+  const requests = normalizeAssignmentRequests(input);
+  const seenWorkerIds = new Set<string>();
+  const results: Array<
+    | {
+        worker_id: string;
+        status: 'assigned';
+        assignment: ReturnType<typeof toAssignmentResponse>;
+        warnings: AssignmentWarning[];
+      }
+    | {
+        worker_id: string;
+        status: 'failed';
+        error: { code: string; message: string; status_code: number; details?: unknown };
+        warnings: AssignmentWarning[];
+      }
+  > = [];
+
+  // Each worker is committed in its own capacity-checked transaction. A bad
+  // row cannot roll back successful rows, while order/worker locks still make
+  // the operation safe against concurrent bulk requests.
+  for (const request of requests) {
+    if (seenWorkerIds.has(request.workerId)) {
+      results.push({
+        worker_id: request.workerId,
+        status: 'failed',
+        error: {
+          code: 'DUPLICATE_WORKER_ID',
+          message: 'The worker appears more than once in this bulk request.',
+          status_code: 400,
+        },
+        warnings: [],
+      });
+      continue;
+    }
+    seenWorkerIds.add(request.workerId);
+
+    try {
+      const created = await createAssignments(actorId, role, {
+        order_id: input.order_id,
+        assignments: [{
+          worker_id: request.workerId,
+          category: request.category,
+          order_category_item_id: request.orderCategoryItemId,
+          position_id: request.positionId,
+        }],
+      });
+      const assignment = created.assignments[0];
+      results.push({
+        worker_id: request.workerId,
+        status: 'assigned',
+        assignment,
+        warnings: created.warnings,
+      });
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      results.push({
+        worker_id: request.workerId,
+        status: 'failed',
+        error: {
+          code: error.code,
+          message: error.message,
+          status_code: error.statusCode,
+          ...(error.details === undefined ? {} : { details: error.details }),
+        },
+        warnings: [],
+      });
+    }
+  }
+
+  const assignedCount = results.filter((result) => result.status === 'assigned').length;
+  return {
+    order_id: input.order_id,
+    requested_count: requests.length,
+    assigned_count: assignedCount,
+    failed_count: results.length - assignedCount,
+    results,
+  };
+}
+
 export async function listAssignments(userId: string, roleValue: string, filters: ListAssignmentsQueryInput) {
   const role = parseRole(roleValue);
   const where: Prisma.AssignmentWhereInput = { deleted_at: null };
 
+  const scopeStatuses = assignmentStatusesForScope(filters.scope);
   if (filters.status) where.status = filters.status;
+  else if (scopeStatuses) where.status = { in: scopeStatuses };
   if (filters.order_id) where.order_id = filters.order_id;
-  if (filters.position_id) where.position_id = filters.position_id;
+  if (filters.position_id) {
+    where.OR = [
+      { position_id: filters.position_id },
+      { order_category_item: { position_id: filters.position_id } },
+    ];
+  }
+  if (filters.worker_search) {
+    where.worker = {
+      deleted_at: null,
+      user: { name: { contains: filters.worker_search, mode: 'insensitive' } },
+    };
+  }
+  if (filters.start_date || filters.end_date) {
+    where.assigned_at = {
+      ...(filters.start_date ? { gte: filters.start_date } : {}),
+      ...(filters.end_date ? { lte: filters.end_date } : {}),
+    };
+  }
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
+    if (filters.company_id && filters.company_id !== company.id) {
+      throw Errors.forbidden('Companies can only view their own assignments.', 'ASSIGNMENT_ACCESS_DENIED');
+    }
     where.order = { company_id: company.id, deleted_at: null };
     if (filters.worker_id) where.worker_id = filters.worker_id;
   } else if (role === 'worker') {
@@ -107,8 +226,16 @@ export async function listAssignments(userId: string, roleValue: string, filters
       throw Errors.forbidden('Workers can only view their own assignments.', 'ASSIGNMENT_ACCESS_DENIED');
     }
     where.worker_id = worker.id;
+    where.order = {
+      deleted_at: null,
+      ...(filters.company_id ? { company_id: filters.company_id } : {}),
+    };
   } else if (role === 'super_admin' || role === 'admin') {
     if (filters.worker_id) where.worker_id = filters.worker_id;
+    where.order = {
+      deleted_at: null,
+      ...(filters.company_id ? { company_id: filters.company_id } : {}),
+    };
   } else {
     throw Errors.forbidden('Account role is not supported.', 'ROLE_FORBIDDEN');
   }
@@ -120,8 +247,15 @@ export async function listAssignments(userId: string, roleValue: string, filters
     sort: filters.sort,
   });
 
+  const creators = canViewAssignmentCreator(role)
+    ? await loadAssignmentCreatorMap(data.map((assignment) => assignment.id))
+    : new Map<string, { id: string; name: string } | null>();
   return {
-    data: data.map((assignment: AssignmentRecord) => toAssignmentResponse(assignment, role)),
+    data: data.map((assignment: AssignmentRecord) => toAssignmentResponse(
+      assignment,
+      role,
+      creators.get(assignment.id) ?? null,
+    )),
     meta: {
       page: filters.page,
       limit: filters.limit,
@@ -132,9 +266,13 @@ export async function listAssignments(userId: string, roleValue: string, filters
 }
 
 export async function getAssignment(id: string, userId: string, roleValue: string) {
-  const assignment = await findVisibleAssignment(id, userId, parseRole(roleValue));
+  const role = parseRole(roleValue);
+  const assignment = await findVisibleAssignment(id, userId, role);
   if (!assignment) throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
-  return toAssignmentResponse(assignment, parseRole(roleValue));
+  const creators = canViewAssignmentCreator(role)
+    ? await loadAssignmentCreatorMap([assignment.id])
+    : new Map<string, { id: string; name: string } | null>();
+  return toAssignmentResponse(assignment, role, creators.get(assignment.id) ?? null);
 }
 
 export async function acceptAssignment(id: string, userId: string, roleValue: string) {
@@ -261,7 +399,7 @@ function uniqueWorkerIds(workerIds: string[]): string[] {
   return unique;
 }
 
-function normalizeAssignmentRequests(input: CreateAssignmentsInput) {
+function normalizeAssignmentRequests(input: CreateAssignmentsInput | BulkCreateAssignmentsInput) {
   if (input.assignments?.length) {
     return input.assignments.map((assignment) => ({
       workerId: assignment.worker_id,
@@ -277,6 +415,25 @@ function normalizeAssignmentRequests(input: CreateAssignmentsInput) {
     orderCategoryItemId: input.order_category_item_id,
     positionId: input.position_id,
   }));
+}
+
+function assertAssignmentManager(role: Role): void {
+  if (role !== 'super_admin' && role !== 'admin') {
+    throw Errors.forbidden('Only admin can create assignments.', 'ROLE_FORBIDDEN');
+  }
+}
+
+function warningsForWorker(warnings: AssignmentWarning[], workerId: string): AssignmentWarning[] {
+  return warnings.filter((warning) => warning.worker_id === workerId);
+}
+
+async function loadAssignmentCreatorMap(assignmentIds: string[]) {
+  const rows = await AssignmentsRepository.findAssignmentCreators(assignmentIds);
+  const creators = new Map<string, { id: string; name: string } | null>();
+  for (const row of rows) {
+    if (!creators.has(row.entity_id)) creators.set(row.entity_id, row.actor);
+  }
+  return creators;
 }
 
 async function findVisibleAssignment(id: string, userId: string, role: Role): Promise<AssignmentRecord | null> {
@@ -344,7 +501,24 @@ function parseRole(role: string): Role {
   throw Errors.forbidden('Account role is not supported.', 'ROLE_FORBIDDEN');
 }
 
-function toAssignmentResponse(assignment: AssignmentRecord, viewerRole: Role) {
+function canViewAssignmentCreator(role: Role): boolean {
+  return role === 'super_admin' || role === 'admin';
+}
+
+function toAssignmentResponse(
+  assignment: AssignmentRecord,
+  viewerRole: Role,
+  assignedBy: { id: string; name: string } | null = null,
+  warnings: AssignmentWarning[] = [],
+) {
+  const attendance = assignment.attendance_logs[0] ?? null;
+  const attendanceStatus = !attendance
+    ? assignment.status === 'completed' ? 'missing_incomplete' : 'not_checked_in'
+    : !attendance.checkin_time
+      ? 'missing_incomplete'
+      : attendance.checkout_time
+        ? (assignment.status === 'completed' ? 'completed' : 'checked_out')
+        : 'currently_working';
   return {
     id: assignment.id,
     order_id: assignment.order_id,
@@ -367,9 +541,31 @@ function toAssignmentResponse(assignment: AssignmentRecord, viewerRole: Role) {
         }
       : null,
     position: assignment.position,
+    assigned_position: assignment.position ?? assignment.order_category_item?.position ?? null,
     status: assignment.status,
     assigned_at: assignment.assigned_at,
     updated_at: assignment.updated_at,
+    ...(canViewAssignmentCreator(viewerRole) ? { assigned_by: assignedBy } : {}),
+    warnings,
+    attendance: attendance
+      ? {
+          id: attendance.id,
+          status: attendanceStatus,
+          checkin_time: attendance.checkin_time,
+          checkout_time: attendance.checkout_time,
+          duration_minutes: assignmentDurationMinutes(attendance.checkin_time, attendance.checkout_time),
+          created_at: attendance.created_at,
+          updated_at: attendance.updated_at,
+        }
+      : {
+          id: null,
+          status: attendanceStatus,
+          checkin_time: null,
+          checkout_time: null,
+          duration_minutes: null,
+          created_at: null,
+          updated_at: null,
+        },
     order: {
       id: assignment.order.id,
       title: assignment.order.title,
@@ -395,6 +591,7 @@ function toAssignmentResponse(assignment: AssignmentRecord, viewerRole: Role) {
       status: assignment.worker.status,
       availability: assignment.worker.availability,
       position: assignment.worker.position,
+      profile_photo_url: assignment.worker.profile_photo_url,
       position_ids: assignment.worker.positions.map((item: { position_id: string }) => item.position_id),
       positions: assignment.worker.positions.map((item: { position: unknown }) => item.position),
     },

@@ -36,6 +36,7 @@ const productionEnvironment = environment([
   ['OUTBOX_HEARTBEAT_TTL_SECONDS', '30'],
   ['OUTBOX_MAX_CONSECUTIVE_FAILURES', '5'],
   ['SWAGGER_DOCS_ENABLED', 'false'],
+  ['APP_TIME_ZONE', 'Asia/Baku'],
   ['CORS_ORIGINS', 'https://admin.example.com,https://company.example.com'],
   ['SMS_PROVIDER', 'pg365'],
   ['PG365_API_URL', 'https://pg365.example.test'],
@@ -146,6 +147,34 @@ function main(): void {
   const consoleProvider = validate(environment([['EMAIL_PROVIDER', 'console']]));
   assert.equal(consoleProvider.ok, false);
   assert.match(consoleProvider.output, /EMAIL_PROVIDER=console is not allowed in production/);
+
+  const invalidTimeZone = validate(environment([
+    ['EMAIL_PROVIDER', 'resend'],
+    ['RESEND_API_KEY', credential('resend-api')],
+    ['EMAIL_FROM', 'SET Service <no-reply@example.test>'],
+    ['APP_TIME_ZONE', 'Mars/Olympus_Mons'],
+  ]));
+  assert.equal(invalidTimeZone.ok, false);
+  assert.match(invalidTimeZone.output, /APP_TIME_ZONE must be a valid IANA time zone/);
+
+  const maximumQrTokenTtl = validate(environment([
+    ['EMAIL_PROVIDER', 'resend'],
+    ['RESEND_API_KEY', credential('resend-api')],
+    ['EMAIL_FROM', 'SET Service <no-reply@example.test>'],
+    ['QR_TOKEN_TTL_SECONDS', '300'],
+  ]));
+  assert.equal(maximumQrTokenTtl.ok, true, maximumQrTokenTtl.output);
+
+  for (const invalidQrTokenTtl of ['0', '301', '30.5', 'not-a-number']) {
+    const validation = validate(environment([
+      ['EMAIL_PROVIDER', 'resend'],
+      ['RESEND_API_KEY', credential('resend-api')],
+      ['EMAIL_FROM', 'SET Service <no-reply@example.test>'],
+      ['QR_TOKEN_TTL_SECONDS', invalidQrTokenTtl],
+    ]));
+    assert.equal(validation.ok, false, `QR TTL ${invalidQrTokenTtl} must be rejected`);
+    assert.match(validation.output, /QR_TOKEN_TTL_SECONDS must be an integer between 1 and 300/);
+  }
 
   console.log('production-env-validation-regression: OK');
 }

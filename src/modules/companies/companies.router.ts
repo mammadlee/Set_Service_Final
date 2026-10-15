@@ -9,7 +9,14 @@ import * as Service from './companies.service';
 const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 2, parts: 3, fieldSize: 1024 },
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 1,
+    fields: 2,
+    parts: 3,
+    fieldNameSize: 100,
+    fieldSize: 1024,
+  },
 });
 const CompanyDocumentTypeSchema = z.enum([
   'registration_certificate',

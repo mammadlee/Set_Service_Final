@@ -21,9 +21,15 @@ export function QrDisplayPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const eligibleOrders = useAsync(
-    () => attendanceService.listKioskEligibleOrders(),
+  const companies = useAsync(
+    () => attendanceService.listVenueKioskCompanies(),
     [],
+  );
+  const eligibleOrders = useAsync(
+    () => companyId
+      ? attendanceService.listKioskEligibleOrders(companyId)
+      : Promise.resolve({ data: [] }),
+    [companyId],
   );
   const kiosks = useAsync(
     () => companyId
@@ -32,14 +38,8 @@ export function QrDisplayPage() {
     [companyId],
   );
 
-  const eligibleCompanies = useMemo(() => {
-    const companiesById = new Map<string, { id: string; name: string }>();
-    for (const order of eligibleOrders.data?.data ?? []) {
-      companiesById.set(order.company.id, order.company);
-    }
-    return [...companiesById.values()].sort((left, right) => left.name.localeCompare(right.name, 'az'));
-  }, [eligibleOrders.data]);
-  const selectedCompany = eligibleCompanies.find((company) => company.id === companyId);
+  const availableCompanies = useMemo(() => companies.data?.data ?? [], [companies.data]);
+  const selectedCompany = availableCompanies.find((company) => company.id === companyId);
   const companyKiosks = useMemo(
     () => (kiosks.data?.data ?? []).filter((kiosk) => !companyId || kiosk.company_id === companyId),
     [kiosks.data, companyId],
@@ -57,17 +57,17 @@ export function QrDisplayPage() {
       : '';
 
   useEffect(() => {
-    if (!companyId || !eligibleOrders.data) return;
-    if (eligibleCompanies.some((company) => company.id === companyId)) return;
+    if (!companyId || !companies.data) return;
+    if (availableCompanies.some((company) => company.id === companyId)) return;
     setCompanyId('');
     setKioskId('');
     setOrderId('');
     setResult(null);
-  }, [companyId, eligibleCompanies, eligibleOrders.data]);
+  }, [companyId, availableCompanies, companies.data]);
 
   async function createKiosk() {
-    if (!selectedCompany || companyOrders.length === 0 || !kioskName.trim()) {
-      setError('QR yaratmaq üçün aktiv sifariş yoxdur.');
+    if (!selectedCompany || !kioskName.trim()) {
+      setError('Müəssisə və kiosk adı tələb olunur.');
       return;
     }
     setLoading(true);
@@ -85,7 +85,7 @@ export function QrDisplayPage() {
       await kiosks.reload();
     } catch (err) {
       setError(getErrorMessage(err));
-      await eligibleOrders.reload();
+      await Promise.all([companies.reload(), eligibleOrders.reload()]);
     } finally {
       setLoading(false);
     }
@@ -163,14 +163,8 @@ export function QrDisplayPage() {
     <>
       <PageHeader
         title="Məkan QR kioskları"
-        description="Hər tablet üçün sabit kiosk linki yaradın və göstəriləcək aktiv sifarişi seçin. Müəssisə də mobil tətbiqdən öz sifarişinin QR ekranını idarə edə bilər."
+        description="Hər tablet üçün sabit kiosk linkini əvvəlcədən yaradın və uyğun növbə olduqda göstəriləcək sifarişi seçin. Müəssisə də mobil tətbiqdən öz sifarişinin QR ekranını idarə edə bilər."
       />
-
-      {!eligibleOrders.loading && !eligibleOrders.error && eligibleOrders.data?.data.length === 0 ? (
-        <section className="panel">
-          <EmptyState message="QR yaratmaq üçün aktiv sifariş yoxdur." />
-        </section>
-      ) : null}
 
       <section className="split-layout">
         <div className="panel">
@@ -182,8 +176,11 @@ export function QrDisplayPage() {
             <TabletSmartphone size={20} />
           </div>
 
-          {eligibleOrders.loading ? <LoadingState compact /> : null}
-          {eligibleOrders.error ? <ErrorState message={eligibleOrders.error} onRetry={eligibleOrders.reload} /> : null}
+          {companies.loading ? <LoadingState compact /> : null}
+          {companies.error ? <ErrorState message={companies.error} onRetry={companies.reload} /> : null}
+          {!companies.loading && !companies.error && availableCompanies.length === 0 ? (
+            <EmptyState message="Kiosk üçün aktiv və təsdiqlənmiş müəssisə yoxdur." />
+          ) : null}
 
           <div className="form-stack">
             <label className="field">
@@ -191,10 +188,10 @@ export function QrDisplayPage() {
               <select
                 value={companyId}
                 onChange={(event) => onCompanyChange(event.target.value)}
-                disabled={eligibleOrders.loading || eligibleCompanies.length === 0}
+                disabled={companies.loading || availableCompanies.length === 0}
               >
                 <option value="">Müəssisə seçin</option>
-                {eligibleCompanies.map((company) => (
+                {availableCompanies.map((company) => (
                   <option key={company.id} value={company.id}>{company.name}</option>
                 ))}
               </select>
@@ -220,7 +217,7 @@ export function QrDisplayPage() {
               />
             </label>
 
-            <button className="btn primary full" type="button" disabled={loading || !selectedCompany || companyOrders.length === 0 || !kioskName.trim()} onClick={() => void createKiosk()}>
+            <button className="btn primary full" type="button" disabled={loading || !selectedCompany || !kioskName.trim()} onClick={() => void createKiosk()}>
               Kiosk yarat
             </button>
           </div>
@@ -276,7 +273,7 @@ export function QrDisplayPage() {
             </label>
 
             {companyId && !eligibleOrders.loading && companyOrders.length === 0 ? (
-              <EmptyState message="QR yaratmaq üçün aktiv sifariş yoxdur." />
+              <EmptyState message="Hazırda uyğun aktiv növbə yoxdur. Kiosk linki saxlanılır və növbə uyğun olduqda QR ekranı avtomatik hazır olacaq." />
             ) : null}
 
             {selectedCompany && selectedKiosk ? (

@@ -1,5 +1,6 @@
 import { JWT_TTL_SPECS, JwtTtlKey, jwtTtlIssue } from './jwt-ttl';
 import { kioskPublicUrlIssue } from './kiosk-public-url';
+import { assertTimeZone } from './date-filters';
 
 interface EnvVar {
   key: string;
@@ -26,7 +27,7 @@ const ENV_VARS: EnvVar[] = [
   { key: 'JWT_ACCESS_EXPIRES_IN', required: false, hint: 'default: 15m' },
   { key: 'JWT_REFRESH_EXPIRES_IN', required: false, hint: 'default: 30d' },
   { key: 'JWT_REGISTRATION_EXPIRES_IN', required: false, hint: 'default: 30m' },
-  { key: 'QR_TOKEN_TTL_SECONDS', required: false, positiveInt: true, hint: 'default: 300' },
+  { key: 'QR_TOKEN_TTL_SECONDS', required: false, hint: 'integer from 1 through 300; default: 300' },
   { key: 'KIOSK_SESSION_TTL_HOURS', required: false, positiveInt: true, hint: 'default: 12' },
   { key: 'OTP_TEST_MODE', required: false, hint: 'test only: true | false' },
   { key: 'OTP_TEST_CODE', required: false, hint: 'test only; exactly 6 digits' },
@@ -35,6 +36,7 @@ const ENV_VARS: EnvVar[] = [
   { key: 'AUTH_COOKIE_SAME_SITE', required: false, hint: 'strict | lax | none; default: lax' },
   { key: 'PORT', required: false, positiveInt: true, hint: 'default: 3000' },
   { key: 'NODE_ENV', required: false, hint: 'development | test | production' },
+  { key: 'APP_TIME_ZONE', required: false, hint: 'IANA time zone; default: Asia/Baku' },
   { key: 'SWAGGER_DOCS_ENABLED', required: false, hint: 'true | false; production must be false' },
   { key: 'SENTRY_DSN', required: false, hint: 'optional error monitoring' },
   { key: 'OUTBOX_WORKER_ENABLED', required: 'production', hint: 'false for the API when a separate outbox worker is deployed; true only for an intentional in-process topology' },
@@ -222,6 +224,11 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   if (kioskUrlIssue) errors.push(`- ${kioskUrlIssue}`);
   validateTrustedProxyCidrs(errors);
   validateCorsOrigins(errors, isProduction);
+  try {
+    assertTimeZone(process.env.APP_TIME_ZONE?.trim() || 'Asia/Baku');
+  } catch {
+    errors.push('- APP_TIME_ZONE must be a valid IANA time zone, for example Asia/Baku');
+  }
 
   const authCookieSameSite = (process.env.AUTH_COOKIE_SAME_SITE ?? 'lax').trim().toLowerCase();
   if (!['strict', 'lax', 'none'].includes(authCookieSameSite)) {
@@ -243,6 +250,11 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
   const signedUrlTtl = Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS ?? 300);
   if (!Number.isInteger(signedUrlTtl) || signedUrlTtl < 1 || signedUrlTtl > 900) {
     errors.push('- STORAGE_SIGNED_URL_TTL_SECONDS must be an integer between 1 and 900');
+  }
+
+  const qrTokenTtl = Number(process.env.QR_TOKEN_TTL_SECONDS ?? 300);
+  if (!Number.isInteger(qrTokenTtl) || qrTokenTtl < 1 || qrTokenTtl > 300) {
+    errors.push('- QR_TOKEN_TTL_SECONDS must be an integer between 1 and 300');
   }
 
   const smsProvider = process.env.SMS_PROVIDER ?? (isProduction ? 'pg365' : 'console');

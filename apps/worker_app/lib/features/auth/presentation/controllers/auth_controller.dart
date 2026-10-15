@@ -310,6 +310,14 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  WorkerMe? updateWorkerPhone(String canonicalPhone) {
+    final current = worker;
+    if (current == null) return null;
+    final updated = current.withPhone(canonicalPhone);
+    updateWorkerProfile(updated);
+    return updated;
+  }
+
   Future<void> logout() async {
     documentSessionToken = null;
     isSubmitting = true;

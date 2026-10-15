@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 
 function read(relativePath) {
-  return fs.readFileSync(path.resolve(relativePath), 'utf8');
+  return fs.readFileSync(path.resolve(relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 const composeText = read('docker-compose.prod.yml');

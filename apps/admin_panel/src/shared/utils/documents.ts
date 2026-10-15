@@ -3,7 +3,12 @@ import { API_BASE_URL } from '../api/config';
 export interface DisplayDocument {
   type: 'health_certificate' | 'criminal_record' | 'cv';
   name?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  uploadedAt?: string;
   status: string;
+  scanStatus?: string;
+  available: boolean;
   canDownload: boolean;
 }
 
@@ -19,7 +24,12 @@ export function normalizeDocuments(value: unknown): DisplayDocument[] {
     return [{
       type: record.type,
       name: typeof record.name === 'string' ? record.name : undefined,
+      mimeType: typeof record.mime_type === 'string' ? record.mime_type : undefined,
+      sizeBytes: typeof record.size_bytes === 'number' ? record.size_bytes : undefined,
+      uploadedAt: typeof record.uploaded_at === 'string' ? record.uploaded_at : undefined,
       status: typeof record.status === 'string' ? record.status : 'legacy',
+      scanStatus: typeof record.scan_status === 'string' ? record.scan_status : undefined,
+      available: record.available === true || (record.available === undefined && record.status === 'ready' && record.scan_status === 'clean'),
       canDownload: record.available === true || (record.available === undefined && record.status === 'ready' && record.scan_status === 'clean'),
     }];
   });
@@ -34,6 +44,7 @@ export function documentLabel(type: DisplayDocument['type']): string {
 }
 
 export function documentStatusLabel(document: DisplayDocument): string {
+  if (document.status === 'missing') return 'Yüklənməyib';
   if (document.status === 'legacy' && document.canDownload) return 'Açılarkən təhlükəsizlik yoxlaması aparılır';
   if (document.canDownload) return 'Yoxlamadan keçib';
   if (document.status === 'pending' || document.status === 'quarantined') return 'Təhlükəsizlik yoxlaması gözlənilir';

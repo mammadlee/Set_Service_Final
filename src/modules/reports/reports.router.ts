@@ -3,11 +3,57 @@ import { requireAuth } from '../../middleware/auth';
 import { requireAnyPermission, requireApprovedAccount, requirePermission, requireRole } from '../../middleware/rbac';
 import { ReportQuerySchema } from './reports.schema';
 import * as Service from './reports.service';
+import {
+  CompanyReportExportQuerySchema,
+  CompanyReportParamsSchema,
+  CompanyReportQuerySchema,
+} from './company-report.schema';
+import {
+  exportCompanyDetailedReportCsv,
+  getCompanyDetailedReport,
+} from './company-report.service';
 
 const router = Router();
 export const companyReportsRouter = Router();
 
 router.use(requireAuth);
+
+router.get(
+  '/companies/:companyId/export',
+  requirePermission('view_reports'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { companyId } = CompanyReportParamsSchema.parse(req.params);
+      const query = CompanyReportExportQuerySchema.parse(req.query);
+      const exported = await exportCompanyDetailedReportCsv(companyId, query);
+      res.set({
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${exported.filename}"`,
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Export-Truncated': exported.truncated ? 'true' : 'false',
+        'X-Exported-Order-Count': String(exported.exported_order_count),
+      });
+      res.send(exported.csv);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  '/companies/:companyId',
+  requirePermission('view_reports'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { companyId } = CompanyReportParamsSchema.parse(req.params);
+      const query = CompanyReportQuerySchema.parse(req.query);
+      res.json(await getCompanyDetailedReport(companyId, query));
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.get('/summary', requireAnyPermission('view_dashboard', 'view_reports'), async (req: Request, res: Response, next: NextFunction) => {
   try {

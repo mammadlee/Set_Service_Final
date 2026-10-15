@@ -1,10 +1,12 @@
 import { apiRequest } from '../../shared/api/http';
 import type {
   AttendanceLog,
+  AttendanceDisplayStatus,
   KioskEligibleOrder,
   KioskSessionResponse,
   Paginated,
   QrTokenResponse,
+  VenueKioskCompany,
   VenueKioskResponse,
 } from '../../shared/api/types';
 
@@ -15,10 +17,18 @@ export const attendanceService = {
     assignment_id?: string;
     order_id?: string;
     worker_id?: string;
+    worker_search?: string;
+    company_id?: string;
+    position_id?: string;
+    status?: AttendanceDisplayStatus | '';
+    start_date?: string;
+    end_date?: string;
+    updated_since?: string;
     open_only?: boolean | '';
+    sort_by?: 'created_at' | 'checkin_time' | 'checkout_time' | 'updated_at';
     sort?: 'asc' | 'desc';
   }) {
-    return apiRequest<Paginated<AttendanceLog>>('/attendance', { query: params });
+    return apiRequest<Paginated<AttendanceLog>>('/attendance/monitor', { query: params });
   },
 
   get(id: string) {
@@ -52,6 +62,10 @@ export const attendanceService = {
     return apiRequest<{ data: VenueKioskResponse[] }>('/attendance/venue-kiosks', {
       query: companyId ? { company_id: companyId } : {},
     });
+  },
+
+  listVenueKioskCompanies() {
+    return apiRequest<{ data: VenueKioskCompany[] }>('/attendance/venue-kiosks/companies');
   },
 
   listKioskEligibleOrders(companyId?: string) {

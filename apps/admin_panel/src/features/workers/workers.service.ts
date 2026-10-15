@@ -4,20 +4,33 @@ import { isWorkerDocumentType, resolveSignedDocumentUrl, type DisplayDocument } 
 
 export type FocTrainingFilter = '' | 'foc' | 'non_foc';
 
+interface AssignmentWorkerListParams {
+  status?: WorkerStatus | '';
+  available?: boolean;
+}
+
+async function listAllAssignmentWorkers(params: AssignmentWorkerListParams): Promise<WorkerProfile[]> {
+  const workers = new Map<string, WorkerProfile>();
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const result = await apiRequest<Paginated<WorkerProfile>>('/admin/workers', {
+      query: { page, limit: 100, ...params, sort: 'asc' },
+    });
+    result.data.forEach((worker) => workers.set(worker.id, worker));
+    totalPages = result.meta.total_pages;
+    page += 1;
+  } while (page <= totalPages);
+  return [...workers.values()];
+}
+
 export const workersService = {
   async listAvailableForAssignments(): Promise<WorkerProfile[]> {
-    const workers = new Map<string, WorkerProfile>();
-    let page = 1;
-    let totalPages = 1;
-    do {
-      const result = await apiRequest<Paginated<WorkerProfile>>('/admin/workers', {
-        query: { page, limit: 100, status: 'approved', available: true, sort: 'asc' },
-      });
-      result.data.forEach((worker) => workers.set(worker.id, worker));
-      totalPages = result.meta.total_pages;
-      page += 1;
-    } while (page <= totalPages);
-    return [...workers.values()];
+    return listAllAssignmentWorkers({ status: 'approved', available: true });
+  },
+
+  listForAssignments(params: AssignmentWorkerListParams): Promise<WorkerProfile[]> {
+    return listAllAssignmentWorkers(params);
   },
 
   list(params: {
@@ -28,6 +41,7 @@ export const workersService = {
     worker_class?: WorkerClass | '';
     foc_training?: FocTrainingFilter;
     available?: boolean;
+    position_id?: string;
     sort?: 'asc' | 'desc';
   }) {
     return apiRequest<Paginated<WorkerProfile>>('/admin/workers', { query: params });

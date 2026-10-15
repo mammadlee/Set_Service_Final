@@ -7,7 +7,11 @@ import {
   markOrderInProgress,
   ORDER_ATTENDANCE_STATUSES,
 } from '../orders/orders.lifecycle';
-import { kioskEligibleOrderWhere } from './attendance.kiosk-eligibility';
+import {
+  checkoutEligibleOrderWhere,
+  kioskCurrentOrderWhere,
+  kioskEligibleOrderWhere,
+} from './attendance.kiosk-eligibility';
 
 export type AttendanceQrContext = {
   tokenHash: string;
@@ -30,6 +34,17 @@ export const attendanceInclude = {
       status: true,
       worker_id: true,
       order_id: true,
+      position_id: true,
+      assigned_category: true,
+      position: { select: { id: true, name_az: true, name_en: true } },
+      order_category_item: {
+        select: {
+          id: true,
+          category: true,
+          position_id: true,
+          position: { select: { id: true, name_az: true, name_en: true } },
+        },
+      },
       worker: {
         select: {
           id: true,
@@ -129,6 +144,16 @@ export const venueKioskInclude = {
           location: true,
           company_id: true,
           deleted_at: true,
+          _count: {
+            select: {
+              assignments: {
+                where: {
+                  deleted_at: null,
+                  attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -143,6 +168,27 @@ export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
     select: { id: true, status: true, deleted_at: true, user: { select: { is_active: true, deleted_at: true } } },
+  });
+}
+
+const kioskManageableCompanyWhere = {
+  status: 'approved',
+  deleted_at: null,
+  user: { is_active: true, deleted_at: null },
+} satisfies Prisma.CompanyWhereInput;
+
+export function listKioskManageableCompanies() {
+  return prisma.company.findMany({
+    where: kioskManageableCompanyWhere,
+    select: { id: true, name: true, status: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export function findKioskManageableCompanyById(id: string) {
+  return prisma.company.findFirst({
+    where: { ...kioskManageableCompanyWhere, id },
+    select: { id: true },
   });
 }
 
@@ -164,9 +210,19 @@ export function findAcceptedAssignmentById(id: string) {
           title: true,
           status: true,
           company_id: true,
+          shift_start: true,
           shift_end: true,
           deleted_at: true,
-          company: { select: { id: true, name: true, status: true, user_id: true } },
+          company: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              user_id: true,
+              deleted_at: true,
+              user: { select: { is_active: true, deleted_at: true } },
+            },
+          },
         },
       },
     },
@@ -189,9 +245,19 @@ export function findAcceptedAssignmentForWorkerOrder(workerId: string, orderId: 
           title: true,
           status: true,
           company_id: true,
+          shift_start: true,
           shift_end: true,
           deleted_at: true,
-          company: { select: { id: true, name: true, status: true, user_id: true } },
+          company: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              user_id: true,
+              deleted_at: true,
+              user: { select: { is_active: true, deleted_at: true } },
+            },
+          },
         },
       },
     },
@@ -206,6 +272,7 @@ export function findOrderForKiosk(orderId: string) {
       title: true,
       status: true,
       company_id: true,
+      shift_start: true,
       shift_end: true,
       deleted_at: true,
     },
@@ -240,6 +307,89 @@ export function listKioskEligibleOrders(companyId?: string, now: Date = new Date
     orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
   });
 }
+
+export function listCurrentKioskOrders(companyId: string, now: Date = new Date()) {
+  return prisma.order.findMany({
+    where: kioskCurrentOrderWhere({ now, companyId }),
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      company_id: true,
+      shift_start: true,
+      shift_end: true,
+      location: true,
+    },
+    orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+  });
+}
+
+/**
+ * Returns shifts the tablet can switch to. Current shifts are always included;
+ * a recently ended shift is included only while it still has an open attendance
+ * record that can be checked out during the configured grace window.
+ */
+export async function listSelectableKioskOrders(companyId: string, now: Date = new Date()) {
+  const [current, checkoutOnly] = await Promise.all([
+    prisma.order.findMany({
+      where: kioskCurrentOrderWhere({ now, companyId }),
+      select: kioskOrderCandidateSelect,
+      orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+    }),
+    prisma.order.findMany({
+      where: {
+        ...checkoutEligibleOrderWhere({ now, companyId }),
+        shift_start: { lte: now },
+        shift_end: { lte: now },
+        assignments: {
+          some: {
+            deleted_at: null,
+            attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+          },
+        },
+      },
+      select: kioskOrderCandidateSelect,
+      orderBy: [{ shift_end: 'desc' }, { created_at: 'asc' }],
+    }),
+  ]);
+
+  const byId = new Map<string, (typeof current)[number]>();
+  for (const order of [...current, ...checkoutOnly]) byId.set(order.id, order);
+  return [...byId.values()];
+}
+
+export async function isSelectableKioskOrder(companyId: string, orderId: string, now: Date = new Date()) {
+  const order = await prisma.order.findFirst({
+    where: {
+      ...checkoutEligibleOrderWhere({ now, companyId, orderId }),
+      shift_start: { lte: now },
+      OR: [
+        { shift_end: { gt: now } },
+        {
+          assignments: {
+            some: {
+              deleted_at: null,
+              attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  return order !== null;
+}
+
+const kioskOrderCandidateSelect = {
+  id: true,
+  title: true,
+  status: true,
+  company_id: true,
+  shift_start: true,
+  shift_end: true,
+  location: true,
+  deleted_at: true,
+} satisfies Prisma.OrderSelect;
 
 export function countKioskEligibleOrders(companyId: string, now: Date = new Date()) {
   return prisma.order.count({
@@ -294,8 +444,12 @@ export function activateVenueKiosk(input: {
   kioskId: string;
   companyId: string;
   orderId: string;
-  activatedById: string;
+  activatedById?: string;
+  activatedByRole?: Role;
   expiresAt?: Date;
+  requireStarted?: boolean;
+  allowCheckoutOnly?: boolean;
+  activationSource?: 'manual' | 'automatic' | 'kiosk_selection';
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // Match attendance/cancellation lock order: order first, kiosk second.
@@ -315,7 +469,25 @@ export function activateVenueKiosk(input: {
 
     const now = new Date();
     const order = await tx.order.findFirst({
-      where: kioskEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
+      where: input.allowCheckoutOnly
+        ? {
+            ...checkoutEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
+            shift_start: { lte: now },
+            OR: [
+              { shift_end: { gt: now } },
+              {
+                assignments: {
+                  some: {
+                    deleted_at: null,
+                    attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+                  },
+                },
+              },
+            ],
+          }
+        : input.requireStarted
+          ? kioskCurrentOrderWhere({ now, companyId: input.companyId, orderId: input.orderId })
+          : kioskEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
       select: { id: true },
     });
     if (!order) {
@@ -367,6 +539,21 @@ export function activateVenueKiosk(input: {
       },
     });
 
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.activatedById,
+        actor_role: input.activatedByRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.kioskId,
+        metadata: {
+          order_id: input.orderId,
+          source: input.activationSource ?? 'manual',
+          status: 'active',
+        },
+      },
+    });
+
     return tx.venueKiosk.findFirstOrThrow({
       where: { id: input.kioskId, deleted_at: null },
       include: venueKioskInclude,
@@ -374,7 +561,12 @@ export function activateVenueKiosk(input: {
   });
 }
 
-export function deactivateVenueKiosk(input: { id: string; companyId?: string }) {
+export function deactivateVenueKiosk(input: {
+  id: string;
+  companyId?: string;
+  actorId?: string;
+  actorRole?: Role;
+}) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const locked = input.companyId
       ? await tx.$queryRaw<Array<{ id: string }>>`
@@ -407,6 +599,17 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
       data: { revoked_at: now },
     });
 
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.actorId,
+        actor_role: input.actorRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.id,
+        metadata: { status: 'inactive', source: 'management' },
+      },
+    });
+
     return tx.venueKiosk.findFirst({
       where: { id: input.id, deleted_at: null },
       include: venueKioskInclude,
@@ -414,7 +617,12 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
   });
 }
 
-export function disableVenueKiosk(input: { id: string; companyId?: string }) {
+export function disableVenueKiosk(input: {
+  id: string;
+  companyId?: string;
+  actorId?: string;
+  actorRole?: Role;
+}) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const locked = input.companyId
       ? await tx.$queryRaw<Array<{ id: string }>>`
@@ -459,6 +667,17 @@ export function disableVenueKiosk(input: { id: string; companyId?: string }) {
     await tx.attendanceQrToken.updateMany({
       where: { kiosk_id: input.id, revoked_at: null, deleted_at: null },
       data: { revoked_at: now },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.actorId,
+        actor_role: input.actorRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.id,
+        metadata: { status: 'disabled', source: 'management' },
+      },
     });
 
     return tx.venueKiosk.findFirst({
@@ -700,6 +919,7 @@ export async function listAttendance(input: {
   where: Prisma.AttendanceLogWhereInput;
   page: number;
   limit: number;
+  sortBy: 'created_at' | 'checkin_time' | 'checkout_time' | 'updated_at';
   sort: 'asc' | 'desc';
 }) {
   const [total, data] = await prisma.$transaction([
@@ -707,12 +927,101 @@ export async function listAttendance(input: {
     prisma.attendanceLog.findMany({
       where: input.where,
       include: attendanceInclude,
-      orderBy: { created_at: input.sort },
+      orderBy: [
+        { [input.sortBy]: input.sort },
+        ...(input.sortBy === 'created_at' ? [] : [{ created_at: input.sort }]),
+        { id: input.sort },
+      ],
       skip: (input.page - 1) * input.limit,
       take: input.limit,
     }),
   ]);
 
+  return { total, data };
+}
+
+export const attendanceMonitorSelect = {
+  id: true,
+  status: true,
+  assigned_at: true,
+  attendance_activity_at: true,
+  last_checkin_at: true,
+  last_checkout_at: true,
+  updated_at: true,
+  assigned_category: true,
+  position: { select: { id: true, name_az: true, name_en: true } },
+  order_category_item: {
+    select: {
+      id: true,
+      category: true,
+      position: { select: { id: true, name_az: true, name_en: true } },
+    },
+  },
+  worker: {
+    select: {
+      id: true,
+      status: true,
+      user: { select: { name: true, phone: true } },
+    },
+  },
+  order: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      shift_start: true,
+      shift_end: true,
+      company: { select: { id: true, name: true } },
+    },
+  },
+  attendance_logs: {
+    where: { deleted_at: null },
+    orderBy: { created_at: 'desc' },
+    take: 1,
+    select: {
+      id: true,
+      checkin_time: true,
+      checkout_time: true,
+      created_at: true,
+      updated_at: true,
+    },
+  },
+} satisfies Prisma.AssignmentSelect;
+
+export type AttendanceMonitorAssignment = Prisma.AssignmentGetPayload<{
+  select: typeof attendanceMonitorSelect;
+}>;
+
+export async function listAttendanceMonitor(input: {
+  where: Prisma.AssignmentWhereInput;
+  page: number;
+  limit: number;
+  sortBy: 'created_at' | 'checkin_time' | 'checkout_time' | 'updated_at';
+  sort: 'asc' | 'desc';
+}) {
+  const assignmentSort: keyof Pick<
+    Prisma.AssignmentOrderByWithRelationInput,
+    'assigned_at' | 'attendance_activity_at' | 'last_checkin_at' | 'last_checkout_at'
+  > = input.sortBy === 'updated_at'
+    ? 'attendance_activity_at'
+    : input.sortBy === 'checkin_time'
+      ? 'last_checkin_at'
+      : input.sortBy === 'checkout_time'
+        ? 'last_checkout_at'
+        : 'assigned_at';
+  const primaryOrder = assignmentSort === 'last_checkin_at' || assignmentSort === 'last_checkout_at'
+    ? { [assignmentSort]: { sort: input.sort, nulls: 'last' as const } }
+    : { [assignmentSort]: input.sort };
+  const [total, data] = await prisma.$transaction([
+    prisma.assignment.count({ where: input.where }),
+    prisma.assignment.findMany({
+      where: input.where,
+      select: attendanceMonitorSelect,
+      orderBy: [primaryOrder, { id: 'asc' }],
+      skip: (input.page - 1) * input.limit,
+      take: input.limit,
+    }),
+  ]);
   return { total, data };
 }
 
@@ -759,14 +1068,14 @@ export function createCheckInWithAudit(input: {
         status: 'accepted',
         deleted_at: null,
         worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
-        order: kioskEligibleOrderWhere({ now: new Date() }),
+        order: kioskCurrentOrderWhere({ now: new Date() }),
       },
       select: {
         id: true,
         worker_id: true,
         order_id: true,
         worker: { select: { status: true, deleted_at: true } },
-        order: { select: { id: true, status: true, shift_end: true, deleted_at: true,
+        order: { select: { id: true, status: true, shift_start: true, shift_end: true, deleted_at: true,
           company: { select: { status: true, deleted_at: true } } } },
       },
     });
@@ -775,6 +1084,7 @@ export function createCheckInWithAudit(input: {
       !assignment ||
       !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
       assignment.order.deleted_at !== null ||
+      assignment.order.shift_start.getTime() > Date.now() ||
       assignment.order.shift_end.getTime() <= Date.now() ||
       assignment.order.company.status !== 'approved' ||
       assignment.order.company.deleted_at !== null ||
@@ -804,15 +1114,24 @@ export function createCheckInWithAudit(input: {
     if (qrResult.kind !== 'consumed') return qrResult;
 
     try {
+      const checkedInAt = new Date();
       const attendance = await tx.attendanceLog.create({
         data: {
           assignment_id: input.assignmentId,
-          checkin_time: new Date(),
+          checkin_time: checkedInAt,
           checkin_location: input.location ?? undefined,
           checkin_notes: input.notes,
           qr_token_hash: input.qr.tokenHash,
         },
         include: attendanceInclude,
+      });
+
+      await tx.assignment.updateMany({
+        where: { id: input.assignmentId, deleted_at: null },
+        data: {
+          last_checkin_at: checkedInAt,
+          attendance_activity_at: checkedInAt,
+        },
       });
 
       await tx.auditLog.create({
@@ -897,7 +1216,7 @@ export function checkOutWithAudit(input: {
           status: 'accepted',
           deleted_at: null,
           worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
-          order: kioskEligibleOrderWhere({ now: new Date() }),
+          order: checkoutEligibleOrderWhere({ now: new Date() }),
         },
       },
       select: {
@@ -932,6 +1251,7 @@ export function checkOutWithAudit(input: {
     });
     if (qrResult.kind !== 'consumed') return qrResult;
 
+    const checkedOutAt = new Date();
     const updateResult = await tx.attendanceLog.updateMany({
       where: {
         id: openLog.id,
@@ -942,11 +1262,11 @@ export function checkOutWithAudit(input: {
           status: 'accepted',
           deleted_at: null,
           worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
-          order: kioskEligibleOrderWhere({ now: new Date() }),
+          order: checkoutEligibleOrderWhere({ now: new Date() }),
         },
       },
       data: {
-        checkout_time: new Date(),
+        checkout_time: checkedOutAt,
         checkout_location: input.location ?? undefined,
         checkout_notes: input.notes,
       },
@@ -976,7 +1296,11 @@ export function checkOutWithAudit(input: {
         status: 'accepted',
         deleted_at: null,
       },
-      data: { status: 'completed' },
+      data: {
+        status: 'completed',
+        last_checkout_at: checkedOutAt,
+        attendance_activity_at: checkedOutAt,
+      },
     });
     if (assignmentUpdate.count !== 1) {
       return { kind: 'assignment_not_accepted' as const };

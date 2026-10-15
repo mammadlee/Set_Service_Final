@@ -5,6 +5,7 @@ import { requireApprovedAccount, requirePermission, requireRole, requireRoleOrPe
 import { validate } from '../../middleware/validate';
 import {
   AssignmentIdParamsSchema,
+  BulkCreateAssignmentsSchema,
   CancelAssignmentSchema,
   CreateAssignmentsSchema,
   ListAssignmentsQuerySchema,
@@ -52,6 +53,21 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       res.status(201).json(await Service.createAssignments(req.user!.sub, req.user!.role, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// POST /assignments/bulk - partial-success admin operation with a result for
+// every submitted worker. The legacy POST /assignments remains atomic.
+router.post(
+  '/bulk',
+  requirePermission('manage_assignments'),
+  validate(BulkCreateAssignmentsSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await Service.createBulkAssignments(req.user!.sub, req.user!.role, req.body));
     } catch (e) {
       next(e);
     }

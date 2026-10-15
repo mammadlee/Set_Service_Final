@@ -232,6 +232,9 @@ Replace every angle-bracket placeholder. Keep these enforced values unchanged:
 ```dotenv
 NODE_ENV=production
 PORT=3000
+APP_TIME_ZONE=Asia/Baku
+QR_TOKEN_TTL_SECONDS=300
+KIOSK_PUBLIC_BASE_URL=https://qr.setservice.az
 REDIS_URL=redis://redis:6379
 OUTBOX_WORKER_ENABLED=false
 OTP_TEST_MODE=false
@@ -501,8 +504,12 @@ A later phase can deploy reviewed static builds to:
 - `https://company.setservice.az`
 - `https://qr.setservice.az`
 
-Each production build must inject `VITE_API_BASE_URL=https://api.setservice.az`.
-Update `CORS_ORIGINS` only when those domains are live.
+Each production build must inject `VITE_API_BASE_URL=https://api.setservice.az`
+and `VITE_APP_TIME_ZONE=Asia/Baku`. The admin build also needs
+`VITE_KIOSK_BASE_URL=https://qr.setservice.az`. Keep `APP_TIME_ZONE` and both web
+apps' `VITE_APP_TIME_ZONE` aligned so date-only filters and displayed timestamps
+refer to the same local calendar day. Update `CORS_ORIGINS` only when those
+domains are live.
 
 `apps/worker_app` is Flutter and must not run in Docker on the VPS. Build a mobile
 release with the production API supplied at compile time, for example:
@@ -516,6 +523,12 @@ flutter build appbundle --release \
 
 Mobile signing, store credentials, Firebase files, and release certificates stay
 outside this deployment task and outside Git.
+
+The October 14 worker phone-change contract requires `current_password` when the
+OTP request is created. Prepare and validate the updated Flutter build before the
+backend rollout. Older builds remain usable for existing login/profile flows, but
+their phone-change request will receive a validation error until the app is updated.
+Plan the minimum-supported-version/support message accordingly.
 
 ## 13. Remaining launch gates
 

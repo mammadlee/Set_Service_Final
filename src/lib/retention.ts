@@ -7,6 +7,7 @@ export type RetentionPolicy = {
   outboxDeadDays: number;
   otpDays: number;
   refreshTokenDays: number;
+  attendanceQrDays: number;
   auditLogDays: number;
 };
 
@@ -24,6 +25,7 @@ export type RetentionClient = {
   outboxEvent: RetentionDelegate;
   otpCode: RetentionDelegate;
   refreshToken: RetentionDelegate;
+  attendanceQrToken: RetentionDelegate;
   auditLog: RetentionDelegate;
 };
 
@@ -32,6 +34,7 @@ export type RetentionCleanupResult = {
   outboxDead: number;
   otpCodes: number;
   refreshTokens: number;
+  attendanceQrTokens: number;
   auditLogs: number;
   hasMore: boolean;
 };
@@ -42,6 +45,7 @@ export function loadRetentionPolicy(env: NodeJS.ProcessEnv = process.env): Reten
     outboxDeadDays: retentionDays(env, 'OUTBOX_DEAD_RETENTION_DAYS', 90),
     otpDays: retentionDays(env, 'OTP_RETENTION_DAYS', 30),
     refreshTokenDays: retentionDays(env, 'REFRESH_TOKEN_RETENTION_DAYS', 90),
+    attendanceQrDays: retentionDays(env, 'ATTENDANCE_QR_RETENTION_DAYS', 30),
     auditLogDays: retentionDays(env, 'AUDIT_LOG_RETENTION_DAYS', 365),
   };
 }
@@ -56,7 +60,7 @@ export async function cleanupRetentionBatch(
     throw new Error('Retention cleanup limit must be an integer between 1 and 5000.');
   }
 
-  const [processedIds, deadIds, otpIds, refreshIds, auditIds] = await Promise.all([
+  const [processedIds, deadIds, otpIds, refreshIds, attendanceQrIds, auditIds] = await Promise.all([
     selectIds(client.outboxEvent, { status: 'processed', updated_at: { lt: cutoff(now, policy.outboxProcessedDays) } }, 'updated_at', limit),
     selectIds(client.outboxEvent, { status: 'dead', updated_at: { lt: cutoff(now, policy.outboxDeadDays) } }, 'updated_at', limit),
     selectIds(client.otpCode, { expires_at: { lt: cutoff(now, policy.otpDays) } }, 'expires_at', limit),
@@ -66,14 +70,18 @@ export async function cleanupRetentionBatch(
         { revoked_at: null, expires_at: { lt: cutoff(now, policy.refreshTokenDays) } },
       ],
     }, 'expires_at', limit),
+    selectIds(client.attendanceQrToken, {
+      expires_at: { lt: cutoff(now, policy.attendanceQrDays) },
+    }, 'expires_at', limit),
     selectIds(client.auditLog, { created_at: { lt: cutoff(now, policy.auditLogDays) } }, 'created_at', limit),
   ]);
 
-  const [outboxProcessed, outboxDead, otpCodes, refreshTokens, auditLogs] = await Promise.all([
+  const [outboxProcessed, outboxDead, otpCodes, refreshTokens, attendanceQrTokens, auditLogs] = await Promise.all([
     deleteIds(client.outboxEvent, processedIds),
     deleteIds(client.outboxEvent, deadIds),
     deleteIds(client.otpCode, otpIds),
     deleteIds(client.refreshToken, refreshIds),
+    deleteIds(client.attendanceQrToken, attendanceQrIds),
     deleteIds(client.auditLog, auditIds),
   ]);
 
@@ -82,8 +90,10 @@ export async function cleanupRetentionBatch(
     outboxDead,
     otpCodes,
     refreshTokens,
+    attendanceQrTokens,
     auditLogs,
-    hasMore: [processedIds, deadIds, otpIds, refreshIds, auditIds].some((ids) => ids.length === limit),
+    hasMore: [processedIds, deadIds, otpIds, refreshIds, attendanceQrIds, auditIds]
+      .some((ids) => ids.length === limit),
   };
 }
 

@@ -94,6 +94,7 @@ router.post('/worker/phone-change/request', requireAuth, validate(WorkerPhoneCha
 
 router.post('/worker/phone-change/confirm', requireAuth, validate(WorkerPhoneChangeConfirmSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
+    res.set('Cache-Control', 'private, no-store');
     res.json(await AuthService.confirmWorkerPhoneChange(req.user!.sub, req.body));
   } catch (e) { next(e); }
 });

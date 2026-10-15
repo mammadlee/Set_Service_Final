@@ -58,6 +58,7 @@ const publicOperations = new Set([
   'post /attendance/kiosk-sessions/qr-token',
   'get /attendance/venue-kiosks/context',
   'post /attendance/venue-kiosks/qr-token',
+  'post /attendance/venue-kiosks/select-order',
 ]);
 
 function normalizeRoute(route) {
@@ -90,6 +91,7 @@ function assertKioskCapabilityContract() {
     '/attendance/kiosk-sessions/qr-token',
     '/attendance/venue-kiosks/context',
     '/attendance/venue-kiosks/qr-token',
+    '/attendance/venue-kiosks/select-order',
   ]) {
     const operations = document.paths?.[route];
     assert.ok(operations, `missing kiosk capability route ${route}`);
@@ -205,6 +207,34 @@ function assertAdminRecoveryContract() {
   assert.match(operation?.responses?.['410']?.description ?? '', /ADMIN_PASSWORD_RESET_DISABLED/);
 }
 
+function assertWorkerPhoneChangeContract() {
+  const requestSchema = document.components?.schemas?.WorkerPhoneChangeRequest;
+  assert.deepEqual(
+    [...(requestSchema?.required ?? [])].sort(),
+    ['current_password', 'phone'],
+  );
+  assert.equal(requestSchema?.additionalProperties, false);
+  assert.equal(requestSchema?.properties?.current_password?.writeOnly, true);
+  assert.equal(requestSchema?.properties?.current_password?.maxLength, 128);
+
+  const request = document.paths?.['/auth/worker/phone-change/request']?.post;
+  assert.match(request?.description ?? '', /current password/i);
+  assert.match(request?.description ?? '', /registered-phone enumeration/i);
+  assert.equal(request?.responses?.['409'], undefined);
+  assert.ok(request?.responses?.['429']);
+
+  const confirm = document.paths?.['/auth/worker/phone-change/confirm']?.post;
+  assert.ok(confirm?.responses?.['409']);
+  assert.ok(confirm?.responses?.['429']);
+}
+
+function assertAssignmentPrivacyContract() {
+  assert.match(
+    document.components?.schemas?.Assignment?.properties?.assigned_by?.description ?? '',
+    /only for admin and super_admin viewers/i,
+  );
+}
+
 function assertPrivacyAndPrivateDocumentContract() {
   const accountDeletion = document.paths?.['/workers/me/account-deletion-request']?.post;
   assert.ok(accountDeletion?.security?.some((item) => Object.hasOwn(item, 'BearerAuth')));
@@ -300,6 +330,8 @@ assertCoreContract();
 assertRouteAndSecurityContract();
 assertKioskCapabilityContract();
 assertAdminRecoveryContract();
+assertWorkerPhoneChangeContract();
+assertAssignmentPrivacyContract();
 assertPrivacyAndPrivateDocumentContract();
 assertOrderContract();
 assertPaginationContract();

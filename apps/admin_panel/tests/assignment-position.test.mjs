@@ -41,6 +41,7 @@ function pageHarness(user, { selected = [], failCreate = false, workerList = wor
   let stateIndex = 0;
   let asyncIndex = 0;
   let controls = [];
+  let openConfirm = null;
   const runtime = require('react/jsx-runtime');
   const capture = (factory) => (type, props, key) => {
     if (typeof type === 'string') controls.push({ element: type, ...props });
@@ -50,7 +51,10 @@ function pageHarness(user, { selected = [], failCreate = false, workerList = wor
     '../../shared/api/http': { apiRequest: async (path, options) => {
       requests.push({ path, options });
       if (options?.method === 'POST' && failCreate) throw new Error('Sifariş limiti dolub.');
-      return options?.method === 'POST' ? { assigned_count: 1, assignments: [] } : emptyPage;
+      return options?.method === 'POST' ? {
+        order_id: 'order-1', requested_count: 1, assigned_count: 1, failed_count: 0,
+        results: [{ worker_id: options.body.worker_ids[0], status: 'assigned', warnings: [] }],
+      } : emptyPage;
     } },
   });
   const noUi = () => null;
@@ -76,12 +80,15 @@ function pageHarness(user, { selected = [], failCreate = false, workerList = wor
     } },
     '../../shared/i18n/appStrings': strings,
     '../../shared/utils/format': { formatDateTime: String },
-    '../../shared/components/ConfirmModal': { ConfirmModal: noUi },
+    '../../shared/utils/documents': { resolveAssetUrl: (value) => value },
+    '../../shared/components/ConfirmModal': { ConfirmModal: (props) => { if (props.open) openConfirm = props; return null; } },
     '../../shared/components/PageHeader': { PageHeader: noUi },
     '../../shared/components/StateBlock': { EmptyState: noUi, ErrorState: noUi, LoadingState: noUi },
     '../../shared/components/StatusBadge': { StatusBadge: noUi },
     '../orders/orders.service': { ordersService: {} },
     '../workers/workers.service': { workersService: {} },
+    '../companies/companies.service': { companiesService: {} },
+    '../taxonomy/taxonomy.service': { taxonomyService: {} },
     './assignments.service': assignments,
     './assignment-position': position,
   });
@@ -111,6 +118,9 @@ function pageHarness(user, { selected = [], failCreate = false, workerList = wor
       const form = controls.find((control) => control.element === 'form');
       assert.ok(form);
       form.onSubmit({ preventDefault() {} });
+      render();
+      assert.ok(openConfirm, 'bulk assignment confirmation opens');
+      openConfirm.onConfirm();
       await new Promise((resolve) => setImmediate(resolve));
       return render();
     },
@@ -127,11 +137,11 @@ for (const user of [{ role: 'super_admin' }, { role: 'admin', permissions: ['man
       assert.equal(submit.disabled, false);
       await page.submit();
       const post = page.requests.find((request) => request.options?.method === 'POST');
-      assert.equal(post.path, '/assignments');
+      assert.equal(post.path, '/assignments/bulk');
       assert.deepEqual(JSON.parse(JSON.stringify(post.options.body)), {
         order_id: 'order-1', worker_ids: [workerId], category: 'Ofisiant', order_category_item_id: 'item-1', position_id: 'waiter',
       });
-      assert.deepEqual(page.reloads.sort(), [0, 1]);
+      assert.deepEqual(page.reloads.sort(), [0, 1, 2]);
     });
   }
 }

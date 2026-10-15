@@ -112,7 +112,8 @@ export const WorkerResetPasswordSchema = z.object({
 
 export const WorkerPhoneChangeRequestSchema = z.object({
   phone: PhoneSchema,
-});
+  current_password: LoginPasswordSchema,
+}).strict();
 
 export const WorkerPhoneChangeConfirmSchema = z.object({
   phone: PhoneSchema,

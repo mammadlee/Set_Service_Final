@@ -32,9 +32,9 @@
 	<string>SET Service uses your location to find and assign nearby workers.</string>
 </dict>
 	<key>NSCameraUsageDescription</key>
-	<string>QR kodlarÄ± oxutmaq vÉ™ giriÅŸ-Ã§Ä±xÄ±ÅŸ É™mÉ™liyyatlarÄ±nÄ± tÉ™sdiqlÉ™mÉ™k Ã¼Ã§Ã¼n kameraya giriÅŸ lazÄ±mdÄ±r.</string>
+	<string>QR kodları oxutmaq və giriş-çıxış əməliyyatlarını təsdiqləmək üçün kameraya giriş lazımdır.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Profil ÅŸÉ™kli vÉ™ tÉ™sdiq sÉ™nÉ™dlÉ™rini seÃ§mÉ™k Ã¼Ã§Ã¼n foto kitabxanasÄ±na giriÅŸ lazÄ±mdÄ±r.</string>
+	<string>Profil şəkli və təsdiq sənədlərini seçmək üçün foto kitabxanasına giriş lazımdır.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

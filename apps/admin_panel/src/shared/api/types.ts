@@ -37,6 +37,12 @@ export type OrderStatus =
   | 'cancelled';
 export type OrderDisplayStatus = OrderStatus | 'expired';
 export type AssignmentStatus = 'assigned' | 'accepted' | 'rejected' | 'completed' | 'cancelled';
+export type AttendanceDisplayStatus =
+  | 'not_checked_in'
+  | 'currently_working'
+  | 'checked_out'
+  | 'completed'
+  | 'missing_incomplete';
 export type WorkerClass = 'A' | 'B' | 'C';
 export type TaxonomyStatus = 'active' | 'inactive';
 
@@ -211,6 +217,80 @@ export interface CompanyProfile {
   created_at: string;
 }
 
+export interface CompanyReportOrder {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  status: OrderStatus;
+  created_at: string;
+  start_datetime: string;
+  end_datetime: string;
+  location: string;
+  workers_requested: number;
+  workers_assigned: number;
+  completed_assignments: number;
+  attendance_record_count: number;
+  total_recorded_minutes: number;
+  total_recorded_hours: number;
+  category_items: Array<{
+    id: string;
+    category: string;
+    required_count: number;
+    position_id?: string | null;
+    position?: { id: string; name_az: string; name_en?: string | null } | null;
+  }>;
+  assignments: Array<{
+    id: string;
+    status: AssignmentStatus;
+    assigned_at: string;
+    updated_at: string;
+    category?: string | null;
+    position_id?: string | null;
+    position?: string | null;
+    worker: { id: string; name: string; profile_photo_url?: string | null; registered_position?: string | null };
+    assigned_by?: { id: string; name: string; role: string } | null;
+    attendance: Array<{
+      id: string;
+      status: 'not_checked_in' | 'currently_working' | 'checked_out';
+      checkin_time?: string | null;
+      checkout_time?: string | null;
+      duration_minutes?: number | null;
+    }>;
+  }>;
+}
+
+export interface CompanyReport {
+  company: {
+    id: string;
+    name: string;
+    status: CompanyStatus;
+    contact_name?: string | null;
+    phone: string;
+    email?: string | null;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+  };
+  summary: {
+    total_orders: number;
+    active_orders: number;
+    pending_orders: number;
+    completed_orders: number;
+    cancelled_orders: number;
+    orders_by_status: Partial<Record<OrderStatus, number>>;
+    workers_requested: number;
+    workers_assigned: number;
+    completed_assignments: number;
+    attendance_records: number;
+    completed_attendance_records: number;
+    open_attendance_records: number;
+    total_recorded_minutes: number;
+    total_recorded_hours: number;
+  };
+  orders: Paginated<CompanyReportOrder>;
+}
+
 export interface Order {
   id: string;
   company_id: string;
@@ -273,8 +353,23 @@ export interface Assignment {
   position_id?: string | null;
   category?: string | null;
   category_item?: OrderCategoryItem | null;
+  position?: TaxonomyPositionSummary | TaxonomyPosition | null;
+  assigned_position?: TaxonomyPositionSummary | TaxonomyPosition | null;
   assigned_at: string;
   updated_at: string;
+  attendance?: {
+    id?: string | null;
+    status: AttendanceDisplayStatus;
+    checkin_time?: string | null;
+    checkout_time?: string | null;
+    duration_minutes?: number | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+  } | null;
+  assigned_by?: {
+    id: string;
+    name: string;
+  } | null;
   order: {
     id: string;
     title: string;
@@ -299,10 +394,37 @@ export interface Assignment {
     phone: string;
     status: WorkerStatus;
     availability: boolean;
+    profile_photo_url?: string | null;
     position?: string;
     position_ids?: string[];
     positions?: TaxonomyPositionSummary[];
   };
+}
+
+export interface AssignmentWarning {
+  code: string;
+  message: string;
+  position_id?: string | null;
+}
+
+export interface BulkAssignmentResult {
+  worker_id: string;
+  status: 'assigned' | 'failed';
+  assignment?: Assignment;
+  warnings: AssignmentWarning[];
+  error?: {
+    code?: string;
+    message: string;
+    details?: unknown;
+  };
+}
+
+export interface BulkAssignmentResponse {
+  order_id: string;
+  requested_count: number;
+  assigned_count: number;
+  failed_count: number;
+  results: BulkAssignmentResult[];
 }
 
 export interface AdminReportSummary {
@@ -353,7 +475,8 @@ export interface AdminReportSummary {
 }
 
 export interface AttendanceLog {
-  id: string;
+  id: string | null;
+  attendance_id?: string | null;
   assignment_id: string;
   checkin_time?: string | null;
   checkout_time?: string | null;
@@ -362,16 +485,29 @@ export interface AttendanceLog {
   checkout_location?: unknown;
   checkin_notes?: string | null;
   checkout_notes?: string | null;
-  created_at: string;
+  created_at?: string | null;
   updated_at: string;
+  assigned_at?: string;
+  status?: AttendanceDisplayStatus;
+  attendance_status?: AttendanceDisplayStatus;
+  worker_name?: string;
+  company_name?: string;
+  order_title?: string;
+  job_position?: string | null;
   assignment: {
     id: string;
     status: AssignmentStatus;
+    category?: string | null;
+    assigned_category?: string | null;
+    position?: TaxonomyPositionSummary | TaxonomyPosition | null;
+    category_item?: OrderCategoryItem | null;
     worker: { id: string; name: string; phone: string };
     order: {
       id: string;
       title: string;
       status: OrderStatus;
+      shift_start?: string;
+      shift_end?: string;
       company: { id: string; name: string };
     };
   };
@@ -434,6 +570,12 @@ export interface KioskEligibleOrder {
   end_datetime: string;
   location: string;
   accepted_assignment_count: number;
+}
+
+export interface VenueKioskCompany {
+  id: string;
+  name: string;
+  status: 'approved';
 }
 
 export interface VenueKioskResponse {

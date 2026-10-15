@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, BarChart3 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getErrorMessage } from '../../shared/api/http';
@@ -16,6 +16,7 @@ export function CompanyDetailPage() {
   const { id = '' } = useParams();
   const { user } = useAuth();
   const canManageCompanies = hasPermission(user, 'manage_companies');
+  const canViewReports = hasPermission(user, 'view_reports');
   const company = useAsync(() => companiesService.get(id), [id]);
   const awaitingApproval = company.data?.status === 'pending_approval';
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
@@ -42,7 +43,12 @@ export function CompanyDetailPage() {
       <PageHeader
         title={appStrings.companies.detailTitle}
         description={appStrings.companies.detailDescription}
-        actions={<Link className="btn secondary compact" to="/companies"><ArrowLeft size={16} />{appStrings.back}</Link>}
+        actions={(
+          <>
+            <Link className="btn secondary compact" to="/companies"><ArrowLeft size={16} />{appStrings.back}</Link>
+            {canViewReports ? <Link className="btn primary compact" to={`/companies/${id}/report`}><BarChart3 size={16} />Hesabat</Link> : null}
+          </>
+        )}
       />
 
       {company.loading ? <LoadingState /> : null}

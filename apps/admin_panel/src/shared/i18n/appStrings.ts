@@ -1,6 +1,6 @@
-import type { AssignmentStatus, CompanyStatus, OrderDisplayStatus, WorkerStatus } from '../api/types';
+import type { AssignmentStatus, AttendanceDisplayStatus, CompanyStatus, OrderDisplayStatus, WorkerStatus } from '../api/types';
 
-type KnownStatus = WorkerStatus | CompanyStatus | OrderDisplayStatus | AssignmentStatus | 'open' | 'read' | 'unread' | 'checked_in' | 'waiting';
+type KnownStatus = WorkerStatus | CompanyStatus | OrderDisplayStatus | AssignmentStatus | AttendanceDisplayStatus | 'open' | 'read' | 'unread' | 'checked_in' | 'waiting';
 
 export const appStrings = {
   brand: 'SET Service',
@@ -344,6 +344,10 @@ export function statusLabel(status: string): string {
       assigned: 'Təyin olunub',
       accepted: 'Qəbul edilib',
       checked_in: 'Giriş edilib',
+      not_checked_in: 'Giriş edilməyib',
+      currently_working: 'Hazırda işləyir',
+      checked_out: 'Çıxış edib',
+      missing_incomplete: 'Natamam davamiyyət',
       waiting: 'Gözlənilir',
       open: 'Açıq',
       read: 'Oxunub',

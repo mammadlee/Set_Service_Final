@@ -1,4 +1,5 @@
 const DEV_BASE_URL = 'http://localhost:3000';
+const DEFAULT_TIME_ZONE = 'Asia/Baku';
 
 export function resolveApiBaseUrl(): string {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -30,6 +31,16 @@ export function resolveApiBaseUrl(): string {
   }
 
   return appendApiVersion(parsed.toString());
+}
+
+export function resolveAppTimeZone(): string {
+  const configured = import.meta.env.VITE_APP_TIME_ZONE?.trim() || DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('az-Latn-AZ', { timeZone: configured }).format(new Date());
+    return configured;
+  } catch {
+    throw new Error('VITE_APP_TIME_ZONE etibarlı IANA saat qurşağı olmalıdır.');
+  }
 }
 
 function appendApiVersion(baseUrl: string): string {

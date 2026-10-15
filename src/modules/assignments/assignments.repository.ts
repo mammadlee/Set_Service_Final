@@ -5,6 +5,11 @@ import {
   orderLifecycleWhere,
   reconcileOrderStaffingStatus,
 } from '../orders/orders.lifecycle';
+import {
+  AssignmentWarning,
+  buildPositionMismatchWarnings,
+  SCHEDULE_CONFLICT_STATUSES,
+} from './assignments.rules';
 
 const departmentSummarySelect = {
   id: true,
@@ -91,6 +96,7 @@ const assignmentInclude = {
       status: true,
       availability: true,
       position: true,
+      profile_photo_url: true,
       positions: {
         select: {
           position_id: true,
@@ -99,6 +105,18 @@ const assignmentInclude = {
       },
       user: { select: { id: true, name: true, phone: true } },
     },
+  },
+  attendance_logs: {
+    where: { deleted_at: null },
+    select: {
+      id: true,
+      checkin_time: true,
+      checkout_time: true,
+      created_at: true,
+      updated_at: true,
+    },
+    orderBy: { created_at: 'desc' },
+    take: 1,
   },
 } satisfies Prisma.AssignmentInclude;
 
@@ -114,7 +132,7 @@ type DuplicateAssignmentSummary = {
 };
 
 export type CreateAssignmentsResult =
-  | { kind: 'created'; assignments: AssignmentWithRelations[] }
+  | { kind: 'created'; assignments: AssignmentWithRelations[]; warnings: AssignmentWarning[] }
   | { kind: 'order_not_active' }
   | { kind: 'category_required' }
   | { kind: 'invalid_category'; category?: string; orderCategoryItemId?: string }
@@ -124,8 +142,15 @@ export type CreateAssignmentsResult =
       workers: Array<{ id: string; status: string; availability: boolean }>;
     }
   | {
-      kind: 'position_mismatch';
-      workers: Array<{ id: string; position_id: string; category?: string }>;
+      kind: 'schedule_conflicts';
+      conflicts: Array<{
+        worker_id: string;
+        assignment_id: string;
+        order_id: string;
+        order_title: string;
+        shift_start: Date;
+        shift_end: Date;
+      }>;
     }
   | { kind: 'duplicate_assignments'; assignments: DuplicateAssignmentSummary[] }
   | {
@@ -182,13 +207,30 @@ export async function listAssignments(input: {
     prisma.assignment.findMany({
       where: input.where,
       include: assignmentInclude,
-      orderBy: { assigned_at: input.sort },
+      orderBy: [{ assigned_at: input.sort }, { id: input.sort }],
       skip: (input.page - 1) * input.limit,
       take: input.limit,
     }),
   ]);
 
   return { total, data };
+}
+
+export async function findAssignmentCreators(assignmentIds: string[]) {
+  if (assignmentIds.length === 0) return [];
+  return prisma.auditLog.findMany({
+    where: {
+      entity_type: 'assignment',
+      entity_id: { in: assignmentIds },
+      action: 'assignment_created',
+    },
+    select: {
+      entity_id: true,
+      created_at: true,
+      actor: { select: { id: true, name: true } },
+    },
+    orderBy: { created_at: 'asc' },
+  });
 }
 
 export function createAssignmentsWithSideEffects(input: {
@@ -214,6 +256,8 @@ export function createAssignmentsWithSideEffects(input: {
         category: true,
         required_count: true,
         company_id: true,
+        shift_start: true,
+        shift_end: true,
         category_items: {
           where: { deleted_at: null },
           select: {
@@ -248,6 +292,19 @@ export function createAssignmentsWithSideEffects(input: {
 
     const workerIds = resolvedAssignments.map((assignment) => assignment.workerId);
 
+    // Serialize assignment decisions for the same workers across different
+    // orders. This makes the overlap check safe under concurrent admin calls.
+    const sortedWorkerIds = [...workerIds].sort();
+    if (sortedWorkerIds.length > 0) {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT id
+        FROM "workers"
+        WHERE id IN (${Prisma.join(sortedWorkerIds)})
+        ORDER BY id
+        FOR UPDATE
+      `);
+    }
+
     const workers = await tx.worker.findMany({
       where: { id: { in: workerIds }, deleted_at: null },
       select: {
@@ -255,6 +312,8 @@ export function createAssignmentsWithSideEffects(input: {
         user_id: true,
         status: true,
         availability: true,
+        // Preserve the production account-state guard: a worker profile alone
+        // is not assignable when the owning user was disabled or deleted.
         user: { select: { name: true, is_active: true, deleted_at: true } },
         positions: { select: { position_id: true } },
       },
@@ -267,7 +326,10 @@ export function createAssignmentsWithSideEffects(input: {
     }
 
     const unavailableWorkers = workers.filter((worker) =>
-      worker.status !== 'approved' || !worker.availability || !worker.user.is_active || worker.user.deleted_at !== null
+      worker.status !== 'approved'
+      || !worker.availability
+      || !worker.user.is_active
+      || worker.user.deleted_at !== null
     );
     if (unavailableWorkers.length > 0) {
       return {
@@ -280,26 +342,47 @@ export function createAssignmentsWithSideEffects(input: {
       };
     }
 
-    const workersById = new Map(workers.map((worker) => [worker.id, worker]));
-    const positionMismatches = resolvedAssignments.filter((assignment) => {
-      if (!assignment.positionId) return false;
-      const worker = workersById.get(assignment.workerId);
-      return !worker?.positions.some((position) => position.position_id === assignment.positionId);
+    const scheduleConflicts = await tx.assignment.findMany({
+      where: {
+        worker_id: { in: workerIds },
+        order_id: { not: input.orderId },
+        status: { in: SCHEDULE_CONFLICT_STATUSES },
+        deleted_at: null,
+        order: {
+          deleted_at: null,
+          shift_start: { lt: order.shift_end },
+          shift_end: { gt: order.shift_start },
+        },
+      },
+      select: {
+        id: true,
+        worker_id: true,
+        order_id: true,
+        order: {
+          select: {
+            title: true,
+            shift_start: true,
+            shift_end: true,
+          },
+        },
+      },
+      orderBy: { assigned_at: 'asc' },
     });
-    // Authorized administrators may staff a different position. The service
-    // and route still enforce the admin role and manage_assignments permission;
-    // the selected category/position must still belong to this order above.
-    const canAssignAcrossPositions = input.actorRole === 'admin' || input.actorRole === 'super_admin';
-    if (positionMismatches.length > 0 && !canAssignAcrossPositions) {
+    if (scheduleConflicts.length > 0) {
       return {
-        kind: 'position_mismatch' as const,
-        workers: positionMismatches.map((assignment) => ({
-          id: assignment.workerId,
-          position_id: assignment.positionId!,
-          category: assignment.assignedCategory,
+        kind: 'schedule_conflicts' as const,
+        conflicts: scheduleConflicts.map((assignment) => ({
+          worker_id: assignment.worker_id,
+          assignment_id: assignment.id,
+          order_id: assignment.order_id,
+          order_title: assignment.order.title,
+          shift_start: assignment.order.shift_start,
+          shift_end: assignment.order.shift_end,
         })),
       };
     }
+
+    const warnings = buildPositionMismatchWarnings(resolvedAssignments, workers);
 
     const duplicateAssignments = await tx.assignment.findMany({
       where: { order_id: input.orderId, worker_id: { in: workerIds } },
@@ -412,7 +495,7 @@ export function createAssignmentsWithSideEffects(input: {
       include: assignmentInclude,
       orderBy: { assigned_at: 'asc' },
     });
-    return { kind: 'created' as const, assignments: refreshed };
+    return { kind: 'created' as const, assignments: refreshed, warnings };
   });
 }
 
@@ -499,6 +582,7 @@ export function changeWorkerAssignmentStatus(input: {
     await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
 
+    const changedAt = new Date();
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
@@ -507,7 +591,10 @@ export function changeWorkerAssignmentStatus(input: {
         status: 'assigned',
         order: orderLifecycleWhere('staffing'),
       },
-      data: { status: input.nextStatus },
+      data: {
+        status: input.nextStatus,
+        attendance_activity_at: changedAt,
+      },
     });
 
     if (result.count !== 1) return null;
@@ -519,7 +606,7 @@ export function changeWorkerAssignmentStatus(input: {
           deleted_at: null,
           revoked_at: null,
         },
-        data: { revoked_at: new Date() },
+        data: { revoked_at: changedAt },
       });
     }
 
@@ -626,13 +713,17 @@ export function cancelAssignmentWithAudit(input: {
       }
     }
 
+    const changedAt = new Date();
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
         deleted_at: null,
         status: current.status,
       },
-      data: { status: 'cancelled' },
+      data: {
+        status: 'cancelled',
+        attendance_activity_at: changedAt,
+      },
     });
 
     if (result.count !== 1) return { kind: 'state_changed' as const };
@@ -643,7 +734,7 @@ export function cancelAssignmentWithAudit(input: {
         deleted_at: null,
         revoked_at: null,
       },
-      data: { revoked_at: new Date() },
+      data: { revoked_at: changedAt },
     });
 
     await reconcileOrderStaffingStatus(tx, current.order_id, {

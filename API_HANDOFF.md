@@ -50,19 +50,23 @@ Canonical login endpoints:
 - Company: `POST /v1/auth/company/login` with `email` + `password`
 - Super Admin / Admin: `POST /v1/auth/admin/login` with `email` + `password`
 
-Registration/password endpoints:
+Registration, password, and worker phone-identity endpoints:
 
 ```text
 POST /v1/auth/worker/register
 POST /v1/auth/worker/complete-registration
 POST /v1/auth/worker/forgot-password
 POST /v1/auth/worker/reset-password
+POST /v1/auth/worker/phone-change/request
+POST /v1/auth/worker/phone-change/confirm
 POST /v1/auth/company/register
 POST /v1/auth/company/complete-registration
 POST /v1/auth/company/forgot-password
 POST /v1/auth/company/reset-password
 POST /v1/auth/admin/forgot-password
 ```
+
+Worker phone change is a two-step authenticated flow. The request endpoint requires `phone` and `current_password`; it verifies the current password before inspecting target availability or requesting an OTP for the new canonical E.164 number. To prevent registered-phone enumeration, a target already registered to another user returns the same generic accepted response, without sending an OTP. The confirm endpoint atomically verifies and consumes the OTP, rechecks uniqueness inside the transaction, returns the persisted phone, and preserves existing access and refresh sessions. A retry after a lost success response is acknowledged only when the same recently consumed OTP is supplied. Both endpoints use the strict authentication rate limiter.
 
 `POST /v1/auth/verify-otp` remains as a legacy verification endpoint. Login OTP purposes are deprecated and return `OTP_LOGIN_DEPRECATED`.
 
@@ -385,6 +389,7 @@ Super admin or an admin with `manage_assignments` assigns approved available wor
 
 ```text
 POST /v1/assignments
+POST /v1/assignments/bulk
 ```
 
 Request body:
@@ -408,12 +413,17 @@ Rules:
 - Order must be active.
 - Assignment count cannot exceed the selected category requirement when `category_items` are present.
 - Duplicate worker assignment to the same order is blocked.
+- Overlapping active assignments are blocked.
 - Worker can accept or reject only own assignment.
 - Company can view assignments connected to own orders.
 - Worker can view own assignments.
 - Super admin or an admin with `view_assignments` can view all assignments.
-- If an order row has `position_id`, assignment enforces that the selected worker has that position in `worker_positions`.
+- A registered-profession mismatch does not block an authorized admin assignment and never changes the worker profile. The response includes a `WORKER_POSITION_MISMATCH` warning.
 - Deprecated `POST /v1/orders/:id/assign` is single-category compatibility only. Multi-category orders should use `POST /v1/assignments` with `order_category_item_id`.
+
+`POST /v1/assignments` is atomic. `POST /v1/assignments/bulk` is the admin-panel partial-success operation and returns one success or failure result for every submitted worker. Both forms enforce approval, availability, duplicate, schedule, order-status, and capacity rules in concurrency-safe transactions.
+
+Assignment history is read through `GET /v1/assignments` with pagination and these optional filters: `scope=active|history`, `status`, `company_id`, `order_id`, `worker_id`, `worker_search`, `position_id`, `start_date`, `end_date`, and `sort`. Active scope maps to `assigned`/`accepted`; history maps to `rejected`/`completed`/`cancelled`. Responses include the worker and company labels, assigned position, latest attendance, and duration. `assigned_by` is present only for `admin` and `super_admin` viewers when the audit record exists; company and worker responses omit the assigning administrator identity.
 
 Worker accepts:
 
@@ -500,13 +510,14 @@ Rules:
 - Duplicate open attendance is blocked.
 - MVP allows only one attendance session per assignment.
 - After checkout, a second check-in returns `409 ATTENDANCE_ALREADY_COMPLETED`.
-- QR tokens are HMAC-signed and expire.
+- QR tokens are HMAC-signed and expire after at most 300 seconds; configuration and runtime generation both enforce this upper bound.
 - Raw QR token is not stored in the database.
 
 List attendance:
 
 ```text
 GET /v1/attendance
+GET /v1/attendance/monitor
 ```
 
 Visibility:
@@ -514,6 +525,8 @@ Visibility:
 - Worker sees own records.
 - Company sees records for own order assignments.
 - Super admin or an admin with `view_attendance` sees all records.
+
+`GET /v1/attendance/monitor` requires `view_attendance` and is assignment-backed, so it also represents workers with no attendance row as `not_checked_in` or `missing_incomplete`. It supports company, order, worker, name, position, status, scheduled date-range, pagination, `updated_since`, and indexed timestamp sorting for controlled polling. Incremental `updated_since` reads the indexed assignment update and attendance-activity projections, avoiding a scan through attendance relations. Missing check-in/check-out timestamps remain `null`; the API does not invent them.
 
 ## Notifications
 
@@ -578,6 +591,8 @@ Super admin or an admin with `view_dashboard` / `view_reports` can read dashboar
 
 - `GET /v1/admin/reports/summary`
 - `GET /v1/admin/reports`
+- `GET /v1/admin/reports/companies/:companyId` requires `view_reports` and returns the company profile, aggregate order/assignment/attendance totals, and paginated order history.
+- `GET /v1/admin/reports/companies/:companyId/export?format=csv` requires `view_reports` and exports the same isolated dataset as UTF-8 CSV.
 
 Supported filters:
 
@@ -592,30 +607,36 @@ Supported filters:
 
 Response includes today's active orders, pending orders, active assignments, checked-in workers today, rejected assignments, pending approvals, worker work counts, attendance totals, company usage, rating stats, assignment status stats, position demand, department demand, and company-position usage.
 
-## Standalone QR Kiosk
+Company-detail reports accept `start_date`, `end_date`, `order_status`, `worker_id`, `position_id`, and `sort`; the JSON endpoint also accepts `page` and `limit`. Date-only values are interpreted in `APP_TIME_ZONE` (default `Asia/Baku`), with a date-only `end_date` covering that full local calendar day. Full RFC 3339 timestamps preserve their explicit offset. The export is capped at 10,000 orders and reports truncation through `X-Export-Truncated` and `X-Exported-Order-Count`.
 
-Partner venues can open a public tablet-safe QR page without storing admin or company credentials on the device.
+## Venue QR Kiosk
+
+Partner venues can keep a tablet-safe QR page open at `https://qr.setservice.az` without storing admin or company credentials on the device.
 
 Lifecycle:
 
-- Admin creates a persistent venue kiosk for a company/tablet, then activates the current order/shift on that kiosk.
-- The API returns the raw `venue_kiosk_token` once on creation and a reusable `kiosk_url`.
+- Admin or an approved company user creates a persistent venue kiosk for the company/tablet.
+- The returned production URL is `https://qr.setservice.az/kiosk#capability=...`. The browser retains the fragment for reload/browser restore and sends the capability to the API only in `X-Kiosk-Capability`.
+- When exactly one shift is currently eligible, the backend selects it automatically. When several shifts are eligible, the kiosk shows the safe `eligible_orders` list and submits the selected `order_id`.
+- A recently ended shift remains selectable only for outstanding worker check-outs during the configured grace period.
 - The kiosk URL stays stable; only the signed attendance QR token refreshes every 30 seconds.
-- The kiosk page calls public token-protected endpoints to fetch safe display context and a fresh attendance QR.
+- The kiosk page calls capability-header endpoints to fetch safe display context and a fresh attendance QR.
 - Worker scan resolves by authenticated worker plus kiosk QR order context; no worker name is encoded into the venue QR.
-- Disabled kiosks return `VENUE_KIOSK_DISABLED`; inactive kiosks return `KIOSK_WAITING_FOR_ACTIVE_ORDER`.
-- Default web route is `/kiosk/:venue_kiosk_token`; the kiosk client also accepts `/qr-kiosk/:venue_kiosk_token` for compatibility.
+- Disabled or revoked kiosks fail closed. A kiosk with no eligible shift receives a waiting context instead of a reusable attendance token.
 
 Endpoints:
 
 - `GET /v1/attendance/venue-kiosks` protected kiosk list.
 - `POST /v1/attendance/venue-kiosks` protected persistent kiosk creation.
-- `GET /v1/attendance/venue-kiosks/:token` public token-protected safe context.
+- `GET /v1/attendance/venue-kiosks/companies` admin `manage_kiosks` company selector; includes approved active companies even when no shift is currently eligible.
+- `GET /v1/attendance/venue-kiosks/eligible-orders` protected company-scoped shift list.
+- `GET /v1/attendance/venue-kiosks/context` capability-header safe context.
+- `POST /v1/attendance/venue-kiosks/qr-token` capability-header fresh 30 second attendance QR.
+- `POST /v1/attendance/venue-kiosks/select-order` capability-header selection for simultaneous eligible shifts.
 - `POST /v1/attendance/venue-kiosks/:id/activate` protected order/shift activation.
 - `DELETE /v1/attendance/venue-kiosks/:id/active-session` protected active order deactivation.
 - `DELETE /v1/attendance/venue-kiosks/:id` protected kiosk disable/revoke.
-- `POST /v1/attendance/venue-kiosks/:token/qr-token` public token-protected fresh 30 second attendance QR.
-- Legacy assignment-specific `/attendance/kiosk-sessions` endpoints remain for compatibility.
+- Legacy assignment-specific `GET /v1/attendance/kiosk-sessions/context` and `POST /v1/attendance/kiosk-sessions/qr-token` use the same `X-Kiosk-Capability` header. Token-in-path bridge routes exist only outside production for local migration compatibility.
 
 Local admin/kiosk setup:
 
@@ -623,16 +644,16 @@ Local admin/kiosk setup:
 - Admin panel: `cd apps/admin_panel && npm run dev` on `http://localhost:5173`
 - Kiosk: `cd apps/qr_kiosk && npm run dev` on `http://localhost:5174`
 - Worker app emulator: `flutter run -d emulator-5554 --dart-define=BASE_URL=http://10.0.2.2:3000`
-- Admin panel can resolve relative backend `kiosk_url` values with `VITE_KIOSK_BASE_URL`.
+- Production backend uses `KIOSK_PUBLIC_BASE_URL=https://qr.setservice.az`; the admin panel can resolve relative development values with `VITE_KIOSK_BASE_URL`.
 
 Security model:
 
-- Kiosk tokens are random display tokens, not auth tokens.
+- Kiosk capabilities are random bearer secrets for one kiosk display, not user JWTs.
 - Only SHA-256 token hashes are used for lookup; encrypted token ciphertext is stored only so admins can re-copy the persistent kiosk link.
-- HTTP request logs redact kiosk tokens from kiosk URLs.
+- The URL fragment is retained so the dedicated kiosk survives reload/browser restore, but it is not sent to the server or in referrers and is never copied into browser storage. HTTP request logs redact kiosk capabilities and the `X-Kiosk-Capability` header.
 - Company users can manage only their own company kiosks/orders; admin can manage all kiosks.
 - The public context excludes worker phone/email and never exposes QR signing secrets.
-- Worker mobile check-in/check-out uses the existing attendance rules; order-based kiosk QR finds the worker's accepted assignment under the active order.
+- Every QR is short-lived and bound to the selected order, assignment eligibility, and company. Backend check-in/check-out validation rejects cross-company use, duplicate/replayed QR consumption, unassigned workers, and stale/revoked capabilities while preserving the audit trail.
 
 ## Error Format
 

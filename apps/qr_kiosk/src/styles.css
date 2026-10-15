@@ -102,6 +102,55 @@ body {
   animation: logoIn 700ms ease both;
 }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+}
+
+.kiosk-meta {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+  color: #1e1b18;
+  font-variant-numeric: tabular-nums;
+}
+
+.kiosk-meta time {
+  font-size: clamp(0.84rem, 1.25vw, 1rem);
+  font-weight: 850;
+}
+
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #6b625b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.connection-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #d49c2d;
+  box-shadow: 0 0 0 4px rgba(212, 156, 45, 0.14);
+}
+
+.connection-badge[data-status="online"] .connection-dot {
+  background: #2e7d5b;
+  box-shadow: 0 0 0 4px rgba(46, 125, 91, 0.14);
+}
+
+.connection-badge[data-status="offline"] .connection-dot {
+  background: #a94442;
+  box-shadow: 0 0 0 4px rgba(169, 68, 66, 0.14);
+}
+
 .fullscreen-button {
   min-height: 44px;
   border: 1px solid rgba(227, 193, 137, 0.5);
@@ -202,6 +251,77 @@ h1 {
   color: #1e1b18;
   font-size: clamp(0.98rem, 1.4vw, 1.2rem);
   line-height: 1.35;
+}
+
+.shift-selector {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgba(227, 193, 137, 0.7);
+  border-radius: 20px;
+  background: rgba(255, 248, 240, 0.92);
+  box-shadow: 0 16px 34px rgba(30, 27, 24, 0.07);
+}
+
+.shift-selector[hidden] {
+  display: none;
+}
+
+.shift-selector label {
+  display: block;
+  margin-bottom: 9px;
+  color: #8a1818;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.shift-selector-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.shift-selector select,
+.shift-selector button {
+  min-height: 46px;
+  border-radius: 13px;
+  font: inherit;
+}
+
+.shift-selector select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(138, 24, 24, 0.28);
+  padding: 0 12px;
+  background: #fff;
+  color: #1e1b18;
+}
+
+.shift-selector button {
+  border: 0;
+  padding: 0 18px;
+  background: #8a1818;
+  color: #fff8f0;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.shift-selector button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.shift-selector p {
+  margin: 9px 0 0;
+  color: #6b625b;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.fullscreen-button:focus-visible,
+.shift-selector select:focus-visible,
+.shift-selector button:focus-visible {
+  outline: 3px solid rgba(227, 193, 137, 0.92);
+  outline-offset: 3px;
 }
 
 .guidance {
@@ -408,6 +528,10 @@ h1 {
     align-items: flex-start;
   }
 
+  .top-actions {
+    align-items: flex-end;
+  }
+
   .layout-grid {
     grid-template-columns: 1fr;
     align-items: start;
@@ -437,6 +561,15 @@ h1 {
     flex-wrap: wrap;
   }
 
+  .top-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .kiosk-meta {
+    justify-items: start;
+  }
+
   .brand-logo {
     width: 138px;
   }
@@ -454,6 +587,10 @@ h1 {
     grid-template-columns: 1fr;
     gap: 6px;
     padding: 14px 16px;
+  }
+
+  .shift-selector-controls {
+    grid-template-columns: 1fr;
   }
 
   .qr-card {

@@ -506,6 +506,7 @@ export async function cancelCompanyOrderWithAudit(input: {
       });
       const workerUserIds = [...new Set(assignments.map((item) => item.worker.user_id))];
 
+      const now = new Date();
       const result = await tx.order.updateMany({
         where: {
           id: input.orderId,
@@ -518,14 +519,16 @@ export async function cancelCompanyOrderWithAudit(input: {
       });
       if (result.count !== 1) return null;
 
-      const now = new Date();
       await tx.assignment.updateMany({
         where: {
           order_id: input.orderId,
           deleted_at: null,
           status: { in: ['assigned', 'accepted'] },
         },
-        data: { status: 'cancelled' },
+        data: {
+          status: 'cancelled',
+          attendance_activity_at: now,
+        },
       });
       await tx.kioskSession.updateMany({
         where: { order_id: input.orderId, deleted_at: null, revoked_at: null },

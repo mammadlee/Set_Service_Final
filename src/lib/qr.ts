@@ -2,6 +2,7 @@ import crypto from 'crypto';
 
 const SECRET = process.env.QR_HMAC_SECRET;
 const FALLBACK_TTL_SECONDS = 5 * 60;
+export const MAX_QR_TOKEN_TTL_SECONDS = 5 * 60;
 const DEFAULT_TTL_SECONDS = parsePositiveTtl(process.env.QR_TOKEN_TTL_SECONDS, FALLBACK_TTL_SECONDS);
 
 export type AttendanceQrPayload = {
@@ -113,7 +114,15 @@ function parsePositiveTtl(value: string | undefined, fallback: number): number {
 }
 
 function sanitizeTtl(value: number, fallback = FALLBACK_TTL_SECONDS): number {
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+  const normalizedFallback = normalizeTtl(fallback) ?? FALLBACK_TTL_SECONDS;
+  return normalizeTtl(value) ?? normalizedFallback;
+}
+
+function normalizeTtl(value: number): number | null {
+  if (!Number.isFinite(value)) return null;
+  const wholeSeconds = Math.floor(value);
+  if (wholeSeconds < 1) return null;
+  return Math.min(wholeSeconds, MAX_QR_TOKEN_TTL_SECONDS);
 }
 
 function safeEqual(a: string, b: string): boolean {

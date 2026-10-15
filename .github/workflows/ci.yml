@@ -182,6 +182,8 @@ jobs:
           JWT_AUDIENCE: set-service-ci-clients
           QR_HMAC_SECRET: "ci-Q4wB9mK2xT7pD1vL8sN5cR0yH6jF3zUa"
           KIOSK_TOKEN_ENCRYPTION_SECRET: "ci-K8tR3vN7qL2xF9mD4wH1sB6yP0cJ5zGa"
+          KIOSK_PUBLIC_BASE_URL: https://qr.setservice.az
+          APP_TIME_ZONE: Asia/Baku
           OTP_PEPPER: "ci-P5yD0mV8kR3tN7xQ1wL6cH9sF2jB4zUa"
           PROVIDER_OUTBOX_ENCRYPTION_SECRET: "ci-O7mC2xK9vR4tL8qD1wN6sH3yF0bJ5zUa"
           OUTBOX_WORKER_ENABLED: "false"

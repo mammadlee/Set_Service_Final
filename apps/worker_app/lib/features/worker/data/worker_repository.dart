@@ -108,26 +108,30 @@ class WorkerRepository {
     }
   }
 
-  Future<void> requestPhoneChange(String phone) async {
+  Future<void> requestPhoneChange({
+    required String phone,
+    required String currentPassword,
+  }) async {
     try {
       await _dio.post<Map<String, dynamic>>(
         '/auth/worker/phone-change/request',
-        data: {'phone': phone},
+        data: {'phone': phone, 'current_password': currentPassword},
       );
     } catch (error) {
       throw mapDioException(error);
     }
   }
 
-  Future<void> confirmPhoneChange({
+  Future<WorkerPhoneChangeResult> confirmPhoneChange({
     required String phone,
     required String otpCode,
   }) async {
     try {
-      await _dio.post<Map<String, dynamic>>(
+      final response = await _dio.post<Map<String, dynamic>>(
         '/auth/worker/phone-change/confirm',
         data: {'phone': phone, 'otp_code': otpCode},
       );
+      return WorkerPhoneChangeResult.fromJson(response.data ?? const {});
     } catch (error) {
       throw mapDioException(error);
     }

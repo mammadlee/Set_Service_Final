@@ -40,6 +40,7 @@ function attach(table: string, row: Row): Row {
     ...row, order, worker: rows.worker.find((item) => item.id === row.worker_id),
     order_category_item: order.category_items.find((item: Row) => item.id === row.order_category_item_id),
     position: { id: row.position_id, name_az: 'Ofisiant' },
+    attendance_logs: [],
   };
 }
 
@@ -91,7 +92,10 @@ async function main(): Promise<void> {
       return { count: selected.length };
     };
   }
-  db.$queryRaw = async (strings: TemplateStringsArray) => {
+  db.$queryRaw = async (query: TemplateStringsArray | { strings: string[] }) => {
+    // Prisma.sql is used for the sorted per-worker lock while the older order
+    // locks use a tagged template. Exercise both call forms.
+    const strings = 'strings' in query ? query.strings : query;
     locks.push(strings.join('?'));
     return [{ id: ORDER }];
   };

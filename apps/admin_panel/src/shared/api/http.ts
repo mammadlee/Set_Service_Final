@@ -13,6 +13,7 @@ interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined | null>;
   auth?: boolean;
   retry?: boolean;
+  accept?: string;
 }
 
 let onUnauthorized: (() => void) | undefined;
@@ -39,6 +40,26 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return parseResponse<T>(response);
 }
 
+export async function apiDownload(path: string, options: RequestOptions = {}): Promise<{ blob: Blob; filename?: string }> {
+  let response = await send(path, { ...options, accept: options.accept ?? 'application/octet-stream' });
+
+  if (response.status === 401 && options.auth !== false && options.retry !== false) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      response = await send(path, { ...options, accept: options.accept ?? 'application/octet-stream', retry: false });
+    } else {
+      tokenStore.clear();
+      onUnauthorized?.();
+    }
+  }
+
+  if (!response.ok) return parseResponse<never>(response);
+  return {
+    blob: await response.blob(),
+    filename: contentDispositionFilename(response.headers.get('content-disposition')),
+  };
+}
+
 async function send(path: string, options: RequestOptions) {
   const url = new URL(`${API_BASE_URL}${path}`);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
@@ -47,7 +68,7 @@ async function send(path: string, options: RequestOptions) {
     }
   });
 
-  const headers = new Headers({ accept: 'application/json' });
+  const headers = new Headers({ accept: options.accept ?? 'application/json' });
   if (options.body !== undefined) headers.set('content-type', 'application/json');
 
   const token = tokenStore.getAccessToken();
@@ -61,6 +82,20 @@ async function send(path: string, options: RequestOptions) {
     credentials: 'include',
     referrerPolicy: 'no-referrer',
   });
+}
+
+function contentDispositionFilename(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded).replace(/[\\/\r\n]/g, '_');
+    } catch {
+      return undefined;
+    }
+  }
+  const basic = value.match(/filename="?([^";]+)"?/i)?.[1]?.trim();
+  return basic?.replace(/[\\/\r\n]/g, '_');
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {

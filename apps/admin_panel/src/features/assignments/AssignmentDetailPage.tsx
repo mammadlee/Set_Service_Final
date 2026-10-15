@@ -11,6 +11,8 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { formatDateTime } from '../../shared/utils/format';
+import { resolveAssetUrl } from '../../shared/utils/documents';
+import type { Assignment } from '../../shared/api/types';
 import { orderDisplayStatus } from '../../shared/utils/orders';
 import { assignmentsService } from './assignments.service';
 
@@ -55,16 +57,22 @@ export function AssignmentDetailPage() {
         <section className="detail-grid">
           <div className="panel">
             <div className="detail-title">
-              <h2>{assignment.data.worker.name}</h2>
+              <div className="worker-detail-heading">
+                {assignment.data.worker.profile_photo_url ? <img src={resolveAssetUrl(assignment.data.worker.profile_photo_url)} alt="" /> : null}
+                <div><h2>{assignment.data.worker.name}</h2><span className="table-subtext">{assignedPositionLabel(assignment.data)}</span></div>
+              </div>
               <StatusBadge status={assignment.data.status} />
             </div>
             <dl className="detail-list">
-              <dt>{appStrings.assignments.id}</dt><dd>{assignment.data.id}</dd>
               <dt>{appStrings.assignments.worker}</dt><dd>{assignment.data.worker.name}</dd>
               <dt>{appStrings.workers.phone}</dt><dd>{assignment.data.worker.phone}</dd>
-              <dt>{appStrings.workers.position}</dt><dd>{assignment.data.worker.position || appStrings.notAvailable}</dd>
+              <dt>Təyin olunan vəzifə</dt><dd>{assignedPositionLabel(assignment.data)}</dd>
               <dt>{appStrings.assignments.status}</dt><dd><StatusBadge status={assignment.data.status} /></dd>
               <dt>{appStrings.assignments.assignedAt}</dt><dd>{formatDateTime(assignment.data.assigned_at)}</dd>
+              <dt>Təyin edən admin</dt><dd>{assignment.data.assigned_by?.name || 'Sistem / qeyd yoxdur'}</dd>
+              <dt>Faktiki giriş</dt><dd>{formatDateTime(assignment.data.attendance?.checkin_time)}</dd>
+              <dt>Faktiki çıxış</dt><dd>{assignment.data.attendance?.checkout_time ? formatDateTime(assignment.data.attendance.checkout_time) : 'Çıxış edilməyib'}</dd>
+              <dt>Qeydə alınmış müddət</dt><dd>{formatDuration(assignment.data.attendance?.duration_minutes)}</dd>
             </dl>
             {canManageAssignments ? (
               <div className="action-row detail-actions destructive-only-actions">
@@ -130,4 +138,19 @@ export function AssignmentDetailPage() {
       />
     </>
   );
+}
+
+function assignedPositionLabel(assignment: Assignment): string {
+  return assignment.assigned_position?.name_az
+    || assignment.position?.name_az
+    || assignment.category_item?.position?.name_az
+    || assignment.category
+    || appStrings.notAvailable;
+}
+
+function formatDuration(minutes?: number | null): string {
+  if (minutes === null || minutes === undefined) return 'Hesablanmayıb';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return hours ? `${hours} saat ${rest} dəq` : `${rest} dəq`;
 }

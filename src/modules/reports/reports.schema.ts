@@ -1,20 +1,13 @@
 import { z } from 'zod';
-
-const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+import { normalizeOptionalDateFilter } from '../../lib/date-filters';
 
 const optionalStartDate = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  (value) => normalizeOptionalDateFilter(value, 'start'),
   z.coerce.date().optional()
 );
 
 const optionalEndDate = z.preprocess(
-  (value) => {
-    if (typeof value !== 'string') return value;
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    if (dateOnlyPattern.test(trimmed)) return `${trimmed}T23:59:59.999Z`;
-    return trimmed;
-  },
+  (value) => normalizeOptionalDateFilter(value, 'end'),
   z.coerce.date().optional()
 );
 

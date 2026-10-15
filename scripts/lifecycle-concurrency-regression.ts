@@ -31,6 +31,7 @@ type AssignmentFixture = {
   assignmentId: string;
   qrTokenId: string;
   qr: AttendanceRepository.AttendanceQrContext;
+  initialAttendanceActivityAt: Date;
 };
 
 function nextPhone(prefix: string): string {
@@ -164,8 +165,12 @@ async function createCoreActors(): Promise<CoreActors> {
 async function createAcceptedAssignment(
   actors: CoreActors,
   label: string,
+  initialStatus: 'assigned' | 'accepted' = 'accepted',
 ): Promise<AssignmentFixture> {
-  const shiftStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  // Attendance eligibility now requires the shift to be active. Keep these
+  // concurrency fixtures inside the live window so each scenario exercises
+  // lifecycle locking rather than failing early on schedule validation.
+  const shiftStart = new Date(Date.now() - 60 * 60 * 1000);
   const order = await prisma.order.create({
     data: {
       company_id: actors.companyId,
@@ -190,7 +195,7 @@ async function createAcceptedAssignment(
       order_id: order.id,
       worker_id: actors.workerId,
       assigned_category: 'Concurrency tester',
-      status: 'accepted',
+      status: initialStatus,
     },
   });
   trackedEntityIds.add(assignment.id);
@@ -207,7 +212,61 @@ async function createAcceptedAssignment(
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
   });
   trackedEntityIds.add(qrToken.id);
-  return { orderId: order.id, assignmentId: assignment.id, qrTokenId: qrToken.id, qr };
+  return {
+    orderId: order.id,
+    assignmentId: assignment.id,
+    qrTokenId: qrToken.id,
+    qr,
+    initialAttendanceActivityAt: assignment.attendance_activity_at,
+  };
+}
+
+async function testStatusChangesAdvanceMonitorActivity(actors: CoreActors): Promise<void> {
+  const fixture = await createAcceptedAssignment(
+    actors,
+    'Monitor activity projection',
+    'assigned',
+  );
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const accepted = await AssignmentsRepository.changeWorkerAssignmentStatus({
+    assignmentId: fixture.assignmentId,
+    workerId: actors.workerId,
+    actorId: actors.workerUserId,
+    actorRole: 'worker',
+    nextStatus: 'accepted',
+  });
+  assert.ok(accepted);
+
+  const acceptedProjection = await prisma.assignment.findUniqueOrThrow({
+    where: { id: fixture.assignmentId },
+    select: { status: true, attendance_activity_at: true },
+  });
+  assert.equal(acceptedProjection.status, 'accepted');
+  assert.ok(
+    acceptedProjection.attendance_activity_at.getTime()
+      > fixture.initialAttendanceActivityAt.getTime(),
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const cancelled = await AssignmentsRepository.cancelAssignmentWithAudit({
+    assignmentId: fixture.assignmentId,
+    actorId: actors.adminUserId,
+    actorRole: 'super_admin',
+    reason: 'monitor activity projection regression',
+  });
+  assert.equal(cancelled.kind, 'cancelled');
+
+  const cancelledProjection = await prisma.assignment.findUniqueOrThrow({
+    where: { id: fixture.assignmentId },
+    select: { status: true, attendance_activity_at: true },
+  });
+  assert.equal(cancelledProjection.status, 'cancelled');
+  assert.ok(
+    cancelledProjection.attendance_activity_at.getTime()
+      > acceptedProjection.attendance_activity_at.getTime(),
+  );
+  scenarioGroups += 1;
 }
 
 async function testCheckInVsAssignmentCancellation(actors: CoreActors): Promise<void> {
@@ -216,6 +275,7 @@ async function testCheckInVsAssignmentCancellation(actors: CoreActors): Promise<
       actors,
       `Direct cancellation race ${iteration}`,
     );
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     const [checkIn, cancellation] = await Promise.all([
       AttendanceRepository.createCheckInWithAudit({
@@ -255,6 +315,10 @@ async function testCheckInVsAssignmentCancellation(actors: CoreActors): Promise<
     if (assignment.status === 'cancelled') {
       assert.equal(checkIn.kind, 'assignment_not_accepted');
       assert.equal(cancellation.kind, 'cancelled');
+      assert.ok(
+        assignment.attendance_activity_at.getTime()
+          > fixture.initialAttendanceActivityAt.getTime(),
+      );
     } else {
       assert.equal(assignment.status, 'accepted');
       assert.ok(openAttendance);
@@ -271,6 +335,7 @@ async function testCheckInVsWholeOrderCancellation(actors: CoreActors): Promise<
       actors,
       `Whole order cancellation race ${iteration}`,
     );
+    await new Promise((resolve) => setTimeout(resolve, 5));
 
     const [checkInOutcome, cancellationOutcome] = await Promise.allSettled([
       AttendanceRepository.createCheckInWithAudit({
@@ -322,6 +387,10 @@ async function testCheckInVsWholeOrderCancellation(actors: CoreActors): Promise<
     if (order.status === 'cancelled') {
       assert.equal(assignment.status, 'cancelled');
       assert.equal(openAttendance, null);
+      assert.ok(
+        assignment.attendance_activity_at.getTime()
+          > fixture.initialAttendanceActivityAt.getTime(),
+      );
       assert.equal(
         checkInOutcome.status === 'fulfilled' && checkInOutcome.value.kind,
         'assignment_not_accepted',
@@ -717,6 +786,7 @@ async function main(): Promise<void> {
 
   try {
     const actors = await createCoreActors();
+    await testStatusChangesAdvanceMonitorActivity(actors);
     await testCheckInVsAssignmentCancellation(actors);
     await testCheckInVsWholeOrderCancellation(actors);
     await testSameQrSupportsOneCheckInAndOneCheckOut(actors);

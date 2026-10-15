@@ -1,8 +1,10 @@
 const DEV_BASE_URL = 'http://localhost:3000';
 const DEV_KIOSK_BASE_URL = 'http://localhost:5174';
+const DEFAULT_TIME_ZONE = 'Asia/Baku';
 
 export const API_BASE_URL = resolveApiBaseUrl();
 export const KIOSK_BASE_URL = resolveKioskBaseUrl();
+export const APP_TIME_ZONE = resolveTimeZone();
 
 function resolveApiBaseUrl(): string {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -42,6 +44,16 @@ function resolveApiBaseUrl(): string {
 function appendApiVersion(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '');
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
+}
+
+function resolveTimeZone(): string {
+  const value = import.meta.env.VITE_APP_TIME_ZONE?.trim() || DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('az-Latn-AZ', { timeZone: value }).format(new Date(0));
+    return value;
+  } catch {
+    throw new Error('Admin panelinin VITE_APP_TIME_ZONE dəyəri düzgün IANA saat qurşağı deyil.');
+  }
 }
 
 function resolveKioskBaseUrl(): string {

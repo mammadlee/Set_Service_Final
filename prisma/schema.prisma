@@ -504,6 +504,9 @@ model Assignment {
   worker_id              String
   status                 AssignmentStatus @default(assigned)
   assigned_at            DateTime         @default(now())
+  attendance_activity_at DateTime         @default(now())
+  last_checkin_at        DateTime?
+  last_checkout_at       DateTime?
   updated_at             DateTime         @updatedAt
   deleted_at             DateTime?
 
@@ -522,6 +525,9 @@ model Assignment {
   @@index([position_id, status])
   @@index([assigned_category, status])
   @@index([assigned_at])
+  @@index([attendance_activity_at])
+  @@index([last_checkin_at])
+  @@index([last_checkout_at])
   @@index([worker_id, status])
   @@index([deleted_at])
   @@map("assignments")

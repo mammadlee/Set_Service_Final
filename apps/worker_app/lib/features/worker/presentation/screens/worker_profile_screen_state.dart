@@ -367,7 +367,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     return false;
   }
 
-  Future<bool> _requestPhoneOtp(String rawPhone) async {
+  Future<bool> _requestPhoneOtp(String rawPhone, String currentPassword) async {
     final phone = _normalizePhone(rawPhone);
     if (!_validPhone(phone)) {
       if (mounted) {
@@ -384,7 +384,10 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _success = null;
     });
     try {
-      await context.read<WorkerRepository>().requestPhoneChange(phone);
+      await context.read<WorkerRepository>().requestPhoneChange(
+        phone: phone,
+        currentPassword: currentPassword,
+      );
       if (!mounted) return false;
       setState(() {
         _phoneOtpSent = true;
@@ -427,14 +430,18 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _success = null;
     });
     try {
-      await context.read<WorkerRepository>().confirmPhoneChange(
+      final result = await context.read<WorkerRepository>().confirmPhoneChange(
         phone: phone,
         otpCode: otp,
       );
       if (!mounted) return false;
-      _success = 'Telefon nömrəsi yeniləndi.';
-      await _refresh();
-      return mounted;
+      context.read<AuthController>().updateWorkerPhone(result.phone);
+      setState(() {
+        _phoneController.text = result.phone;
+        _phoneOtpSent = false;
+        _success = 'Telefon nömrəsi yeniləndi.';
+      });
+      return true;
     } on ApiException catch (error) {
       if (!mounted) return false;
       setState(() => _error = error.message);
@@ -875,25 +882,39 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
     final emailOtpController = TextEditingController();
     final phoneController = TextEditingController(text: worker.phone);
     final phoneOtpController = TextEditingController();
+    final currentPasswordController = TextEditingController();
     var draftWhatsapp = _whatsappAvailable;
     var draftPhoneOtpSent = _phoneOtpSent;
     var draftEmailOtpSent = _emailOtpSent;
+    var obscureCurrentPassword = true;
+    String? phoneChangeError;
 
     try {
       await _showEditSheet(
         title: 'Əlaqə məlumatları',
         icon: Icons.contact_phone_outlined,
         builder: (setSheetState) {
+          final currentPhone =
+              context.read<AuthController>().worker?.phone ?? worker.phone;
           final phoneChanged =
               _normalizePhone(phoneController.text) !=
-              _normalizePhone(worker.phone);
+              _normalizePhone(currentPhone);
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
                 controller: phoneController,
                 keyboardType: TextInputType.phone,
-                onChanged: (_) => setSheetState(() {}),
+                onChanged: (_) {
+                  setSheetState(() {
+                    if (draftPhoneOtpSent) {
+                      draftPhoneOtpSent = false;
+                      phoneOtpController.clear();
+                    }
+                    currentPasswordController.clear();
+                    phoneChangeError = null;
+                  });
+                },
                 decoration: const InputDecoration(
                   labelText: 'Telefon nömrəsi',
                   hintText: '+994501234567',
@@ -947,16 +968,66 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                 const SizedBox(height: 8),
                 const InlineMessage(
                   message:
-                      'Telefon nömrəsi yalnız OTP təsdiqindən sonra giriş üçün istifadə olunan nömrə kimi yenilənəcək.',
+                      'Telefon nömrəsini dəyişmək üçün cari şifrənizi daxil edin. Yeni nömrə yalnız OTP təsdiqindən sonra giriş üçün istifadə olunacaq.',
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  key: const ValueKey('worker-phone-change-current-password'),
+                  controller: currentPasswordController,
+                  obscureText: obscureCurrentPassword,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.password],
+                  onChanged: (_) {
+                    if (phoneChangeError != null) {
+                      setSheetState(() => phoneChangeError = null);
+                    }
+                  },
+                  decoration: InputDecoration(
+                    labelText: 'Cari şifrə',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    errorText: phoneChangeError,
+                    suffixIcon: IconButton(
+                      tooltip: obscureCurrentPassword
+                          ? 'Şifrəni göstər'
+                          : 'Şifrəni gizlət',
+                      onPressed: () => setSheetState(
+                        () => obscureCurrentPassword = !obscureCurrentPassword,
+                      ),
+                      icon: Icon(
+                        obscureCurrentPassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 LoadingButton(
-                  label: 'OTP göndər',
+                  label: draftPhoneOtpSent
+                      ? 'OTP-ni yenidən göndər'
+                      : 'OTP göndər',
                   icon: Icons.sms_outlined,
-                  loading: _phoneChanging && !draftPhoneOtpSent,
+                  loading: _phoneChanging,
                   onPressed: () async {
-                    final sent = await _requestPhoneOtp(phoneController.text);
-                    setSheetState(() => draftPhoneOtpSent = sent);
+                    final passwordError = AuthInputValidators.loginPassword(
+                      currentPasswordController.text,
+                    );
+                    if (passwordError != null) {
+                      setSheetState(() => phoneChangeError = passwordError);
+                      return;
+                    }
+                    final sent = await _requestPhoneOtp(
+                      phoneController.text,
+                      currentPasswordController.text,
+                    );
+                    setSheetState(() {
+                      draftPhoneOtpSent = sent;
+                      phoneChangeError = sent ? null : _error;
+                      if (sent) currentPasswordController.clear();
+                    });
                   },
                 ),
                 if (draftPhoneOtpSent) ...[
@@ -975,11 +1046,18 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                     icon: Icons.verified_outlined,
                     loading: _phoneChanging,
                     onPressed: () async {
+                      final auth = context.read<AuthController>();
                       final confirmed = await _confirmPhoneChange(
                         phoneController.text,
                         phoneOtpController.text,
                       );
-                      if (confirmed) phoneOtpController.clear();
+                      if (confirmed) {
+                        phoneOtpController.clear();
+                        phoneController.text =
+                            auth.worker?.phone ??
+                            _normalizePhone(phoneController.text);
+                        draftPhoneOtpSent = false;
+                      }
                       setSheetState(() {});
                     },
                   ),
@@ -1005,6 +1083,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       emailOtpController.dispose();
       phoneController.dispose();
       phoneOtpController.dispose();
+      currentPasswordController.dispose();
     }
   }
 

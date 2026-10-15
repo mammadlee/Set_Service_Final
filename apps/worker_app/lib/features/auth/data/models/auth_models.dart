@@ -250,6 +250,63 @@ class WorkerMe {
           : 0,
     );
   }
+
+  WorkerMe withPhone(String canonicalPhone) => WorkerMe(
+    id: id,
+    name: name,
+    phone: canonicalPhone,
+    position: position,
+    positionIds: positionIds,
+    positions: positions,
+    departments: departments,
+    subdepartments: subdepartments,
+    email: email,
+    emailVerified: emailVerified,
+    emailVerifiedAt: emailVerifiedAt,
+    pendingEmail: pendingEmail,
+    profilePhotoUrl: profilePhotoUrl,
+    skills: skills,
+    languages: languages,
+    documents: documents,
+    workHistorySummary: workHistorySummary,
+    workHistory: workHistory,
+    gender: gender,
+    whatsappAvailable: whatsappAvailable,
+    status: status,
+    availability: availability,
+    workerClass: workerClass,
+    ratingAverage: ratingAverage,
+    ratingCount: ratingCount,
+  );
+}
+
+class WorkerPhoneChangeResult {
+  const WorkerPhoneChangeResult({
+    required this.phone,
+    required this.phoneChanged,
+    required this.alreadyApplied,
+    required this.sessionPreserved,
+  });
+
+  final String phone;
+  final bool phoneChanged;
+  final bool alreadyApplied;
+  final bool sessionPreserved;
+
+  factory WorkerPhoneChangeResult.fromJson(Map<String, dynamic> json) {
+    final phone = json['phone'];
+    if (phone is! String || phone.trim().isEmpty) {
+      throw const FormatException(
+        'Phone-change response does not contain a canonical phone number.',
+      );
+    }
+    return WorkerPhoneChangeResult(
+      phone: phone,
+      phoneChanged: json['phone_changed'] == true,
+      alreadyApplied: json['already_applied'] == true,
+      sessionPreserved: json['session_preserved'] != false,
+    );
+  }
 }
 
 class WorkerExperience {
