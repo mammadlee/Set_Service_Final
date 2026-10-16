@@ -956,13 +956,18 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                 },
               ),
               const SizedBox(height: 8),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: draftWhatsapp,
-                onChanged: (value) =>
-                    setSheetState(() => draftWhatsapp = value ?? false),
-                title: const Text('Bu nömrə ilə WhatsApp hesabı mövcuddur'),
-                controlAffinity: ListTileControlAffinity.leading,
+              Material(
+                color: Colors.transparent,
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: draftWhatsapp,
+                  onChanged: (value) =>
+                      setSheetState(() => draftWhatsapp = value ?? false),
+                  title: const Text(
+                    'Bu nömrə ilə WhatsApp hesabı mövcuddur',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
               ),
               if (phoneChanged) ...[
                 const SizedBox(height: 8),
