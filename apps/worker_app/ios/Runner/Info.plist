@@ -28,9 +28,7 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
-		<key>NSLocationWhenInUseUsageDescription</key>
-	<string>SET Service uses your location to find and assign nearby workers.</string>
-</dict>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>QR kodları oxutmaq və giriş-çıxış əməliyyatlarını təsdiqləmək üçün kameraya giriş lazımdır.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
