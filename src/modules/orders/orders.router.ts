@@ -10,6 +10,7 @@ import {
   OrderIdParamsSchema,
 } from './orders.schema';
 import * as Service from './orders.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 
@@ -23,7 +24,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListOrdersQuerySchema.parse(req.query);
-      res.json(await Service.listOrders(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listOrders(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -64,7 +70,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = OrderIdParamsSchema.parse(req.params);
-      res.json(await Service.getOrder(id, req.user!.sub, req.user!.role));
+      res.json(await Service.getOrder(
+        id,
+        req.user!.sub,
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }

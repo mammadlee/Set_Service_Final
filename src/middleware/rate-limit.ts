@@ -143,8 +143,16 @@ export function buildDimensionKeys(req: Request, config: RateLimitConfig): strin
 
 export function authTarget(req: Request): string | undefined {
   const body = isRecord(req.body) ? req.body : {};
-  const candidate = body.phone ?? body.email ?? body.fcm_token;
-  return typeof candidate === 'string' ? candidate.trim().toLowerCase() : undefined;
+  if (typeof body.phone === 'string') {
+    const candidate = body.phone.trim();
+    const canonicalPhone = candidate.replace(/[\s().-]/g, '');
+    return /^\+[1-9]\d{7,14}$/.test(canonicalPhone)
+      ? canonicalPhone
+      : candidate.toLowerCase();
+  }
+  if (typeof body.email === 'string') return body.email.trim().toLowerCase();
+  if (typeof body.fcm_token === 'string') return body.fcm_token.trim();
+  return undefined;
 }
 
 export function kioskTarget(req: Request): string | undefined {

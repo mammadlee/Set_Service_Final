@@ -24,6 +24,7 @@ import { Role, WorkerClass, WorkerStatus } from '../../types/prisma';
 import * as TaxonomyService from '../taxonomy/taxonomy.service';
 import { startEmailVerification } from '../auth/auth.service';
 import { enqueueStorageCleanupEvents } from '../../lib/storage-cleanup-outbox';
+import { assertStoreReviewAccountMutationAllowed } from '../../lib/store-review-account-guard';
 
 const WORKER_STATUSES = new Set<string>([
   'draft',
@@ -37,6 +38,14 @@ const WORKER_STATUSES = new Set<string>([
 
 const WORKER_CLASSES = new Set<string>(['A', 'B', 'C']);
 const FOC_TRAINING_FILTERS = new Set<string>(['foc', 'non_foc']);
+
+function assertReviewAdminWorkerMutationAllowed(isReviewAccount: boolean): void {
+  if (!isReviewAccount) return;
+  throw Errors.forbidden(
+    'Store review administrators have read-only access.',
+    'STORE_REVIEW_ADMIN_VIEW_ONLY',
+  );
+}
 
 type WorkerProfileRecord = Prisma.WorkerGetPayload<{
   include: typeof workerProfileInclude;
@@ -100,15 +109,40 @@ export async function updateMyWorker(
     position_ids?: string[];
   }
 ) {
-  const worker = await prisma.worker.findUnique({ where: { user_id: userId } });
+  const worker = await prisma.worker.findUnique({
+    where: { user_id: userId },
+    include: {
+      user: {
+        select: {
+          is_review_account: true,
+          email: true,
+          email_verified_at: true,
+          pending_email: true,
+        },
+      },
+    },
+  });
   if (!worker || worker.deleted_at) throw Errors.notFound('Worker profile not found.', 'WORKER_NOT_FOUND');
   if (worker.status !== 'approved') {
     throw Errors.forbidden('Worker must be approved before using worker APIs.', 'ACCOUNT_NOT_APPROVED', {
       status: worker.status,
     });
   }
-
   const { email, position_ids } = data;
+  const cleanedEmail = email === undefined
+    ? undefined
+    : email === null || email.trim() === ''
+      ? null
+      : normalizeEmail(email);
+  const emailMutationRequested = cleanedEmail !== undefined && (
+    cleanedEmail === null
+      ? worker.user.email !== null || worker.user.pending_email !== null
+      : cleanedEmail === worker.user.pending_email
+        ? false
+        : cleanedEmail !== worker.user.email || !worker.user.email_verified_at
+  );
+  if (emailMutationRequested) assertStoreReviewAccountMutationAllowed(worker.user);
+
   const workerData: Prisma.WorkerUpdateInput = {};
   if (data.full_name !== undefined) {
     workerData.user = { update: { name: data.full_name.trim() } };
@@ -141,8 +175,7 @@ export async function updateMyWorker(
       },
       include: workerProfileInclude,
     });
-    if (email !== undefined) {
-      const cleanedEmail = email === null || email.trim() === '' ? null : normalizeEmail(email);
+    if (cleanedEmail !== undefined) {
       if (cleanedEmail === null) {
         await prisma.user.update({
           where: { id: userId },
@@ -226,10 +259,16 @@ export async function uploadMyProfilePhoto(userId: string, file: Express.Multer.
 export async function updateWorkerClass(
   id: string,
   workerClass: WorkerClass | null,
-  actor: { sub: string; role: string }
+  actor: { sub: string; role: string },
+  actorIsReviewAccount = false,
 ) {
+  assertReviewAdminWorkerMutationAllowed(actorIsReviewAccount);
   const worker = await prisma.worker.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: workerProfileInclude,
   });
   if (!worker) throw Errors.notFound('Worker not found.', 'WORKER_NOT_FOUND');
@@ -272,11 +311,17 @@ export async function updateWorkersFocTraining(
   workerIds: string[],
   isFocTraining: boolean,
   note: string | null | undefined,
-  actor: { sub: string; role: string }
+  actor: { sub: string; role: string },
+  actorIsReviewAccount = false,
 ) {
+  assertReviewAdminWorkerMutationAllowed(actorIsReviewAccount);
   const uniqueWorkerIds = [...new Set(workerIds)];
   const workers: WorkerProfileRecord[] = await prisma.worker.findMany({
-    where: { id: { in: uniqueWorkerIds }, deleted_at: null },
+    where: {
+      id: { in: uniqueWorkerIds },
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: workerProfileInclude,
   });
 
@@ -520,11 +565,13 @@ export async function requestMyAccountDeletion(userId: string, initiatedBy?: { s
         deleted_at: true,
         documents: true,
         profile_photo_url: true,
+        user: { select: { is_review_account: true } },
       },
     });
     if (current.deleted_at) {
       throw Errors.gone('Worker account has already been deleted.', 'WORKER_ALREADY_DELETED');
     }
+    assertStoreReviewAccountMutationAllowed(current.user);
     const currentDocuments = normalizeDocuments(current.documents);
     const cleanups = currentDocuments.flatMap((document) => {
       const cleanup = documentStorageCleanup(document, current.id);
@@ -629,7 +676,7 @@ export async function requestMyAccountDeletion(userId: string, initiatedBy?: { s
 }
 
 export async function getWorkerDocumentDownload(
-  actor: { sub: string; role: string },
+  actor: { sub: string; role: string; isReviewAccount?: boolean },
   workerId: string,
   type: string
 ) {
@@ -638,12 +685,19 @@ export async function getWorkerDocumentDownload(
     throw Errors.forbidden('This document is not visible to companies.', 'WORKER_DOCUMENT_ACCESS_DENIED');
   }
   const worker = await prisma.worker.findFirst({
-    where: { id: workerId, deleted_at: null },
+    where: {
+      id: workerId,
+      deleted_at: null,
+      ...((actor.role === 'admin' || actor.role === 'super_admin')
+        ? { user: { is_review_account: actor.isReviewAccount === true } }
+        : {}),
+    },
     select: {
       id: true,
       user_id: true,
       status: true,
       documents: true,
+      user: { select: { is_review_account: true } },
     },
   });
   if (!worker) throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
@@ -655,9 +709,15 @@ export async function getWorkerDocumentDownload(
   } else if (actor.role === 'company') {
     const company = await prisma.company.findFirst({
       where: { user_id: actor.sub, deleted_at: null, status: 'approved' },
-      select: { id: true },
+      select: { id: true, user: { select: { is_review_account: true } } },
     });
     if (!company) throw Errors.forbidden('Company account is not approved.', 'WORKER_DOCUMENT_ACCESS_DENIED');
+    if (
+      (company.user?.is_review_account === true)
+      !== (worker.user?.is_review_account === true)
+    ) {
+      throw Errors.notFound('Worker document not found.', 'WORKER_DOCUMENT_NOT_FOUND');
+    }
 
     const relatedAssignment = await prisma.assignment.findFirst({
       where: {
@@ -755,21 +815,24 @@ export async function listWorkers(filters: {
   sort?: 'asc' | 'desc';
   available?: boolean;
   position_id?: string;
-}) {
+}, isReviewAccount = false) {
   const page = filters.page ?? 1;
   const limit = Math.min(filters.limit ?? 20, 100);
-  const where: Record<string, unknown> = { deleted_at: null };
+  const where: Prisma.WorkerWhereInput = { deleted_at: null };
+  const userWhere: Prisma.UserWhereInput = {
+    is_review_account: isReviewAccount,
+  };
 
   if (filters.status && !WORKER_STATUSES.has(filters.status)) {
     throw Errors.badRequest('Invalid worker status filter.', 'INVALID_WORKER_STATUS');
   }
 
-  if (filters.status) where.status = filters.status;
+  if (filters.status) where.status = filters.status as WorkerStatus;
   if (filters.worker_class) {
     if (!WORKER_CLASSES.has(filters.worker_class)) {
       throw Errors.badRequest('Invalid worker class filter.', 'INVALID_WORKER_CLASS');
     }
-    where.worker_class = filters.worker_class;
+    where.worker_class = filters.worker_class as WorkerClass;
   }
   if (filters.foc_training) {
     if (!FOC_TRAINING_FILTERS.has(filters.foc_training)) {
@@ -778,7 +841,11 @@ export async function listWorkers(filters: {
     where.is_foc_training = filters.foc_training === 'foc';
   }
   if (filters.available !== undefined) where.availability = filters.available;
-  if (filters.available === true) where.user = { is_active: true, deleted_at: null };
+  if (filters.available === true) {
+    userWhere.is_active = true;
+    userWhere.deleted_at = null;
+  }
+  if (Object.keys(userWhere).length > 0) where.user = userWhere;
   if (filters.position_id) where.positions = { some: { position_id: filters.position_id } };
   if (filters.search) {
     where.OR = [
@@ -807,9 +874,13 @@ export async function listWorkers(filters: {
   };
 }
 
-export async function getWorkerById(id: string) {
+export async function getWorkerById(id: string, isReviewAccount = false) {
   const worker = await prisma.worker.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: isReviewAccount },
+    },
     include: {
       user: {
         select: {
@@ -853,7 +924,12 @@ export async function getWorkerById(id: string) {
 export async function getCompanyVisibleWorkerProfile(userId: string, workerId: string) {
   const company = await prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_review_account: true } },
+    },
   });
   if (!company || company.deleted_at) throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   if (company.status !== 'approved') {
@@ -866,6 +942,7 @@ export async function getCompanyVisibleWorkerProfile(userId: string, workerId: s
     where: {
       id: workerId,
       deleted_at: null,
+      user: { is_review_account: company.user?.is_review_account === true },
       assignments: {
         some: {
           deleted_at: null,
@@ -888,13 +965,19 @@ export async function approveWorker(
   id: string,
   actor: { sub: string; role: string },
   workerClass?: WorkerClass | null,
+  actorIsReviewAccount = false,
 ) {
+  assertReviewAdminWorkerMutationAllowed(actorIsReviewAccount);
   if (workerClass !== undefined && workerClass !== null && !WORKER_CLASSES.has(workerClass)) {
     throw Errors.badRequest('Invalid worker class.', 'INVALID_WORKER_CLASS');
   }
 
   const worker = await prisma.worker.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: {
       user: true,
       positions: workerProfileInclude.positions,
@@ -928,6 +1011,7 @@ export async function approveWorker(
           password_set_at: { not: null },
           is_active: true,
           deleted_at: null,
+          is_review_account: actorIsReviewAccount,
         },
       },
       data: {
@@ -943,7 +1027,11 @@ export async function approveWorker(
 
     if (transition.count !== 1) {
       const current = await tx.worker.findFirst({
-        where: { id, deleted_at: null },
+        where: {
+          id,
+          deleted_at: null,
+          user: { is_review_account: actorIsReviewAccount },
+        },
         include: workerProfileInclude,
       });
       throw Errors.conflict(
@@ -996,9 +1084,19 @@ export async function approveWorker(
   return toWorkerProfile(updated, { includeWorkerClass: true });
 }
 
-export async function rejectWorker(id: string, reason: string, actor: { sub: string; role: string }) {
+export async function rejectWorker(
+  id: string,
+  reason: string,
+  actor: { sub: string; role: string },
+  actorIsReviewAccount = false,
+) {
+  assertReviewAdminWorkerMutationAllowed(actorIsReviewAccount);
   const worker = await prisma.worker.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: { user: true, positions: workerProfileInclude.positions },
   });
   if (!worker) throw Errors.notFound('Worker not found.', 'WORKER_NOT_FOUND');
@@ -1017,6 +1115,7 @@ export async function rejectWorker(id: string, reason: string, actor: { sub: str
         id,
         status: 'pending_approval',
         deleted_at: null,
+        user: { is_review_account: actorIsReviewAccount },
       },
       data: {
         status: 'rejected' as WorkerStatus,
@@ -1028,7 +1127,11 @@ export async function rejectWorker(id: string, reason: string, actor: { sub: str
 
     if (transition.count !== 1) {
       const current = await tx.worker.findFirst({
-        where: { id, deleted_at: null },
+        where: {
+          id,
+          deleted_at: null,
+          user: { is_review_account: actorIsReviewAccount },
+        },
         select: { status: true },
       });
       throw Errors.conflict(
@@ -1043,10 +1146,13 @@ export async function rejectWorker(id: string, reason: string, actor: { sub: str
       include: workerProfileInclude,
     });
 
-    const rejectionPushTargets = await tx.deviceToken.findMany({
+    const rejectionPushTargets = (await tx.deviceToken.findMany({
       where: { user_id: worker.user_id, revoked_at: null, deleted_at: null },
       select: { id: true, token: true },
-    });
+    })).map((target) => ({
+      ...target,
+      is_review_account: worker.user.is_review_account,
+    }));
     await tx.user.update({
       where: { id: worker.user_id },
       data: { session_version: { increment: 1 } },

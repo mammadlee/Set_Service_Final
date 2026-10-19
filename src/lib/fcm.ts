@@ -3,6 +3,7 @@ import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import { prisma } from './prisma';
 import { logger } from './logger';
 import { Role } from '../types/prisma';
+import { filterExternalDeliveryTargets } from './review-delivery-policy';
 
 export interface PushPayload {
   title: string;
@@ -13,9 +14,10 @@ export interface PushPayload {
 export interface PushDeviceTarget {
   id: string;
   token: string;
+  is_review_account: boolean;
 }
 
-interface PushProvider {
+export interface PushProvider {
   sendToTokens(tokens: PushDeviceTarget[], payload: PushPayload): Promise<void>;
 }
 
@@ -100,7 +102,7 @@ export async function sendPushToDeviceTargets(
 ): Promise<void> {
   const uniqueTargets = [
     ...new Map(
-      targets
+      filterExternalDeliveryTargets(targets)
         .filter((target) => Boolean(target.id) && Boolean(target.token))
         .map((target) => [target.id, target]),
     ).values(),
@@ -127,7 +129,11 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   }
 }
 
-export async function deliverPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
+export async function deliverPushToUsers(
+  userIds: string[],
+  payload: PushPayload,
+  deliveryProvider?: PushProvider,
+): Promise<void> {
   const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueUserIds.length === 0) return;
 
@@ -136,12 +142,25 @@ export async function deliverPushToUsers(userIds: string[], payload: PushPayload
       user_id: { in: uniqueUserIds },
       revoked_at: null,
       deleted_at: null,
-      user: { is_active: true, deleted_at: null },
+      // External delivery is intentionally impossible for the synthetic
+      // Apple/Google review cohort, even if a call site forgets to suppress it.
+      user: { is_active: true, deleted_at: null, is_review_account: false },
     },
-    select: { id: true, token: true },
+    select: {
+      id: true,
+      token: true,
+      user: { select: { is_review_account: true } },
+    },
   });
 
-  await getPushProvider().sendToTokens(tokens, payload);
+  await (deliveryProvider ?? getPushProvider()).sendToTokens(
+    tokens.map((target) => ({
+      id: target.id,
+      token: target.token,
+      is_review_account: target.user.is_review_account,
+    })),
+    payload,
+  );
 }
 
 export async function sendPushToRole(role: Role, payload: PushPayload): Promise<void> {
@@ -157,7 +176,7 @@ export async function sendPushToRole(role: Role, payload: PushPayload): Promise<
 
 export async function deliverPushToRole(role: Role, payload: PushPayload): Promise<void> {
   const users = await prisma.user.findMany({
-    where: { role, is_active: true, deleted_at: null },
+    where: { role, is_active: true, deleted_at: null, is_review_account: false },
     select: { id: true },
   });
   await deliverPushToUsers(users.map((user: { id: string }) => user.id), payload);

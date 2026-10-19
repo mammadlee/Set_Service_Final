@@ -20,15 +20,22 @@ type AssignmentRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsReposit
 type CompanyRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsRepository.findCompanyByUserId>>>;
 type WorkerRecord = NonNullable<Awaited<ReturnType<typeof AssignmentsRepository.findWorkerByUserId>>>;
 
-export async function createAssignments(actorId: string, roleValue: string, input: CreateAssignmentsInput) {
+export async function createAssignments(
+  actorId: string,
+  roleValue: string,
+  input: CreateAssignmentsInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   assertAssignmentManager(role);
+  assertReviewAdminIsViewOnly(actorIsReviewAccount);
 
   const assignmentRequests = normalizeAssignmentRequests(input);
   uniqueWorkerIds(assignmentRequests.map((assignment) => assignment.workerId));
   const result = await AssignmentsRepository.createAssignmentsWithSideEffects({
     actorId,
     actorRole: role,
+    actorIsReviewAccount,
     orderId: input.order_id,
     assignments: assignmentRequests,
   });
@@ -73,6 +80,12 @@ export async function createAssignments(actorId: string, roleValue: string, inpu
       throw Errors.badRequest('One or more workers were not found.', 'WORKERS_NOT_FOUND', {
         worker_ids: result.missingWorkerIds,
       });
+    case 'cohort_mismatch':
+      throw Errors.conflict(
+        'The selected worker cannot be assigned to this order.',
+        'ASSIGNMENT_COHORT_MISMATCH',
+        { worker_ids: result.workerIds },
+      );
     case 'unavailable_workers':
       throw Errors.badRequest('All assigned workers must be approved and available.', 'WORKERS_NOT_AVAILABLE', {
         workers: result.workers,
@@ -104,9 +117,11 @@ export async function createBulkAssignments(
   actorId: string,
   roleValue: string,
   input: BulkCreateAssignmentsInput,
+  actorIsReviewAccount = false,
 ) {
   const role = parseRole(roleValue);
   assertAssignmentManager(role);
+  assertReviewAdminIsViewOnly(actorIsReviewAccount);
   const requests = normalizeAssignmentRequests(input);
   const seenWorkerIds = new Set<string>();
   const results: Array<
@@ -152,7 +167,7 @@ export async function createBulkAssignments(
           order_category_item_id: request.orderCategoryItemId,
           position_id: request.positionId,
         }],
-      });
+      }, actorIsReviewAccount);
       const assignment = created.assignments[0];
       results.push({
         worker_id: request.workerId,
@@ -186,7 +201,12 @@ export async function createBulkAssignments(
   };
 }
 
-export async function listAssignments(userId: string, roleValue: string, filters: ListAssignmentsQueryInput) {
+export async function listAssignments(
+  userId: string,
+  roleValue: string,
+  filters: ListAssignmentsQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   const where: Prisma.AssignmentWhereInput = { deleted_at: null };
 
@@ -215,13 +235,18 @@ export async function listAssignments(userId: string, roleValue: string, filters
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
+    const companyIsReviewAccount = company.user?.is_review_account === true;
     if (filters.company_id && filters.company_id !== company.id) {
       throw Errors.forbidden('Companies can only view their own assignments.', 'ASSIGNMENT_ACCESS_DENIED');
     }
     where.order = { company_id: company.id, deleted_at: null };
+    where.AND = [{
+      worker: { user: { is_review_account: companyIsReviewAccount } },
+    }];
     if (filters.worker_id) where.worker_id = filters.worker_id;
   } else if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
+    const workerIsReviewAccount = worker.user?.is_review_account === true;
     if (filters.worker_id && filters.worker_id !== worker.id) {
       throw Errors.forbidden('Workers can only view their own assignments.', 'ASSIGNMENT_ACCESS_DENIED');
     }
@@ -229,6 +254,7 @@ export async function listAssignments(userId: string, roleValue: string, filters
     where.order = {
       deleted_at: null,
       ...(filters.company_id ? { company_id: filters.company_id } : {}),
+      company: { user: { is_review_account: workerIsReviewAccount } },
     };
   } else if (role === 'super_admin' || role === 'admin') {
     if (filters.worker_id) where.worker_id = filters.worker_id;
@@ -236,6 +262,10 @@ export async function listAssignments(userId: string, roleValue: string, filters
       deleted_at: null,
       ...(filters.company_id ? { company_id: filters.company_id } : {}),
     };
+    where.AND = [
+      { worker: { user: { is_review_account: isReviewAccount } } },
+      { order: { company: { user: { is_review_account: isReviewAccount } } } },
+    ];
   } else {
     throw Errors.forbidden('Account role is not supported.', 'ROLE_FORBIDDEN');
   }
@@ -248,7 +278,10 @@ export async function listAssignments(userId: string, roleValue: string, filters
   });
 
   const creators = canViewAssignmentCreator(role)
-    ? await loadAssignmentCreatorMap(data.map((assignment) => assignment.id))
+    ? await loadAssignmentCreatorMap(
+        data.map((assignment) => assignment.id),
+        isReviewAccount,
+      )
     : new Map<string, { id: string; name: string } | null>();
   return {
     data: data.map((assignment: AssignmentRecord) => toAssignmentResponse(
@@ -265,12 +298,17 @@ export async function listAssignments(userId: string, roleValue: string, filters
   };
 }
 
-export async function getAssignment(id: string, userId: string, roleValue: string) {
+export async function getAssignment(
+  id: string,
+  userId: string,
+  roleValue: string,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
-  const assignment = await findVisibleAssignment(id, userId, role);
+  const assignment = await findVisibleAssignment(id, userId, role, isReviewAccount);
   if (!assignment) throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
   const creators = canViewAssignmentCreator(role)
-    ? await loadAssignmentCreatorMap([assignment.id])
+    ? await loadAssignmentCreatorMap([assignment.id], isReviewAccount)
     : new Map<string, { id: string; name: string } | null>();
   return toAssignmentResponse(assignment, role, creators.get(assignment.id) ?? null);
 }
@@ -287,23 +325,31 @@ export async function cancelAssignment(
   id: string,
   actorId: string,
   roleValue: string,
-  input: CancelAssignmentInput
+  input: CancelAssignmentInput,
+  actorIsReviewAccount = false,
 ) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin') {
     throw Errors.forbidden('Only admin can cancel assignments.', 'ROLE_FORBIDDEN');
   }
+  assertReviewAdminIsViewOnly(actorIsReviewAccount);
 
   const result = await AssignmentsRepository.cancelAssignmentWithAudit({
     assignmentId: id,
     actorId,
     actorRole: role,
+    actorIsReviewAccount,
     reason: input.reason,
   });
 
   switch (result.kind) {
     case 'not_found':
       throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
+    case 'cohort_mismatch':
+      throw Errors.conflict(
+        'This assignment is not available for mutation.',
+        'ASSIGNMENT_COHORT_MISMATCH',
+      );
     case 'already_cancelled':
       throw Errors.conflict('Assignment is already cancelled.', 'ASSIGNMENT_ALREADY_CANCELLED');
     case 'already_completed':
@@ -349,6 +395,15 @@ async function changeOwnAssignmentStatus(
   const worker = await getApprovedWorkerForUser(userId);
   const assignment = await AssignmentsRepository.findAssignmentByIdForWorker(id, worker.id);
   if (!assignment) throw Errors.notFound('Assignment not found.', 'ASSIGNMENT_NOT_FOUND');
+  if (
+    (assignment.worker.user.is_review_account === true)
+    !== (assignment.order.company.user.is_review_account === true)
+  ) {
+    throw Errors.conflict(
+      'This assignment is not available for the current account.',
+      'ASSIGNMENT_COHORT_MISMATCH',
+    );
+  }
   if (!ORDER_STAFFING_STATUSES.includes(assignment.order.status) || assignment.order.deleted_at !== null) {
     throw Errors.conflict('Order is not active.', 'ORDER_NOT_ACTIVE');
   }
@@ -367,6 +422,16 @@ async function changeOwnAssignmentStatus(
 
   if (!updated) {
     const latest = await AssignmentsRepository.findAssignmentByIdForWorker(id, worker.id);
+    if (
+      latest
+      && (latest.worker.user.is_review_account === true)
+        !== (latest.order.company.user.is_review_account === true)
+    ) {
+      throw Errors.conflict(
+        'This assignment is not available for the current account.',
+        'ASSIGNMENT_COHORT_MISMATCH',
+      );
+    }
     if (latest && (!ORDER_STAFFING_STATUSES.includes(latest.order.status) || latest.order.deleted_at !== null)) {
       throw Errors.conflict('Order is not active.', 'ORDER_NOT_ACTIVE');
     }
@@ -423,12 +488,21 @@ function assertAssignmentManager(role: Role): void {
   }
 }
 
+function assertReviewAdminIsViewOnly(isReviewAccount: boolean): void {
+  if (isReviewAccount) {
+    throw Errors.forbidden(
+      'Store review administrators are read-only.',
+      'PERMISSION_DENIED',
+    );
+  }
+}
+
 function warningsForWorker(warnings: AssignmentWarning[], workerId: string): AssignmentWarning[] {
   return warnings.filter((warning) => warning.worker_id === workerId);
 }
 
-async function loadAssignmentCreatorMap(assignmentIds: string[]) {
-  const rows = await AssignmentsRepository.findAssignmentCreators(assignmentIds);
+async function loadAssignmentCreatorMap(assignmentIds: string[], isReviewAccount = false) {
+  const rows = await AssignmentsRepository.findAssignmentCreators(assignmentIds, isReviewAccount);
   const creators = new Map<string, { id: string; name: string } | null>();
   for (const row of rows) {
     if (!creators.has(row.entity_id)) creators.set(row.entity_id, row.actor);
@@ -436,19 +510,32 @@ async function loadAssignmentCreatorMap(assignmentIds: string[]) {
   return creators;
 }
 
-async function findVisibleAssignment(id: string, userId: string, role: Role): Promise<AssignmentRecord | null> {
+async function findVisibleAssignment(
+  id: string,
+  userId: string,
+  role: Role,
+  isReviewAccount = false,
+): Promise<AssignmentRecord | null> {
   if (role === 'super_admin' || role === 'admin') {
-    return AssignmentsRepository.findAssignmentById(id);
+    return AssignmentsRepository.findAssignmentByIdForReviewScope(id, isReviewAccount);
   }
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
-    return AssignmentsRepository.findAssignmentByIdForCompany(id, company.id);
+    return AssignmentsRepository.findAssignmentByIdForCompany(
+      id,
+      company.id,
+      company.user?.is_review_account === true,
+    );
   }
 
   if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
-    return AssignmentsRepository.findAssignmentByIdForWorker(id, worker.id);
+    return AssignmentsRepository.findAssignmentByIdForWorker(
+      id,
+      worker.id,
+      worker.user?.is_review_account === true,
+    );
   }
 
   return null;

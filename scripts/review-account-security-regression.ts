@@ -1,298 +1,247 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import {
-  APPLE_REVIEW_ADMIN_EMAIL,
-  APPLE_REVIEW_ADMIN_PERMISSIONS,
-  APPLE_REVIEW_ADMIN_PHONE,
-  APPLE_REVIEW_COMPANY_EMAIL,
-  APPLE_REVIEW_COMPANY_PHONE,
-  APPLE_REVIEW_WORKER_PHONE,
-  AppleReviewPasswords,
-  assertAppleReviewPasswordsUnique,
-  resolveAppleReviewPasswords,
-  resolveAppleReviewPasswordsForSeed,
-} from '../src/lib/apple-review-accounts';
+  STORE_REVIEW_ADMIN_PERMISSIONS,
+  StoreReviewAccountConfig,
+} from '../src/lib/store-review-accounts';
 import {
-  ReviewAccountSnapshot,
   ReviewAccountRecord,
-  validateAppleReviewAccounts,
+  ReviewAccountSnapshot,
+  validateStoreReviewAccounts,
 } from './review-account-readiness';
+import {
+  STORE_REVIEW_MIN_ACTIVE_WINDOW_DAYS,
+  STORE_REVIEW_ACTIVE_ORDER_TITLE,
+  STORE_REVIEW_COMPLETED_ORDER_TITLE,
+} from './provision-store-review';
 
-const passwords: AppleReviewPasswords = {
-  worker: 'Apple-Worker-Review-Password-42!',
-  company: 'Apple-Company-Review-Password-43!',
-  admin: 'Apple-Admin-Review-Password-44!',
+const config: StoreReviewAccountConfig = {
+  identifiers: {
+    workerPhone: '+994501112233',
+    companyPhone: '+994501112244',
+    companyEmail: 'store-review-company@example.invalid',
+    adminPhone: '+994501112255',
+    adminEmail: 'store-review-admin@example.invalid',
+  },
+  passwords: {
+    worker: 'Worker-Review-Password-42!',
+    company: 'Company-Review-Password-43!',
+    admin: 'Admin-Review-Password-44!',
+  },
+  adminPermissions: STORE_REVIEW_ADMIN_PERMISSIONS,
 };
 
-const legacyPasswords = {
-  worker: 'Legacy-Worker-Seed-Password-52!',
-  company: 'Legacy-Company-Seed-Password-53!',
-  admin: 'Legacy-Admin-Seed-Password-54!',
-  superAdmin: 'Legacy-Super-Admin-Password-55!',
-};
+const now = new Date('2026-10-17T10:00:00.000Z');
+const workerId = 'review-worker-profile-id';
 
-async function hash(value: string): Promise<string> {
-  return bcrypt.hash(value, 4);
-}
-
-async function makeRecord(
-  input: Partial<ReviewAccountRecord> & Pick<ReviewAccountRecord, 'phone' | 'role'>,
+async function userRecord(
+  role: 'worker' | 'company' | 'admin',
+  overrides: Partial<ReviewAccountRecord> = {},
 ): Promise<ReviewAccountRecord> {
+  const phone = role === 'worker'
+    ? config.identifiers.workerPhone
+    : role === 'company'
+      ? config.identifiers.companyPhone
+      : config.identifiers.adminPhone;
+  const email = role === 'worker'
+    ? null
+    : role === 'company'
+      ? config.identifiers.companyEmail
+      : config.identifiers.adminEmail;
   return {
-    email: null,
+    id: `${role}-user-id`,
+    phone,
+    email,
+    pending_email: null,
+    email_verified_at: email ? now : null,
+    fcm_token: null,
+    role,
+    name: `Synthetic ${role}`,
     is_active: true,
+    is_review_account: true,
     deleted_at: null,
-    password_hash: await hash(passwords.worker),
-    password_set_at: new Date(),
-    ...input,
+    password_hash: await bcrypt.hash(config.passwords[role], 4),
+    password_set_at: now,
+    ...overrides,
   };
 }
 
-async function makeValidSnapshot(): Promise<ReviewAccountSnapshot> {
+async function validSnapshot(): Promise<ReviewAccountSnapshot> {
+  const reviewWorker = {
+    id: workerId,
+    user: { is_review_account: true },
+  };
+  const activeOrder = {
+    id: 'active-order-id',
+    title: STORE_REVIEW_ACTIVE_ORDER_TITLE,
+    status: 'in_progress',
+    shift_start: new Date(now.getTime() - 60 * 60 * 1000),
+    shift_end: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+    deleted_at: null,
+    assignments: [{
+      status: 'accepted',
+      deleted_at: null,
+      attendance_logs: [],
+      worker: reviewWorker,
+    }],
+  };
+  const completedOrder = {
+    id: 'completed-order-id',
+    title: STORE_REVIEW_COMPLETED_ORDER_TITLE,
+    status: 'completed',
+    shift_start: new Date(now.getTime() - 72 * 60 * 60 * 1000),
+    shift_end: new Date(now.getTime() - 64 * 60 * 60 * 1000),
+    deleted_at: null,
+    assignments: [{
+      status: 'completed',
+      deleted_at: null,
+      attendance_logs: [{
+        checkin_time: new Date(now.getTime() - 72 * 60 * 60 * 1000),
+        checkout_time: new Date(now.getTime() - 64 * 60 * 60 * 1000),
+        deleted_at: null,
+      }],
+      worker: reviewWorker,
+    }],
+  };
+
   return {
-    worker: await makeRecord({
-      phone: APPLE_REVIEW_WORKER_PHONE,
-      role: 'worker',
-      password_hash: await hash(passwords.worker),
-      worker: { status: 'approved', deleted_at: null },
+    worker: await userRecord('worker', {
+      worker: {
+        id: workerId,
+        status: 'approved',
+        position: 'Event Service Worker',
+        profile_photo_url: 'https://assets.example.invalid/store-review/avatar.webp',
+        skills: [{ name: 'Guest service', level: 4 }],
+        languages: ['English'],
+        documents: [
+          {
+            type: 'health_certificate',
+            key: `workers/${workerId}/documents/health_certificate/synthetic.pdf`,
+            status: 'ready',
+            scan_status: 'clean',
+          },
+          {
+            type: 'criminal_record',
+            key: `workers/${workerId}/documents/criminal_record/synthetic.pdf`,
+            status: 'ready',
+            scan_status: 'clean',
+          },
+        ],
+        work_history_summary: 'Synthetic experience.',
+        work_history: [{ company_name: 'Synthetic Venue', position: 'Worker' }],
+        deleted_at: null,
+        assignments: [activeOrder, completedOrder].map((order) => ({
+          deleted_at: null,
+          order: { company: { user: { is_review_account: true } } },
+        })),
+      },
     }),
-    company: await makeRecord({
-      phone: APPLE_REVIEW_COMPANY_PHONE,
-      email: APPLE_REVIEW_COMPANY_EMAIL,
-      role: 'company',
-      password_hash: await hash(passwords.company),
-      company: { status: 'approved', deleted_at: null },
+    company: await userRecord('company', {
+      company: {
+        id: 'review-company-profile-id',
+        name: 'Store Review Demo Company',
+        status: 'approved',
+        deleted_at: null,
+        orders: [activeOrder, completedOrder],
+      },
     }),
-    admin: await makeRecord({
-      phone: APPLE_REVIEW_ADMIN_PHONE,
-      email: APPLE_REVIEW_ADMIN_EMAIL,
-      role: 'admin',
-      password_hash: await hash(passwords.admin),
-      admin: { permissions: [...APPLE_REVIEW_ADMIN_PERMISSIONS] },
+    admin: await userRecord('admin', {
+      admin: { permissions: [...STORE_REVIEW_ADMIN_PERMISSIONS] },
     }),
-    otherSeedUsers: [
-      {
-        phone: '+994700000001',
-        email: 'admin@setservice.az',
-        role: 'super_admin',
-        password_hash: await hash(legacyPasswords.superAdmin),
-      },
-      {
-        phone: '+994700000004',
-        email: null,
-        role: 'worker',
-        password_hash: await hash(legacyPasswords.worker),
-      },
-      {
-        phone: '+994700000005',
-        email: null,
-        role: 'worker',
-        password_hash: await hash(legacyPasswords.worker),
-      },
-      {
-        phone: '+994700000102',
-        email: 'reports@setservice.az',
-        role: 'admin',
-        password_hash: await hash(legacyPasswords.admin),
-      },
-      {
-        phone: '+994700000099',
-        email: 'other-company@setservice.az',
-        role: 'company',
-        password_hash: await hash(legacyPasswords.company),
-      },
-    ],
+    notificationCounts: { worker: 2, company: 1, admin: 1 },
+    reviewAccountCount: 3,
+    reviewOrderOutboxCount: 0,
+    activeReviewerDeviceTokenCount: 0,
+    pendingReviewerProviderEventCount: 0,
+    reviewIdentifierCollisionCount: 0,
   };
 }
 
-async function expectCode(run: () => Promise<unknown>, code: string): Promise<void> {
-  await assert.rejects(run, (error: unknown) => error instanceof Error && error.message === code);
+function clone<T>(value: T): T {
+  return structuredClone(value);
 }
 
-function cloneSnapshot(snapshot: ReviewAccountSnapshot): ReviewAccountSnapshot {
-  return {
-    worker: snapshot.worker && {
-      ...snapshot.worker,
-      worker: snapshot.worker.worker && { ...snapshot.worker.worker },
-    },
-    company: snapshot.company && {
-      ...snapshot.company,
-      company: snapshot.company.company && { ...snapshot.company.company },
-    },
-    admin: snapshot.admin && {
-      ...snapshot.admin,
-      admin: snapshot.admin.admin && {
-        permissions: Array.isArray(snapshot.admin.admin.permissions)
-          ? [...snapshot.admin.admin.permissions]
-          : snapshot.admin.admin.permissions,
-      },
-    },
-    otherSeedUsers: snapshot.otherSeedUsers?.map((user) => ({ ...user })),
-  };
-}
-
-async function testExactConfiguration(): Promise<void> {
-  const snapshot = await makeValidSnapshot();
-  await validateAppleReviewAccounts(snapshot, passwords);
-
-  assert.equal(
-    await bcrypt.compare(passwords.worker, snapshot.otherSeedUsers![1].password_hash!),
-    false,
+async function expectCode(
+  mutate: (snapshot: ReviewAccountSnapshot) => void,
+  code: string,
+): Promise<void> {
+  const snapshot = clone(await validSnapshot());
+  mutate(snapshot);
+  await assert.rejects(
+    () => validateStoreReviewAccounts(snapshot, config, now),
+    (error: unknown) => error instanceof Error && error.message === code,
   );
-  assert.equal(
-    await bcrypt.compare(passwords.company, snapshot.otherSeedUsers![4].password_hash!),
-    false,
-  );
-  assert.equal(
-    await bcrypt.compare(passwords.admin, snapshot.otherSeedUsers![3].password_hash!),
-    false,
-  );
-}
-
-async function testPasswordAndIdentifierFailures(): Promise<void> {
-  const workerPassword = await makeValidSnapshot();
-  await expectCode(
-    () => validateAppleReviewAccounts(workerPassword, { ...passwords, worker: 'Wrong-Worker-Password-42!' }),
-    'REVIEW_WORKER_PASSWORD_MISMATCH',
-  );
-
-  const companyPassword = await makeValidSnapshot();
-  await expectCode(
-    () => validateAppleReviewAccounts(companyPassword, { ...passwords, company: 'Wrong-Company-Password-43!' }),
-    'REVIEW_COMPANY_PASSWORD_MISMATCH',
-  );
-
-  const adminPassword = await makeValidSnapshot();
-  await expectCode(
-    () => validateAppleReviewAccounts(adminPassword, { ...passwords, admin: 'Wrong-Admin-Password-44!' }),
-    'REVIEW_ADMIN_PASSWORD_MISMATCH',
-  );
-
-  const workerPhone = await makeValidSnapshot();
-  workerPhone.worker!.phone = '+994700000099';
-  await expectCode(() => validateAppleReviewAccounts(workerPhone, passwords), 'REVIEW_WORKER_PHONE_INVALID');
-
-  const companyPhone = await makeValidSnapshot();
-  companyPhone.company!.phone = '+994700000099';
-  await expectCode(() => validateAppleReviewAccounts(companyPhone, passwords), 'REVIEW_COMPANY_PHONE_INVALID');
-
-  const companyEmail = await makeValidSnapshot();
-  companyEmail.company!.email = 'wrong@setservice.az';
-  await expectCode(() => validateAppleReviewAccounts(companyEmail, passwords), 'REVIEW_COMPANY_EMAIL_INVALID');
-
-  const adminPhone = await makeValidSnapshot();
-  adminPhone.admin!.phone = '+994700000099';
-  await expectCode(() => validateAppleReviewAccounts(adminPhone, passwords), 'REVIEW_ADMIN_PHONE_INVALID');
-
-  const adminEmail = await makeValidSnapshot();
-  adminEmail.admin!.email = 'wrong-admin@setservice.az';
-  await expectCode(() => validateAppleReviewAccounts(adminEmail, passwords), 'REVIEW_ADMIN_EMAIL_INVALID');
-}
-
-async function testStateAndPermissionFailures(): Promise<void> {
-  const inactive = await makeValidSnapshot();
-  inactive.worker!.is_active = false;
-  await expectCode(() => validateAppleReviewAccounts(inactive, passwords), 'REVIEW_WORKER_INACTIVE');
-
-  const unapproved = await makeValidSnapshot();
-  unapproved.worker!.worker!.status = 'pending_approval';
-  await expectCode(() => validateAppleReviewAccounts(unapproved, passwords), 'REVIEW_WORKER_NOT_APPROVED');
-
-  const companyUnapproved = await makeValidSnapshot();
-  companyUnapproved.company!.company!.status = 'pending_approval';
-  await expectCode(() => validateAppleReviewAccounts(companyUnapproved, passwords), 'REVIEW_COMPANY_NOT_APPROVED');
-
-  for (const permission of ['manage_companies', '*', 'manage_admins']) {
-    const snapshot = await makeValidSnapshot();
-    snapshot.admin!.admin!.permissions = [...APPLE_REVIEW_ADMIN_PERMISSIONS, permission];
-    await expectCode(
-      () => validateAppleReviewAccounts(snapshot, passwords),
-      permission === '*' ? 'REVIEW_ADMIN_WILDCARD_FORBIDDEN' :
-        permission === 'manage_admins' ? 'REVIEW_ADMIN_MANAGEMENT_FORBIDDEN' :
-          'REVIEW_ADMIN_PERMISSION_ALLOWLIST_MISMATCH',
-    );
-  }
-
-  const missingPermission = await makeValidSnapshot();
-  missingPermission.admin!.admin!.permissions = [...APPLE_REVIEW_ADMIN_PERMISSIONS].slice(1);
-  await expectCode(
-    () => validateAppleReviewAccounts(missingPermission, passwords),
-    'REVIEW_ADMIN_PERMISSION_ALLOWLIST_MISMATCH',
-  );
-
-  const duplicatePermission = await makeValidSnapshot();
-  duplicatePermission.admin!.admin!.permissions = [
-    ...APPLE_REVIEW_ADMIN_PERMISSIONS,
-    'view_dashboard',
-  ];
-  await expectCode(
-    () => validateAppleReviewAccounts(duplicatePermission, passwords),
-    'REVIEW_ADMIN_PERMISSIONS_DUPLICATE',
-  );
-
-  const superAdmin = await makeValidSnapshot();
-  superAdmin.admin!.role = 'super_admin';
-  await expectCode(() => validateAppleReviewAccounts(superAdmin, passwords), 'REVIEW_ADMIN_ROLE_INVALID');
-}
-
-function testPasswordConfiguration(): void {
-  const env = {
-    APPLE_REVIEW_WORKER_PASSWORD: passwords.worker,
-    APPLE_REVIEW_COMPANY_PASSWORD: passwords.company,
-    APPLE_REVIEW_ADMIN_PASSWORD: passwords.admin,
-  };
-  assert.deepEqual(resolveAppleReviewPasswords(env), passwords);
-  assert.deepEqual(resolveAppleReviewPasswordsForSeed(env), passwords);
-
-  for (const missing of Object.keys(env)) {
-    const incomplete = { ...env };
-    delete incomplete[missing as keyof typeof incomplete];
-    assert.throws(
-      () => resolveAppleReviewPasswords(incomplete),
-      (error: unknown) => error instanceof Error && error.message.endsWith(missing),
-    );
-  }
-
-  assertAppleReviewPasswordsUnique(passwords, {
-    SEED_WORKER_PASSWORD: legacyPasswords.worker,
-    SEED_COMPANY_PASSWORD: legacyPasswords.company,
-    SEED_RESTRICTED_ADMIN_PASSWORD: legacyPasswords.admin,
-    SEED_ADMIN_PASSWORD: legacyPasswords.superAdmin,
-  });
-  assert.throws(
-    () => assertAppleReviewPasswordsUnique(passwords, { SEED_WORKER_PASSWORD: passwords.worker }),
-    /APPLE_REVIEW_PASSWORD_REUSE/,
-  );
-}
-
-function testSeedWiring(): void {
-  const source = fs.readFileSync(path.resolve('scripts/seed.ts'), 'utf8');
-  assert.ok(source.includes('resolveAppleReviewPasswordsForSeed()'));
-  assert.ok(source.includes('assertAppleReviewPasswordsUnique(APPLE_REVIEW_PASSWORDS'));
-  assert.ok(source.includes('password_hash: appleReviewWorkerPasswordHash'));
-  assert.ok(source.includes('password_hash: appleReviewCompanyPasswordHash'));
-  assert.ok(source.includes('password_hash: appleReviewAdminPasswordHash'));
-  assert.ok(source.includes("phone: '+994700000004'"));
-  assert.ok(source.includes("phone: '+994700000005'"));
-  assert.ok(source.includes('password_hash: workerPasswordHash'));
-  assert.ok(source.includes("phone: '+994700000102'"));
-  assert.ok(source.includes('password_hash: restrictedAdminPasswordHash'));
-  assert.ok(source.includes('reconcile_password: true'));
-  assert.ok(source.includes('password_set_at: new Date()'));
-  assert.ok(!source.includes('SEED_WORKER_PHONE'));
-  assert.ok(!source.includes('SEED_COMPANY_PHONE'));
-  assert.ok(!source.includes('SEED_OPS_ADMIN_PHONE'));
-  assert.ok(!source.includes('SEED_OPS_ADMIN_EMAIL'));
 }
 
 async function main(): Promise<void> {
-  testPasswordConfiguration();
-  testSeedWiring();
-  await testExactConfiguration();
-  await testPasswordAndIdentifierFailures();
-  await testStateAndPermissionFailures();
+  const summary = await validateStoreReviewAccounts(await validSnapshot(), config, now);
+  assert.equal(summary.accountCount, 3);
+  assert.equal(summary.fixtureOrderCount, 2);
+  assert.equal(summary.closedAttendanceCount, 1);
+  assert.equal(summary.readyPrivateDocumentCount, 2);
+
+  await expectCode((snapshot) => {
+    snapshot.admin!.is_review_account = false;
+  }, 'STORE_REVIEW_SCOPE_MISSING:admin');
+  await expectCode((snapshot) => {
+    snapshot.reviewAccountCount = 4;
+  }, 'STORE_REVIEW_ACCOUNT_SCOPE_COUNT_INVALID');
+  await expectCode((snapshot) => {
+    snapshot.reviewIdentifierCollisionCount = 1;
+  }, 'STORE_REVIEW_IDENTIFIER_COLLISION');
+  await expectCode((snapshot) => {
+    snapshot.admin!.admin!.permissions = ['*'];
+  }, 'STORE_REVIEW_ADMIN_WILDCARD_FORBIDDEN');
+  await expectCode((snapshot) => {
+    snapshot.worker!.worker!.documents = [];
+  }, 'STORE_REVIEW_PRIVATE_DOCUMENTS_NOT_READY');
+  await expectCode((snapshot) => {
+    snapshot.worker!.worker!.profile_photo_url = '';
+  }, 'STORE_REVIEW_PROFILE_PHOTO_MISSING');
+  await expectCode((snapshot) => {
+    snapshot.worker!.worker!.assignments[0].order.company.user.is_review_account = false;
+  }, 'STORE_REVIEW_WORKER_ASSIGNMENT_SCOPE_INVALID');
+  await expectCode((snapshot) => {
+    snapshot.company!.company!.orders[0].assignments[0].worker.user.is_review_account = false;
+  }, 'STORE_REVIEW_COMPANY_ASSIGNMENT_SCOPE_INVALID');
+  await expectCode((snapshot) => {
+    snapshot.reviewOrderOutboxCount = 1;
+  }, 'STORE_REVIEW_EXTERNAL_OUTBOX_FORBIDDEN');
+  await expectCode((snapshot) => {
+    snapshot.activeReviewerDeviceTokenCount = 1;
+  }, 'STORE_REVIEW_ACTIVE_DEVICE_TOKEN_FORBIDDEN');
+  await expectCode((snapshot) => {
+    snapshot.pendingReviewerProviderEventCount = 1;
+  }, 'STORE_REVIEW_PENDING_PROVIDER_EVENT_FORBIDDEN');
+  await expectCode((snapshot) => {
+    snapshot.worker!.fcm_token = 'legacy-review-token';
+  }, 'STORE_REVIEW_LEGACY_FCM_TOKEN_ACTIVE:worker');
+  await expectCode((snapshot) => {
+    snapshot.company!.email_verified_at = null;
+  }, 'STORE_REVIEW_EMAIL_NOT_VERIFIED:company');
+  await expectCode((snapshot) => {
+    snapshot.company!.pending_email = 'pending-collision@example.invalid';
+  }, 'STORE_REVIEW_PENDING_EMAIL_INVALID:company');
+  await expectCode((snapshot) => {
+    snapshot.company!.company!.orders[0].shift_end = new Date(now.getTime() - 1);
+  }, 'STORE_REVIEW_ACTIVE_ORDER_WINDOW_INVALID');
+  await expectCode((snapshot) => {
+    snapshot.company!.company!.orders[0].shift_end = new Date(
+      now.getTime() + STORE_REVIEW_MIN_ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000 - 1,
+    );
+  }, 'STORE_REVIEW_ACTIVE_ORDER_REVIEW_WINDOW_TOO_SHORT');
+  await expectCode((snapshot) => {
+    snapshot.notificationCounts.worker = 0;
+  }, 'STORE_REVIEW_WORKER_NOTIFICATION_MISSING');
+
+  const wrongPassword = await validSnapshot();
+  wrongPassword.worker!.password_hash = await bcrypt.hash('Wrong-Worker-Password-99!', 4);
+  await assert.rejects(
+    () => validateStoreReviewAccounts(wrongPassword, config, now),
+    (error: unknown) => error instanceof Error
+      && error.message === 'STORE_REVIEW_PASSWORD_MISMATCH:worker',
+  );
+
   console.log('review-account-security-regression: OK');
 }
 

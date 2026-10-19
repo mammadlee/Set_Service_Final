@@ -114,7 +114,7 @@ class WorkerRepository {
   }) async {
     try {
       await _dio.post<Map<String, dynamic>>(
-        '/auth/worker/phone-change/request',
+        '/auth/worker/phone-change/v2/request',
         data: {'phone': phone, 'current_password': currentPassword},
       );
     } catch (error) {

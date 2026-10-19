@@ -4,12 +4,16 @@ import {
   createHash,
   randomBytes,
 } from 'node:crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { OtpPurpose } from '../types/prisma';
 import { deliverEmailMessage } from './email';
+import { normalizeEmail } from './password';
+import { normalizePhone } from './phone';
+import { prisma } from './prisma';
+import { mayDeliverExternally, ReviewAccountMarker } from './review-delivery-policy';
 import { deliverSmsMessage } from './sms';
 
-type DeliveryChannel = 'sms' | 'email';
+export type DeliveryChannel = 'sms' | 'email';
 
 interface ProviderDeliveryPayload {
   channel: DeliveryChannel;
@@ -35,6 +39,15 @@ export interface ProviderOutboxEventData {
   event_type: string;
   payload: EncryptedProviderPayload;
 }
+
+export type ProviderOutboxDeliveryDependencies = {
+  resolveRecipientOwners?: (
+    channel: DeliveryChannel,
+    recipient: string,
+  ) => Promise<ReviewAccountMarker[]>;
+  deliverSms?: typeof deliverSmsMessage;
+  deliverEmail?: typeof deliverEmailMessage;
+};
 
 export function buildOtpProviderOutboxEvent(input: {
   channel: DeliveryChannel;
@@ -79,11 +92,18 @@ export function buildOtpProviderOutboxEvent(input: {
 export async function deliverProviderOutboxEvent(
   eventId: string,
   eventType: string,
-  rawPayload: Prisma.JsonValue
+  rawPayload: Prisma.JsonValue,
+  dependencies: ProviderOutboxDeliveryDependencies = {},
 ): Promise<void> {
   const payload = decryptProviderPayload(rawPayload, eventId);
+  const resolveOwners = dependencies.resolveRecipientOwners ?? resolveProviderRecipientOwners;
+  const owners = await resolveOwners(payload.channel, payload.to);
+  // A provider target with any review or indeterminate owner is suppressed.
+  // No owner remains valid for first-time registration OTP delivery.
+  if (owners.length > 0 && !owners.every(mayDeliverExternally)) return;
+
   if (eventType === 'provider.sms.send' && payload.channel === 'sms') {
-    await deliverSmsMessage(
+    await (dependencies.deliverSms ?? deliverSmsMessage)(
       {
         to: payload.to,
         purpose: payload.purpose as OtpPurpose,
@@ -94,7 +114,7 @@ export async function deliverProviderOutboxEvent(
     return;
   }
   if (eventType === 'provider.email.send' && payload.channel === 'email') {
-    await deliverEmailMessage(
+    await (dependencies.deliverEmail ?? deliverEmailMessage)(
       {
         to: payload.to,
         purpose: payload.purpose,
@@ -106,6 +126,34 @@ export async function deliverProviderOutboxEvent(
     return;
   }
   throw new Error('Provider outbox event type does not match its encrypted payload.');
+}
+
+export async function resolveProviderRecipientOwners(
+  channel: DeliveryChannel,
+  recipient: string,
+  client: PrismaClient | Prisma.TransactionClient = prisma,
+): Promise<ReviewAccountMarker[]> {
+  const normalized = channel === 'sms'
+    ? normalizePhone(recipient)
+    : normalizeEmail(recipient);
+  const otpTarget = channel === 'email' ? `email:${normalized}` : normalized;
+  const [directOwners, otpOwners] = await Promise.all([
+    client.user.findMany({
+      where: channel === 'sms'
+        ? { phone: normalized }
+        : { OR: [{ email: normalized }, { pending_email: normalized }] },
+      select: { is_review_account: true },
+    }),
+    client.otpCode.findMany({
+      where: { phone: otpTarget, user_id: { not: null } },
+      select: { user: { select: { is_review_account: true } } },
+      distinct: ['user_id'],
+    }),
+  ]);
+  return [
+    ...directOwners,
+    ...otpOwners.flatMap((record) => record.user ? [record.user] : []),
+  ];
 }
 
 export function encryptProviderPayload(

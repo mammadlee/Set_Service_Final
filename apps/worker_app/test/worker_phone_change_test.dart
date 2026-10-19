@@ -21,7 +21,7 @@ import 'package:worker_app/features/worker/presentation/screens/worker_profile_s
 
 void main() {
   test(
-    'phone-change request sends the current password for step-up auth',
+    'Build 15 phone-change request uses v2 and sends current password for step-up auth',
     () async {
       RequestOptions? captured;
       final storage = _MemoryTokenStorage(_jwt(), 'refresh-token');
@@ -52,7 +52,7 @@ void main() {
       );
 
       expect(captured?.method, 'POST');
-      expect(captured?.path, '/auth/worker/phone-change/request');
+      expect(captured?.path, '/auth/worker/phone-change/v2/request');
       expect(captured?.data, {
         'phone': '+994501112244',
         'current_password': r'Current-password $ stays exact',
@@ -151,7 +151,7 @@ void main() {
             return _jsonResponse(200, _profileJson());
           case '/taxonomy':
             return _jsonResponse(200, {'data': <Object>[]});
-          case '/auth/worker/phone-change/request':
+          case '/auth/worker/phone-change/v2/request':
             phoneRequest = options;
             return _jsonResponse(200, {
               'otp_sent': true,
@@ -238,6 +238,13 @@ void main() {
         'phone': '+994501112244',
         'current_password': r'Current-password $ stays exact',
       });
+      expect(
+        find.text(
+          'Nömrə uyğun olduqda OTP göndərilir. Kodu aldıqdan sonra daxil edin.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('OTP yeni telefon nömrəsinə göndərildi.'), findsNothing);
       expect(find.text('OTP kodu'), findsOneWidget);
       expect(storage.saveCount, 0);
       expect(storage.clearCount, 0);

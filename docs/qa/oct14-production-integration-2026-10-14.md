@@ -57,9 +57,11 @@ Profil profession-u order position-u ilə fərqli olduqda səlahiyyətli admin �
 
 ### Telefon nömrəsi
 
-Request endpoint cari parolu yoxlamadan target nömrənin mövcudluğuna baxmır və OTP yaratmır; buna görə tək oğurlanmış bearer session login identifikatorunu dəyişə bilmir. Başqa hesaba aid nömrə, OTP cooldown/block/rate vəziyyəti ilə eyni generic accepted cavabı qaytarır və qeydiyyat məlumatını açıqlamır. Hər iki phone-change endpoint 5 dəqiqədə IP və target üzrə 10 sorğulu strict auth limiter-dən keçir.
+Build 14 üçün deprecated legacy request endpoint yalnız `phone` qəbul edir. Bu yol cari parol step-up-u edə bilmədiyi üçün worker JWT, 5 dəqiqədə IP və target üzrə 10 sorğulu strict auth limiter, əlavə actor və target üzrə 5 sorğulu limiter və target nömrəni saxlamayan audit hadisəsi ilə qorunur. Oğurlanmış bearer session OTP-ni yeni nömrəyə istəyə bilər, lakin həmin telefona gələn OTP olmadan login identifikatorunu dəyişə bilməz. Build 15 `/phone-change/v2/request` yolundan istifadə edir və target nömrənin mövcudluğu yoxlanmazdan, yaxud OTP yaradılmazdan əvvəl cari parolu doğrulayır. Universal bypass və build-header etibarı yoxdur.
 
-Uğurlu sorğuda OTP yeni canonical E.164 nömrəyə gedir. Confirm transaction-u user sətrini kilidləyir, uniqueness-i yenidən yoxlayır, OTP-ni atomik consume edir, telefonu yeniləyir və audit yazır. İtmiş success response üçün idempotent retry yalnız eyni, yaxın vaxtda consume olunmuş OTP ilə qəbul edilir. Session version dəyişmədiyi üçün cari parol ilə doğrulanmış axında mövcud sessiyalar qorunur. Flutter gizli cari-parol sahəsini validate edir, `current_password` göndərir və canonical backend cavabını AuthController/profil state-inə dərhal tətbiq edir.
+Build 14 legacy request başqa hesaba aid nömrə üçün əvvəlki generic 409 konfliktini saxlayır ki, köhnə tətbiq SMS göndərilmədiyi halda OTP ekranını açmasın. Bu legacy availability siqnalı worker authentication, ikiqat rate limit və redacted audit ilə məhdudlaşdırılır. Build 15 v2 request başqa hesaba aid nömrə və OTP cooldown/block vəziyyətində generic accepted cavabı saxlayır. Hər iki request eyni atomik confirm endpoint-inə bağlanır.
+
+Uğurlu sorğuda OTP yeni canonical E.164 nömrəyə gedir. Confirm transaction-u user sətrini kilidləyir, uniqueness-i yenidən yoxlayır, OTP-ni atomik consume edir, telefonu yeniləyir və audit yazır. İtmiş success response üçün idempotent retry yalnız eyni, yaxın vaxtda consume olunmuş OTP ilə qəbul edilir. Session version dəyişmədiyi üçün mövcud sessiyalar qorunur. Build 15 Flutter gizli cari-parol sahəsini validate edir, onu yalnız v2 request-ə göndərir və canonical backend cavabını AuthController/profil state-inə dərhal tətbiq edir.
 
 ### Private documents və profil şəkli
 
@@ -74,7 +76,7 @@ Profile image modalı zoom və keyboard idarəsini dəstəkləyir. Siyahıda ful
 - `assignments.repository.ts`: sorted worker locks, overlap/capacity logic və warning-lər production inactive/deleted user guard-ı ilə birləşdirildi.
 - Assignment və whole-order status keçidləri `attendance_activity_at` projection-ını eyni transaction-da yeniləyir; monitor `updated_at` sıralamasında status dəyişikliyi köhnə mövqedə qalmır.
 - `attendance.service.ts`: auto-selection/grace/monitor logic production canonical kiosk-origin fail-closed yoxlaması ilə birləşdirildi.
-- `auth.service.ts` və Flutter phone UI: source-un atomic phone update/state refresh-i production password auth-u ilə birləşdirildi; cari parol step-up, non-enumerating OTP request və session-preserving confirm əlavə edildi.
+- `auth.service.ts` və Flutter phone UI: source-un atomic phone update/state refresh-i production password auth-u ilə birləşdirildi; Build 14 üçün limitli/auditli legacy kontrakt saxlanıldı, Build 15 versioned cari-parol step-up endpoint-inə keçirildi və non-enumerating, session-preserving confirm hər iki axında qorundu.
 - `assignments.service.ts`: admin history üçün assignment creator saxlanıldı, company/worker caller-lardan daxili admin identifikatoru gizlədildi və lazımsız creator query-si dayandırıldı.
 - `prisma/schema.prisma`: production moderation və external deletion modelləri/migration-ları saxlanıb, yalnız üç assignment activity sütunu və index əlavə edildi.
 - Flutter worker profil/model/repository konfliktlərində moderation, ratings, legal/account deletion, responsive və private-document qoruması saxlanıb; phone canonical result/state update əlavə edildi.
@@ -107,7 +109,8 @@ Migration silmə və enum/FK dəyişikliyi etmir. Mövcud, silinməmiş `attenda
 | `GET /v1/admin/reports/companies/{companyId}/export` | Yeni CSV export | JWT + `view_reports` |
 | `POST /v1/assignments/bulk` | Yeni partial-result bulk assignment | JWT + `manage_assignments` |
 | `GET /v1/assignments` | History scope, filters və enriched relations | Mövcud role/permission |
-| `POST /v1/auth/worker/phone-change/request` | `phone` + `current_password`, generic anti-enumeration cavabı və yeni nömrəyə OTP | Worker JWT + strict auth limiter |
+| `POST /v1/auth/worker/phone-change/request` | Deprecated Build 14 `phone`-only compatibility request; duplicate target üçün əvvəlki generic 409, redacted audit | Worker JWT + strict IP/target və əlavə actor/target limiter |
+| `POST /v1/auth/worker/phone-change/v2/request` | Build 15 `phone` + `current_password` step-up; generic anti-enumeration cavabı | Worker JWT + strict auth limiter |
 | `POST /v1/auth/worker/phone-change/confirm` | Atomic OTP consume və persisted phone response | Worker JWT |
 | `GET /v1/attendance/venue-kiosks/companies` | Kiosk üçün approved active company list | JWT + `manage_kiosks` |
 | `GET /v1/attendance/venue-kiosks/context` | Company/eligible shift safe context | `X-Kiosk-Capability` |
@@ -237,7 +240,7 @@ Assignment `assigned_by` sahəsi yalnız admin/super-admin cavablarında mövcud
 - Kiosk capability URL query/path əvəzinə fragment + header modelindədir və production origin allowlist-i fail-closed qalır.
 - QR replay, cross-company, assignment və worker eligibility yoxlamaları regression-larla yoxlanıb; config və runtime QR TTL maksimum 300 saniyədir.
 - Phone change cari parol step-up tələb edir; yalnız access token oğurlanması ilə login nömrəsi dəyişdirilə bilmir.
-- Phone request duplicate target və OTP cooldown/block/rate state-i üçün generic cavab verir; strict IP/target auth limiter enumeration və abuse səthini azaldır.
+- Build 15 phone request duplicate target və OTP cooldown/block/rate state-i üçün generic cavab verir. Build 14-ün əvvəlki duplicate-target 409 davranışı köhnə OTP UI-ni səhv açmamaq üçün saxlanır; strict IP/target və actor/target limiter-ləri legacy enumeration və abuse səthini məhdudlaşdırır.
 - Phone confirm OTP-ni eyni transaction-da consume edir, uniqueness-i lock altında yenidən yoxlayır; duplicate phone rədd edilir və cari parolla doğrulanmış sessiyalar qorunur.
 - Assignment creator yalnız admin/super-admin cavabına daxil edilir; company/worker üçün query və response-dan çıxarılır.
 - Report export formula injection və cache risklərinə qarşı qorunur.
@@ -309,7 +312,7 @@ Node 24.17 və dependency remediation-dan sonra Node 24.19 clean runner ilə bac
 6. PDF export browser print-to-PDF-dir; native server PDF və native XLSX yoxdur.
 7. iOS build Windows-da işlədilə bilməyib; macOS CI/store QA tələb olunur.
 8. Repo-wide Dart format audit-i bu dəyişiklikdən əvvəl mövcud iki əlaqəsiz faylı göstərir; inteqrasiya scope-unu pozmamaq üçün həmin fayllar dəyişdirilməyib.
-9. Backend phone-change request-də `current_password` tələb edir. Köhnə Flutter build-i bu sahəni göndərmədiyi üçün backend rollout-dan sonra həmin build-də yalnız telefon dəyişmə əməliyyatı validation xətası alacaq; mobil rollout ardıcıllığı və minimum dəstəklənən versiya planı tələb olunur.
+9. Build 14 üçün phone-change legacy endpoint-də cari-parol step-up yoxdur. JWT, ikiqat rate limit, redacted audit və target OTP confirm riski məhdudlaşdırır, lakin oğurlanmış bearer token istənməyən OTP sorğusu yarada bilər. Build 14 minimum dəstəklənən versiyadan çıxarılandan sonra usage metric-ləri yoxlanmalı və legacy endpoint ayrıca release ilə bağlanmalıdır.
 10. Full Git history-də köhnə secret materialı qalır; provider rotation təsdiqi lazımdır.
 11. npm audit nəticəsi registry-nin 2026-10-15 snapshot-ıdır; release CI clean install-dan sonra production və full audit-i yenidən işlətməlidir.
 
@@ -346,9 +349,10 @@ Node 24.17 və dependency remediation-dan sonra Node 24.19 clean runner ilə bac
 
 ### Phone, documents və şəkil
 
-- [ ] Cari parol yanlış olduqda OTP sorğusu rədd edilir; tək oğurlanmış access token nömrəni dəyişə bilmir.
+- [ ] Build 15 v2 request-də cari parol yanlış olduqda OTP sorğusu target availability yoxlanmazdan əvvəl rədd edilir.
+- [ ] Build 14 legacy request yalnız `phone` ilə işləyir, əlavə actor/target limit və redacted audit yaradır; target OTP olmadan nömrə dəyişmir.
 - [ ] Unikal nömrə + doğru cari parol üçün real OTP gəlir; confirm-dən sonra Flutter dərhal, admin refresh/poll sonrası canonical nömrəni göstərir.
-- [ ] Başqa hesaba bağlı nömrə generic accepted cavabı verir, OTP göndərmir və qeydiyyatın mövcudluğunu API cavabında açıqlamır.
+- [ ] Build 14 başqa hesaba bağlı nömrə üçün əvvəlki generic 409-u göstərir və OTP ekranını açmır; Build 15 eyni halda generic accepted cavabı verir və OTP göndərmir.
 - [ ] Duplicate, wrong, expired, consumed və wrong-purpose OTP confirm-i rədd edilir; request/confirm rate limit işləyir.
 - [ ] Mövcud session işləməyə davam edir və yeni nömrə ilə növbəti login mümkündür.
 - [ ] Authorized admin health/criminal sənədi short-lived URL ilə açır.
@@ -367,7 +371,7 @@ Node 24.17 və dependency remediation-dan sonra Node 24.19 clean runner ilə bac
 7. Staging environment-də `APP_TIME_ZONE=Asia/Baku`, `KIOSK_PUBLIC_BASE_URL=https://qr.setservice.az`, `QR_TOKEN_TTL_SECONDS` (1..300), checkout grace, QR retention və CORS dəyərlərini review edin. Secret-lər mövcud secret store-dan gəlməli və bir-birindən fərqli olmalıdır.
 8. Manual QA checklist-in kritik report, kiosk, assignment, phone və private-document ssenarilərini staging-də tamamlayın.
 9. Low-traffic production pəncərəsində əvvəl additive migration-ı `prisma migrate deploy` ilə tətbiq edin. Reset, force push və destructive manual SQL istifadə etməyin.
-10. Yenilənmiş Flutter build-i store/internal track-də əvvəlcədən hazırlayın və `current_password` phone-change contract-ını staging backend ilə yoxlayın. Backend sərtləşdirməsi yayılanda köhnə mobil build-lər üçün minimum-version/support mesajı hazır olmalıdır.
+10. Build 14-ün legacy `phone`-only, Build 15-in isə `/phone-change/v2/request` cari-parol kontraktını eyni staging backend-də yoxlayın. Legacy route usage-ni monitor edin; yalnız Build 14 minimum dəstəklənən versiyadan çıxarılandan sonra route-un bağlanması üçün ayrıca release hazırlayın.
 11. Immutable backend/outbox/retention image-lərini deploy edin; health/readiness, error rate, DB pool, slow query və queue göstəricilərini yoxlayın.
 12. Admin static build-i, sonra `qr.setservice.az` kiosk build-ini deploy edin. TLS/CSP/CORS/cache/header-ləri yoxlayın; işləyən DNS-i dəyişməyin.
 13. Bir test company/order/worker ilə kiosk check-in/out, attendance monitor, bulk assignment, report CSV və private document end-to-end smoke edin.
@@ -386,4 +390,4 @@ Node 24.17 və dependency remediation-dan sonra Node 24.19 clean runner ilə bac
 
 ## Release qərarı
 
-Feature kodu production baseline üzərinə inteqrasiya olunub və dependency remediation-dan sonra root/admin/company/kiosk production və full npm audit-ləri 0-dır. Node 24 backend/web suite və build-ləri, Flutter suite/Android build-i, isolated PostgreSQL 16 migration və concurrency testləri keçir. Cari working tree hələ production deploy üçün təsdiqlənmir: Linux Docker/Sharp image build-i, production ölçülü staging migration timing, phone-change mobil rollout ardıcıllığı, historical-secret rotation təsdiqi, iOS build və fiziki/manual QA bağlanmalıdır.
+Feature kodu production baseline üzərinə inteqrasiya olunub və dependency remediation-dan sonra root/admin/company/kiosk production və full npm audit-ləri 0-dır. Node 24 backend/web suite və build-ləri, Flutter suite/Android build-i, isolated PostgreSQL 16 migration və concurrency testləri keçir. Cari working tree hələ production deploy üçün təsdiqlənmir: Linux Docker/Sharp image build-i, production ölçülü staging migration timing, Build 14 legacy phone-change retirement planı, historical-secret rotation təsdiqi, iOS build və fiziki/manual QA bağlanmalıdır.

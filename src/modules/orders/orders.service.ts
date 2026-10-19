@@ -51,15 +51,24 @@ type PositionSummarySource = TaxonomySummarySource & {
 };
 const OCCUPYING_ASSIGNMENT_STATUSES = new Set(['assigned', 'accepted', 'completed']);
 
-export async function listOrders(userId: string, roleValue: string, filters: ListOrdersQueryInput) {
+export async function listOrders(
+  userId: string,
+  roleValue: string,
+  filters: ListOrdersQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   const where: Prisma.OrderWhereInput = { deleted_at: null };
+  let effectiveReviewScope = isReviewAccount;
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
     where.company_id = company.id;
+    effectiveReviewScope = company.user.is_review_account === true;
   } else if (role !== 'super_admin' && role !== 'admin') {
     throw Errors.forbidden('Workers cannot list orders.', 'ROLE_FORBIDDEN');
+  } else {
+    where.company = { user: { is_review_account: isReviewAccount } };
   }
 
   if (filters.status) where.status = filters.status;
@@ -135,6 +144,7 @@ export async function listOrders(userId: string, roleValue: string, filters: Lis
     page: filters.page,
     limit: filters.limit,
     sort: filters.sort,
+    isReviewAccount: effectiveReviewScope,
   });
 
   return {
@@ -168,6 +178,7 @@ export async function createOrder(
     actorRole: role,
     companyId: company.id,
     companyName: company.name,
+    isReviewAccount: company.user.is_review_account === true,
     order: orderInput,
     idempotency: idempotencyKey
       ? {
@@ -185,15 +196,24 @@ export async function createOrder(
   return { response: result.response, replayed: result.replayed };
 }
 
-export async function getOrder(id: string, userId: string, roleValue: string) {
+export async function getOrder(
+  id: string,
+  userId: string,
+  roleValue: string,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   let order: OrderRecord | null;
 
   if (role === 'super_admin' || role === 'admin') {
-    order = await OrdersRepository.findOrderById(id);
+    order = await OrdersRepository.findOrderByIdForReviewScope(id, isReviewAccount);
   } else if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
-    order = await OrdersRepository.findOrderByIdForCompany(id, company.id);
+    order = await OrdersRepository.findOrderByIdForCompany(
+      id,
+      company.id,
+      company.user.is_review_account === true,
+    );
   } else {
     throw Errors.forbidden('Workers cannot access company orders.', 'ROLE_FORBIDDEN');
   }
@@ -209,7 +229,12 @@ export async function cancelOrder(id: string, userId: string, roleValue: string,
   }
 
   const company = await getApprovedCompanyForUser(userId);
-  const order = await OrdersRepository.findOrderByIdForCompany(id, company.id);
+  const companyIsReviewAccount = company.user.is_review_account === true;
+  const order = await OrdersRepository.findOrderByIdForCompany(
+    id,
+    company.id,
+    companyIsReviewAccount,
+  );
   if (!order) throw Errors.notFound('Order not found.', 'ORDER_NOT_FOUND');
 
   if (input.expected_version !== undefined && input.expected_version !== order.version) {
@@ -238,7 +263,11 @@ export async function cancelOrder(id: string, userId: string, roleValue: string,
   });
 
   if (!updated) {
-    const latest = await OrdersRepository.findOrderByIdForCompany(id, company.id);
+    const latest = await OrdersRepository.findOrderByIdForCompany(
+      id,
+      company.id,
+      companyIsReviewAccount,
+    );
     if (
       input.expected_version !== undefined
       && latest

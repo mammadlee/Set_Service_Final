@@ -14,6 +14,7 @@ import { validate } from '../../middleware/validate';
 import * as Service from './workers.service';
 import * as RatingsService from '../ratings/ratings.service';
 import { WorkerRatingsParamsSchema } from '../ratings/ratings.schema';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 const upload = multer({
@@ -167,7 +168,11 @@ router.get(
       res.set('Pragma', 'no-cache');
       res.set('Referrer-Policy', 'no-referrer');
       res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
-      res.json(await Service.getWorkerDocumentDownload(req.user!, params.id, params.type));
+      res.json(await Service.getWorkerDocumentDownload(
+        { ...req.user!, isReviewAccount: isReviewScopedRequest(req) },
+        params.id,
+        params.type,
+      ));
     } catch (error) {
       next(error);
     }
@@ -190,12 +195,12 @@ router.get('/admin/workers', requireAuth, requirePermission('view_workers'), asy
       foc_training: typeof req.query.foc_training === 'string' ? req.query.foc_training : undefined,
       sort: req.query.sort === 'asc' ? 'asc' : 'desc',
       available: req.query.available === 'true' ? true : req.query.available === 'false' ? false : undefined,
-    }));
+    }, isReviewScopedRequest(req)));
   } catch (e) { next(e); }
 });
 
 router.get('/admin/workers/:id', requireAuth, requirePermission('view_workers'), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.getWorkerById(req.params.id)); } catch (e) { next(e); }
+  try { res.json(await Service.getWorkerById(req.params.id, isReviewScopedRequest(req))); } catch (e) { next(e); }
 });
 
 router.patch(
@@ -205,7 +210,12 @@ router.patch(
   validate(ApproveWorkerSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await Service.approveWorker(req.params.id, req.user!, req.body.worker_class));
+      res.json(await Service.approveWorker(
+        req.params.id,
+        req.user!,
+        req.body.worker_class,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -213,21 +223,43 @@ router.patch(
 );
 
 router.patch('/admin/workers/:id/reject', requireAuth, requirePermission('manage_workers'), validate(RejectWorkerSchema), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.rejectWorker(req.params.id, req.body.reason, req.user!)); } catch (e) { next(e); }
+  try {
+    res.json(await Service.rejectWorker(
+      req.params.id,
+      req.body.reason,
+      req.user!,
+      isReviewScopedRequest(req),
+    ));
+  } catch (e) { next(e); }
 });
 
 router.patch('/admin/workers/:id/class', requireAuth, requirePermission('manage_workers'), validate(UpdateWorkerClassSchema), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.updateWorkerClass(req.params.id, req.body.worker_class, req.user!)); } catch (e) { next(e); }
+  try {
+    res.json(await Service.updateWorkerClass(
+      req.params.id,
+      req.body.worker_class,
+      req.user!,
+      isReviewScopedRequest(req),
+    ));
+  } catch (e) { next(e); }
 });
 
 router.patch('/admin/workers/foc-training', requireAuth, requirePermission('manage_workers'), validate(UpdateFocTrainingSchema), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.updateWorkersFocTraining(req.body.worker_ids, req.body.is_foc_training, req.body.note, req.user!)); } catch (e) { next(e); }
+  try {
+    res.json(await Service.updateWorkersFocTraining(
+      req.body.worker_ids,
+      req.body.is_foc_training,
+      req.body.note,
+      req.user!,
+      isReviewScopedRequest(req),
+    ));
+  } catch (e) { next(e); }
 });
 
 router.get('/workers/:id/ratings', requireAuth, requirePermission('view_workers'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = WorkerRatingsParamsSchema.parse(req.params);
-    res.json(await RatingsService.getWorkerRatings(id, req.user!.role));
+    res.json(await RatingsService.getWorkerRatings(id, req.user!.role, isReviewScopedRequest(req)));
   } catch (e) { next(e); }
 });
 

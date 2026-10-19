@@ -43,13 +43,20 @@ const KIOSK_QR_REFRESH_SECONDS = 30;
 const KIOSK_TOKEN_BYTES = 32;
 const DEFAULT_KIOSK_SESSION_TTL_HOURS = 12;
 
-export async function generateQrToken(userId: string, roleValue: string, input: GenerateQrTokenInput) {
+export async function generateQrToken(
+  userId: string,
+  roleValue: string,
+  input: GenerateQrTokenInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
   const assignment = await getAssignmentForQr(input.assignment_id, true);
+  assertAdminAssignmentCohort(role, actorIsReviewAccount, assignment);
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
     if (assignment.order.company_id !== company.id) {
@@ -84,13 +91,20 @@ export async function generateQrToken(userId: string, roleValue: string, input: 
   };
 }
 
-export async function createKioskSession(userId: string, roleValue: string, input: CreateKioskSessionInput) {
+export async function createKioskSession(
+  userId: string,
+  roleValue: string,
+  input: CreateKioskSessionInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
   const assignment = await getAssignmentForQr(input.assignment_id);
+  assertAdminAssignmentCohort(role, actorIsReviewAccount, assignment);
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
     if (assignment.order.company_id !== company.id) {
@@ -205,13 +219,24 @@ export async function generateKioskQrToken(token: string) {
   };
 }
 
-export async function createVenueKiosk(userId: string, roleValue: string, input: CreateVenueKioskInput) {
+export async function createVenueKiosk(
+  userId: string,
+  roleValue: string,
+  input: CreateVenueKioskInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const companyId = await resolveManageableCompanyId(userId, role, input.company_id);
+  const companyId = await resolveManageableCompanyId(
+    userId,
+    role,
+    input.company_id,
+    actorIsReviewAccount,
+  );
   const name = input.name.trim();
   const locationLabel = input.location_label?.trim();
   const kioskPublicBase = resolveKioskPublicBaseUrl();
@@ -242,7 +267,12 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
   throw Errors.internal('Venue kiosk tokeni yaradıla bilmədi.', 'KIOSK_TOKEN_CREATE_FAILED');
 }
 
-export async function listVenueKiosks(userId: string, roleValue: string, filters: ListVenueKiosksQueryInput) {
+export async function listVenueKiosks(
+  userId: string,
+  roleValue: string,
+  filters: ListVenueKiosksQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
@@ -257,18 +287,24 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
     data: (await AttendanceRepository.listVenueKiosks({
       deleted_at: null,
       ...(companyId ? { company_id: companyId } : {}),
+      ...((role === 'admin' || role === 'super_admin')
+        ? { company: { user: { is_review_account: isReviewAccount } } }
+        : {}),
     })).map((kiosk) => toVenueKioskManagementResponse(kiosk)),
   };
 }
 
-export async function listVenueKioskCompanies(roleValue: string) {
+export async function listVenueKioskCompanies(
+  roleValue: string,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin') {
     throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
   }
 
   return {
-    data: await AttendanceRepository.listKioskManageableCompanies(),
+    data: await AttendanceRepository.listKioskManageableCompanies(isReviewAccount),
   };
 }
 
@@ -276,6 +312,7 @@ export async function listKioskEligibleOrders(
   userId: string,
   roleValue: string,
   filters: ListKioskEligibleOrdersQueryInput,
+  isReviewAccount = false,
 ) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
@@ -288,7 +325,11 @@ export async function listKioskEligibleOrders(
   }
 
   return {
-    data: (await AttendanceRepository.listKioskEligibleOrders(companyId)).map((order) => ({
+    data: (await AttendanceRepository.listKioskEligibleOrders(
+      companyId,
+      new Date(),
+      role === 'admin' || role === 'super_admin' ? isReviewAccount : undefined,
+    )).map((order) => ({
       id: order.id,
       title: order.title,
       status: order.status,
@@ -306,14 +347,16 @@ export async function activateVenueKiosk(
   userId: string,
   roleValue: string,
   id: string,
-  input: ActivateVenueKioskInput
+  input: ActivateVenueKioskInput,
+  actorIsReviewAccount = false,
 ) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const kiosk = await findManageableVenueKiosk(id, userId, role);
+  const kiosk = await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
   ensureVenueKioskUsable(kiosk);
 
   const order = await AttendanceRepository.findOrderForKiosk(input.order_id);
@@ -341,11 +384,18 @@ export async function activateVenueKiosk(
   return toVenueKioskManagementResponse(activated, kioskPublicBase);
 }
 
-export async function deactivateVenueKiosk(userId: string, roleValue: string, id: string) {
+export async function deactivateVenueKiosk(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
+  await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
   const kioskPublicBase = resolveKioskPublicBaseUrl();
@@ -359,11 +409,18 @@ export async function deactivateVenueKiosk(userId: string, roleValue: string, id
   return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
-export async function disableVenueKiosk(userId: string, roleValue: string, id: string) {
+export async function disableVenueKiosk(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
+  await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
   const kioskPublicBase = resolveKioskPublicBaseUrl();
@@ -377,13 +434,22 @@ export async function disableVenueKiosk(userId: string, roleValue: string, id: s
   return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
-export async function revokeKioskSession(userId: string, roleValue: string, id: string) {
+export async function revokeKioskSession(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const session = await AttendanceRepository.findKioskSessionById(id);
+  const session = await AttendanceRepository.findKioskSessionById(
+    id,
+    role === 'admin' || role === 'super_admin' ? actorIsReviewAccount : undefined,
+  );
   if (!session) throw Errors.notFound('Kiosk sessiyası tapılmadı.', 'KIOSK_SESSION_NOT_FOUND');
 
   let companyId: string | undefined;
@@ -516,7 +582,12 @@ async function createAttendanceNotificationSafely(
   }
 }
 
-export async function listAttendance(userId: string, roleValue: string, filters: ListAttendanceQueryInput) {
+export async function listAttendance(
+  userId: string,
+  roleValue: string,
+  filters: ListAttendanceQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   const where: Prisma.AttendanceLogWhereInput = { deleted_at: null };
   const assignmentWhere: Prisma.AssignmentWhereInput = { deleted_at: null };
@@ -586,8 +657,15 @@ export async function listAttendance(userId: string, roleValue: string, filters:
         deleted_at: null,
       });
     }
+    attendanceConditions.push({
+      assignment: {
+        worker: { user: { is_review_account: isReviewAccount } },
+        order: { company: { user: { is_review_account: isReviewAccount } } },
+      },
+    });
   } else if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
+    const companyIsReviewAccount = company.user.is_review_account === true;
     if (filters.company_id && filters.company_id !== company.id) {
       throw Errors.forbidden('Müəssisə yalnız öz davamiyyət qeydlərini görə bilər.', 'FORBIDDEN');
     }
@@ -595,8 +673,14 @@ export async function listAttendance(userId: string, roleValue: string, filters:
       company_id: company.id,
       deleted_at: null,
     });
+    attendanceConditions.push({
+      assignment: {
+        worker: { user: { is_review_account: companyIsReviewAccount } },
+      },
+    });
   } else if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
+    const workerIsReviewAccount = worker.user.is_review_account === true;
     if (filters.worker_id && filters.worker_id !== worker.id) {
       throw Errors.forbidden('Workers can view only their own attendance records.', 'FORBIDDEN');
     }
@@ -604,6 +688,7 @@ export async function listAttendance(userId: string, roleValue: string, filters:
     assignmentWhere.order = mergeOrderFilter(assignmentWhere.order, {
       ...(filters.company_id ? { company_id: filters.company_id } : {}),
       deleted_at: null,
+      company: { user: { is_review_account: workerIsReviewAccount } },
     });
   } else {
     throw Errors.forbidden('Hesab rolu dəstəklənmir.', 'FORBIDDEN');
@@ -631,14 +716,23 @@ export async function listAttendance(userId: string, roleValue: string, filters:
   };
 }
 
-export async function getAttendance(id: string, userId: string, roleValue: string) {
+export async function getAttendance(
+  id: string,
+  userId: string,
+  roleValue: string,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
-  const attendance = await findVisibleAttendance(id, userId, role);
+  const attendance = await findVisibleAttendance(id, userId, role, isReviewAccount);
   if (!attendance) throw Errors.notFound('Giriş-çıxış qeydi tapılmadı.', 'ATTENDANCE_NOT_FOUND');
   return toAttendanceResponse(attendance, role);
 }
 
-export async function listAttendanceMonitor(roleValue: string, filters: ListAttendanceQueryInput) {
+export async function listAttendanceMonitor(
+  roleValue: string,
+  filters: ListAttendanceQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin') {
     throw Errors.forbidden('Canlı davamiyyət monitoru yalnız səlahiyyətli adminlər üçündür.', 'FORBIDDEN');
@@ -650,6 +744,10 @@ export async function listAttendanceMonitor(roleValue: string, filters: ListAtte
     { worker: { deleted_at: null, user: { is_active: true, deleted_at: null } } },
     { order: { deleted_at: null } },
   ];
+  conditions.push(
+    { worker: { user: { is_review_account: isReviewAccount } } },
+    { order: { company: { user: { is_review_account: isReviewAccount } } } },
+  );
 
   if (filters.assignment_id) conditions.push({ id: filters.assignment_id });
   if (filters.order_id) conditions.push({ order_id: filters.order_id });
@@ -730,8 +828,16 @@ async function findValidKioskSessionByToken(token: string): Promise<KioskSession
   return session;
 }
 
-async function findManageableVenueKiosk(id: string, userId: string, role: Role): Promise<VenueKioskRecord> {
-  const kiosk = await AttendanceRepository.findVenueKioskById(id);
+async function findManageableVenueKiosk(
+  id: string,
+  userId: string,
+  role: Role,
+  actorIsReviewAccount = false,
+): Promise<VenueKioskRecord> {
+  const kiosk = await AttendanceRepository.findVenueKioskById(
+    id,
+    role === 'admin' || role === 'super_admin' ? actorIsReviewAccount : undefined,
+  );
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
@@ -745,7 +851,8 @@ async function findManageableVenueKiosk(id: string, userId: string, role: Role):
 async function resolveManageableCompanyId(
   userId: string,
   role: Role,
-  requestedCompanyId?: string
+  requestedCompanyId?: string,
+  actorIsReviewAccount = false,
 ): Promise<string> {
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
@@ -759,7 +866,10 @@ async function resolveManageableCompanyId(
     throw Errors.badRequest('Company is required for venue kiosk creation.', 'COMPANY_REQUIRED');
   }
 
-  const company = await AttendanceRepository.findKioskManageableCompanyById(requestedCompanyId);
+  const company = await AttendanceRepository.findKioskManageableCompanyById(
+    requestedCompanyId,
+    actorIsReviewAccount,
+  );
   if (!company) {
     throw Errors.notFound(
       'Aktiv və təsdiqlənmiş müəssisə tapılmadı.',
@@ -767,6 +877,31 @@ async function resolveManageableCompanyId(
     );
   }
   return company.id;
+}
+
+function assertReviewAdminKioskMutationAllowed(
+  role: Role,
+  isReviewAccount: boolean,
+): void {
+  if ((role !== 'admin' && role !== 'super_admin') || !isReviewAccount) return;
+  throw Errors.forbidden(
+    'Store review administrators have read-only access.',
+    'STORE_REVIEW_ADMIN_VIEW_ONLY',
+  );
+}
+
+function assertAdminAssignmentCohort(
+  role: Role,
+  isReviewAccount: boolean,
+  assignment: AssignmentRecord,
+): void {
+  if (role !== 'admin' && role !== 'super_admin') return;
+  if (
+    assignment.worker.user.is_review_account === isReviewAccount
+    && assignment.order.company.user.is_review_account === isReviewAccount
+  ) return;
+  // Keep hidden-cohort identifiers indistinguishable from unknown IDs.
+  throw Errors.notFound('Təyinat tapılmadı.', 'ASSIGNMENT_NOT_FOUND');
 }
 
 function assertKioskEligibleOrder(order: KioskOrderRecord, now: Date = new Date()): void {
@@ -1087,17 +1222,32 @@ function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
-async function findVisibleAttendance(id: string, userId: string, role: Role): Promise<AttendanceRecord | null> {
-  if (role === 'super_admin' || role === 'admin') return AttendanceRepository.findAttendanceById(id);
+async function findVisibleAttendance(
+  id: string,
+  userId: string,
+  role: Role,
+  isReviewAccount = false,
+): Promise<AttendanceRecord | null> {
+  if (role === 'super_admin' || role === 'admin') {
+    return AttendanceRepository.findAttendanceByIdForReviewScope(id, isReviewAccount);
+  }
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
-    return AttendanceRepository.findAttendanceByIdForCompany(id, company.id);
+    return AttendanceRepository.findAttendanceByIdForCompany(
+      id,
+      company.id,
+      company.user.is_review_account === true,
+    );
   }
 
   if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
-    return AttendanceRepository.findAttendanceByIdForWorker(id, worker.id);
+    return AttendanceRepository.findAttendanceByIdForWorker(
+      id,
+      worker.id,
+      worker.user.is_review_account === true,
+    );
   }
 
   return null;
@@ -1115,6 +1265,8 @@ async function getAssignmentForQr(
     : isKioskEligibleOrder(assignment.order, now);
   if (
     assignment.status !== 'accepted' ||
+    (assignment.worker.user.is_review_account === true)
+      !== (assignment.order.company.user.is_review_account === true) ||
     !activeWindow ||
     assignment.order.company.status !== 'approved' ||
     assignment.order.company.deleted_at !== null ||

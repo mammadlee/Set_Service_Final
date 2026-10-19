@@ -13,7 +13,13 @@ type AdminActor = {
 
 export async function listAdmins() {
   const admins = await prisma.admin.findMany({
-    where: { user: { role: 'admin', deleted_at: null } },
+    where: {
+      user: {
+        role: 'admin',
+        deleted_at: null,
+        is_review_account: false,
+      },
+    },
     include: { user: true },
     orderBy: { created_at: 'desc' },
   });
@@ -74,48 +80,104 @@ export async function createAdmin(input: CreateAdminInput, actor: AdminActor) {
 }
 
 export async function updateAdmin(id: string, actor: AdminActor, input: UpdateAdminInput) {
-  const existing = await prisma.admin.findUnique({
-    where: { id },
-    include: { user: true },
-  });
-  if (!existing || existing.user.role !== 'admin' || existing.user.deleted_at) {
-    throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
-  }
-
-  if (existing.user_id === actor.sub && input.is_active === false) {
-    throw Errors.badRequest('Öz admin hesabınızı deaktiv edə bilməzsiniz.', 'ADMIN_SELF_DEACTIVATE_DENIED');
-  }
-
   const email = input.email ? normalizeEmail(input.email) : undefined;
   const passwordHash = input.password ? await hashPassword(input.password) : undefined;
   const now = new Date();
   try {
     const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const admin = await tx.admin.update({
-        where: { id },
-        data: {
-          ...(input.permissions ? { permissions: normalizePermissions(input.permissions) } : {}),
+      // Lock both records only when they still belong to the production
+      // cohort. Provisioner adoption/marking therefore cannot race a normal
+      // admin update between the authorization check and the write.
+      const locked = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT a.id
+        FROM "admins" a
+        INNER JOIN "users" u ON u.id = a.user_id
+        WHERE a.id = ${id}
+          AND u.role = 'admin'
+          AND u.deleted_at IS NULL
+          AND u.is_review_account = FALSE
+        FOR UPDATE OF a, u
+      `;
+      if (locked.length !== 1) {
+        throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
+      }
+
+      const existing = await tx.admin.findFirst({
+        where: {
+          id,
           user: {
-            update: {
-              ...(input.name ? { name: input.name.trim() } : {}),
-              ...(email ? { email } : {}),
-              ...(email ? { phone: internalAdminPhone(email) } : {}),
-              ...(passwordHash ? { password_hash: passwordHash, password_set_at: now } : {}),
-              ...(input.is_active !== undefined ? { is_active: input.is_active } : {}),
-              ...((passwordHash || input.is_active !== undefined)
-                ? { session_version: { increment: 1 } }
-                : {}),
-            },
+            role: 'admin',
+            deleted_at: null,
+            is_review_account: false,
           },
         },
         include: { user: true },
       });
+      if (!existing) throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
+      if (existing.user_id === actor.sub && input.is_active === false) {
+        throw Errors.badRequest('Öz admin hesabınızı deaktiv edə bilməzsiniz.', 'ADMIN_SELF_DEACTIVATE_DENIED');
+      }
+
+      if (input.permissions !== undefined) {
+        const adminUpdate = await tx.admin.updateMany({
+          where: {
+            id,
+            user: {
+              role: 'admin',
+              deleted_at: null,
+              is_review_account: false,
+            },
+          },
+          data: { permissions: normalizePermissions(input.permissions) },
+        });
+        if (adminUpdate.count !== 1) {
+          throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
+        }
+      }
+
+      const userData: Prisma.UserUpdateManyMutationInput = {
+        ...(input.name ? { name: input.name.trim() } : {}),
+        ...(email ? { email } : {}),
+        ...(email ? { phone: internalAdminPhone(email) } : {}),
+        ...(passwordHash ? { password_hash: passwordHash, password_set_at: now } : {}),
+        ...(input.is_active !== undefined ? { is_active: input.is_active } : {}),
+        ...((passwordHash || input.is_active !== undefined)
+          ? { session_version: { increment: 1 } }
+          : {}),
+      };
+      if (Object.keys(userData).length > 0) {
+        const userUpdate = await tx.user.updateMany({
+          where: {
+            id: existing.user_id,
+            role: 'admin',
+            deleted_at: null,
+            is_review_account: false,
+          },
+          data: userData,
+        });
+        if (userUpdate.count !== 1) {
+          throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
+        }
+      }
 
       if (passwordHash) {
         await revokeAdminSessions(tx, existing.user_id, now, 'password_change');
       } else if (input.is_active !== undefined) {
         await revokeAdminSessions(tx, existing.user_id, now, 'account_change');
       }
+
+      const admin = await tx.admin.findFirst({
+        where: {
+          id,
+          user: {
+            role: 'admin',
+            deleted_at: null,
+            is_review_account: false,
+          },
+        },
+        include: { user: true },
+      });
+      if (!admin) throw Errors.notFound('Admin tapılmadı.', 'ADMIN_NOT_FOUND');
 
       const changedFields = [
         ...(input.name !== undefined ? ['name'] : []),

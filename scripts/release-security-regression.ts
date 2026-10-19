@@ -158,7 +158,7 @@ function testOutboxHealthContract(): void {
   );
   assert.equal(
     isOutboxDeliveryStateHealthy({ lastBatchDeliveryFailures: 0, deadEvents: 1 }),
-    false,
+    true,
   );
 
   const metrics = renderOutboxMetrics(now);

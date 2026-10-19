@@ -280,6 +280,37 @@ update CI policy, and run all container/security tests.
 Docker Engine and Docker Compose are already installed; Node.js/npm do not need
 to be installed on the VPS.
 
+### October release migration preflight
+
+When production is still at the Build 14 baseline, migration deployment also
+includes `20261014120000_assignment_attendance_activity` before the two reviewer
+account migrations. Treat the three migrations as one release gate, while
+assessing their lock profiles separately:
+
+- `20261014120000_assignment_attendance_activity` takes an `ACCESS EXCLUSIVE`
+  table lock for the `assignments` DDL, scans and updates existing assignment
+  and attendance data, and creates three ordinary indexes. The backfill can
+  generate substantial WAL and row locks; ordinary `CREATE INDEX` also blocks
+  writes to `assignments` while each index is built. Measure it on a current,
+  production-sized restored clone before approving the change window.
+- `20261017120000_store_review_account_scope` is additive, but its `users`
+  column DDL still needs a brief `ACCESS EXCLUSIVE` lock. The `AuditAction`
+  enum addition is forward-only and must remain after an application rollback.
+- `20261017121000_store_review_account_index` contains one top-level
+  `CREATE INDEX CONCURRENTLY`. It avoids blocking normal user writes for the
+  whole index scan, but it still consumes I/O/WAL and can leave an invalid
+  index if interrupted. Confirm `indisvalid` and `indisready` after migration.
+
+Before running `prisma migrate deploy`, capture the exact migration state,
+check for waiting locks and long transactions, record a tested backup/PITR
+restore point, and set an operator-approved lock-wait policy for the change
+window. Do not edit an already-applied migration or mark a failed migration as
+successful merely to continue deployment. Application rollback may leave these
+additive columns, enum value, and valid indexes in place. If reviewer accounts
+have already been provisioned, do not roll back to code that lacks reviewer
+isolation until those accounts are safely deactivated through the reviewed
+cleanup procedure.
+
 ```bash
 cd /opt/set-service
 chmod +x scripts/deploy-production.sh
@@ -524,11 +555,24 @@ flutter build appbundle --release \
 Mobile signing, store credentials, Firebase files, and release certificates stay
 outside this deployment task and outside Git.
 
-The October 14 worker phone-change contract requires `current_password` when the
-OTP request is created. Prepare and validate the updated Flutter build before the
-backend rollout. Older builds remain usable for existing login/profile flows, but
-their phone-change request will receive a validation error until the app is updated.
-Plan the minimum-supported-version/support message accordingly.
+Worker phone change keeps two request contracts during the Build 14 support
+window. Build 14 sends `{ phone }` to the deprecated
+`POST /v1/auth/worker/phone-change/request` route. That route remains protected
+by the normal auth limiter plus an authenticated actor/target limiter and writes
+a redacted audit event. Build 15 sends `{ phone, current_password }` to
+`POST /v1/auth/worker/phone-change/v2/request` and receives the stronger password
+step-up check. Both versions use the shared atomic confirmation route.
+
+The Build 14 route preserves its deployed generic 409 conflict for a target
+already registered to another account, so the old UI does not open an OTP step
+when no SMS was dispatched. That response is a documented legacy availability
+signal, bounded by worker authentication, the global limiter, an additional
+actor/target limiter, and redacted audit. Build 15's password-protected v2 route
+returns the same acknowledgement for available and already-registered targets.
+Keep the legacy route until Build 14 is outside the supported-version window,
+and remove it only through a separate compatibility release. Deploy the
+v2-capable backend before publishing Build 15, because Build 15 cannot start
+phone change against an older backend.
 
 ## 13. Remaining launch gates
 

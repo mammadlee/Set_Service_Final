@@ -19,6 +19,7 @@ import {
   ListAttendanceQuerySchema,
 } from './attendance.schema';
 import * as Service from './attendance.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 const legacyKioskPathsEnabled = process.env.NODE_ENV !== 'production';
@@ -133,7 +134,10 @@ router.get(
   requireApprovedAccount,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await Service.listVenueKioskCompanies(req.user!.role));
+      res.json(await Service.listVenueKioskCompanies(
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -147,7 +151,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListKioskEligibleOrdersQuerySchema.parse(req.query);
-      res.json(await Service.listKioskEligibleOrders(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listKioskEligibleOrders(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -161,7 +170,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListVenueKiosksQuerySchema.parse(req.query);
-      res.json(await Service.listVenueKiosks(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listVenueKiosks(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -175,7 +189,12 @@ router.post(
   validate(CreateVenueKioskSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createVenueKiosk(req.user!.sub, req.user!.role, req.body));
+      res.status(201).json(await Service.createVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -190,7 +209,13 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.activateVenueKiosk(req.user!.sub, req.user!.role, id, req.body));
+      res.json(await Service.activateVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -204,7 +229,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.deactivateVenueKiosk(req.user!.sub, req.user!.role, id));
+      res.json(await Service.deactivateVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -218,7 +248,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.disableVenueKiosk(req.user!.sub, req.user!.role, id));
+      res.json(await Service.disableVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -233,7 +268,12 @@ router.post(
   validate(CreateKioskSessionSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createKioskSession(req.user!.sub, req.user!.role, req.body));
+      res.status(201).json(await Service.createKioskSession(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -248,7 +288,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = KioskSessionIdParamsSchema.parse(req.params);
-      await Service.revokeKioskSession(req.user!.sub, req.user!.role, id);
+      await Service.revokeKioskSession(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      );
       res.status(204).send();
     } catch (e) {
       next(e);
@@ -264,7 +309,12 @@ router.post(
   validate(GenerateQrTokenSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await Service.generateQrToken(req.user!.sub, req.user!.role, req.body));
+      res.json(await Service.generateQrToken(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -313,7 +363,11 @@ router.get(
         sort_by: req.query.sort_by ?? 'updated_at',
       });
       res.setHeader('Cache-Control', 'no-store, private');
-      res.json(await Service.listAttendanceMonitor(req.user!.role, query));
+      res.json(await Service.listAttendanceMonitor(
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -328,7 +382,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListAttendanceQuerySchema.parse(req.query);
-      res.json(await Service.listAttendance(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listAttendance(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -343,7 +402,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = AttendanceIdParamsSchema.parse(req.params);
-      res.json(await Service.getAttendance(id, req.user!.sub, req.user!.role));
+      res.json(await Service.getAttendance(
+        id,
+        req.user!.sub,
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }

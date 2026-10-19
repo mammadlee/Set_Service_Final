@@ -18,6 +18,22 @@ export async function createReport(
   reporterRole: ReporterRole,
   input: CreateReportInput,
 ) {
+  const reporter = await prisma.user.findFirst({
+    where: {
+      id: reporterUserId,
+      role: reporterRole,
+      is_active: true,
+      deleted_at: null,
+    },
+    select: { is_review_account: true },
+  });
+  if (!reporter) throw Errors.forbidden('Hesab aktiv deyil.', 'ACCOUNT_INACTIVE');
+  if (reporter.is_review_account) {
+    throw Errors.forbidden(
+      'Shared store review accounts cannot create moderation reports.',
+      'STORE_REVIEW_MUTATION_FORBIDDEN',
+    );
+  }
   await assertTargetVisible(reporterUserId, reporterRole, input);
 
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -36,6 +52,7 @@ export async function createReport(
     const admins = await tx.user.findMany({
       where: {
         role: { in: ['admin', 'super_admin'] },
+        is_review_account: false,
         is_active: true,
         deleted_at: null,
       },
@@ -77,10 +94,26 @@ export async function createReport(
   });
 }
 
-export async function listModerationReports(input: ListReportsInput) {
-  const where: Prisma.ModerationReportWhereInput = input.status
-    ? { status: input.status }
-    : {};
+function moderationScopeWhere(isReviewAccount: boolean): Prisma.ModerationReportWhereInput {
+  if (isReviewAccount) {
+    return { reporter: { is_review_account: true } };
+  }
+  return {
+    OR: [
+      { reporter_user_id: null },
+      { reporter: { is_review_account: false } },
+    ],
+  };
+}
+
+export async function listModerationReports(
+  input: ListReportsInput,
+  isReviewAccount = false,
+) {
+  const where: Prisma.ModerationReportWhereInput = {
+    ...moderationScopeWhere(isReviewAccount),
+    ...(input.status ? { status: input.status } : {}),
+  };
   const [total, reports] = await prisma.$transaction([
     prisma.moderationReport.count({ where }),
     prisma.moderationReport.findMany({
@@ -102,9 +135,9 @@ export async function listModerationReports(input: ListReportsInput) {
   };
 }
 
-export async function getModerationReport(id: string) {
-  const report = await prisma.moderationReport.findUnique({
-    where: { id },
+export async function getModerationReport(id: string, isReviewAccount = false) {
+  const report = await prisma.moderationReport.findFirst({
+    where: { id, ...moderationScopeWhere(isReviewAccount) },
     include: {
       reporter: { select: { id: true, name: true, role: true } },
     },
@@ -114,7 +147,7 @@ export async function getModerationReport(id: string) {
   return {
     ...reportResponse(report),
     reporter: report.reporter,
-    target: await resolveTarget(report.target_type, report.target_id),
+    target: await resolveTarget(report.target_type, report.target_id, isReviewAccount),
   };
 }
 
@@ -122,6 +155,7 @@ export async function updateModerationReport(
   id: string,
   actor: { sub: string; role: AdminRole },
   input: UpdateReportInput,
+  isReviewAccount = false,
 ) {
   const fromStatuses = input.status === 'reviewing'
     ? ['open'] as const
@@ -130,7 +164,11 @@ export async function updateModerationReport(
 
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const changed = await tx.moderationReport.updateMany({
-      where: { id, status: { in: [...fromStatuses] } },
+      where: {
+        id,
+        status: { in: [...fromStatuses] },
+        ...moderationScopeWhere(isReviewAccount),
+      },
       data: {
         status: input.status,
         reviewed_by_id: actor.sub,
@@ -141,8 +179,8 @@ export async function updateModerationReport(
       },
     });
     if (changed.count !== 1) {
-      const existing = await tx.moderationReport.findUnique({
-        where: { id },
+      const existing = await tx.moderationReport.findFirst({
+        where: { id, ...moderationScopeWhere(isReviewAccount) },
         select: { status: true },
       });
       if (!existing) throw Errors.notFound('Şikayət tapılmadı.', 'MODERATION_REPORT_NOT_FOUND');
@@ -163,7 +201,7 @@ export async function updateModerationReport(
     });
   });
 
-  return getModerationReport(id);
+  return getModerationReport(id, isReviewAccount);
 }
 
 export async function assertTargetVisible(
@@ -177,9 +215,14 @@ export async function assertTargetVisible(
         where: {
           status: { in: [...VISIBLE_ASSIGNMENT_STATUSES] },
           deleted_at: null,
-          worker: { user_id: reporterUserId, deleted_at: null },
+          worker: {
+            user_id: reporterUserId,
+            deleted_at: null,
+            user: { is_review_account: false },
+          },
           order: {
             deleted_at: null,
+            company: { user: { is_review_account: false } },
             ...(input.target_type === 'order'
               ? { id: input.target_id }
               : { company_id: input.target_id }),
@@ -195,7 +238,13 @@ export async function assertTargetVisible(
         where: {
           id: input.target_id,
           deleted_at: null,
-          worker: { user_id: reporterUserId, deleted_at: null },
+          worker: {
+            user_id: reporterUserId,
+            deleted_at: null,
+            user: { is_review_account: false },
+          },
+          order: { company: { user: { is_review_account: false } } },
+          rater: { is_review_account: false },
         },
         select: { id: true },
       });
@@ -209,10 +258,15 @@ export async function assertTargetVisible(
         worker_id: input.target_id,
         status: { in: [...VISIBLE_ASSIGNMENT_STATUSES] },
         deleted_at: null,
-        worker: { deleted_at: null },
+        worker: { deleted_at: null, user: { is_review_account: false } },
         order: {
           deleted_at: null,
-          company: { user_id: reporterUserId, status: 'approved', deleted_at: null },
+          company: {
+            user_id: reporterUserId,
+            status: 'approved',
+            deleted_at: null,
+            user: { is_review_account: false },
+          },
         },
       },
       select: { id: true },
@@ -256,30 +310,35 @@ function reportResponse(report: {
   };
 }
 
-async function resolveTarget(type: string, id: string) {
+async function resolveTarget(type: string, id: string, isReviewAccount: boolean) {
   if (type === 'order') {
-    const order = await prisma.order.findUnique({
-      where: { id },
+    const order = await prisma.order.findFirst({
+      where: { id, company: { user: { is_review_account: isReviewAccount } } },
       select: { title: true },
     });
     return { id, type, label: order?.title ?? 'Silinmiş sifariş' };
   }
   if (type === 'company_profile') {
-    const company = await prisma.company.findUnique({
-      where: { id },
+    const company = await prisma.company.findFirst({
+      where: { id, user: { is_review_account: isReviewAccount } },
       select: { name: true },
     });
     return { id, type, label: company?.name ?? 'Silinmiş müəssisə' };
   }
   if (type === 'worker_profile') {
-    const worker = await prisma.worker.findUnique({
-      where: { id },
+    const worker = await prisma.worker.findFirst({
+      where: { id, user: { is_review_account: isReviewAccount } },
       select: { user: { select: { name: true } } },
     });
     return { id, type, label: worker?.user.name ?? 'Silinmiş işçi' };
   }
-  const rating = await prisma.rating.findUnique({
-    where: { id },
+  const rating = await prisma.rating.findFirst({
+    where: {
+      id,
+      worker: { user: { is_review_account: isReviewAccount } },
+      order: { company: { user: { is_review_account: isReviewAccount } } },
+      rater: { is_review_account: isReviewAccount },
+    },
     select: { score: true, comment: true },
   });
   return {

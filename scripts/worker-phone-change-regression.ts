@@ -12,6 +12,7 @@ const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/pri
 const {
   WorkerPhoneChangeConfirmSchema,
   WorkerPhoneChangeRequestSchema,
+  WorkerPhoneChangeV2RequestSchema,
 } = require('../src/modules/auth/auth.schema') as typeof import('../src/modules/auth/auth.schema');
 const AuthService = require('../src/modules/auth/auth.service') as typeof import('../src/modules/auth/auth.service');
 const { Prisma } = require('@prisma/client') as typeof import('@prisma/client');
@@ -47,6 +48,7 @@ const userId = '10000000-0000-4000-8000-000000000001';
 const oldPhone = '+994501112233';
 const newPhone = '+994501112244';
 const throttledPhone = '+994501112255';
+const legacyThrottledPhone = '+994501112266';
 const otpCode = '123456';
 const otpId = '20000000-0000-4000-8000-000000000001';
 const currentPassword = 'CurrentWorkerPass123!';
@@ -73,7 +75,56 @@ const otpRecord = {
   max_attempts: 5,
 };
 
-async function testRequestRequiresPasswordBeforeAvailability(): Promise<void> {
+async function testBuild14LegacyRequestPreservesConflictAndAudit(): Promise<void> {
+  let auditWrite: any;
+  let availabilityReads = 0;
+
+  await assert.rejects(
+    () => withMethods(
+      [
+        {
+          target: prisma.user as unknown as Record<string, unknown>,
+          method: 'findFirst',
+          replacement: async () => ({
+            ...userRecord(),
+            password_hash: 'legacy-route-must-not-read-password',
+            is_review_account: false,
+            worker: { id: 'worker-1', deleted_at: null },
+          }),
+        },
+        {
+          target: prisma.auditLog as unknown as Record<string, unknown>,
+          method: 'create',
+          replacement: async (query: any) => {
+            auditWrite = query;
+            return { id: 'legacy-audit-1' };
+          },
+        },
+        {
+          target: prisma.user as unknown as Record<string, unknown>,
+          method: 'findUnique',
+          replacement: async () => {
+            availabilityReads += 1;
+            return { id: 'another-user' };
+          },
+        },
+      ],
+      () => AuthService.requestWorkerPhoneChangeLegacy(userId, { phone: newPhone }),
+    ),
+    (error: any) => error?.statusCode === 409 && error?.code === 'PHONE_ALREADY_REGISTERED',
+  );
+  assert.equal(availabilityReads, 1);
+  assert.equal(auditWrite.data.actor_id, userId);
+  assert.equal(auditWrite.data.entity_id, userId);
+  assert.deepEqual(auditWrite.data.metadata, {
+    event: 'worker_phone_change_requested',
+    contract: 'legacy_v1',
+    password_step_up: false,
+  });
+  assert.doesNotMatch(JSON.stringify(auditWrite), new RegExp(newPhone.replace('+', '\\+')));
+}
+
+async function testBuild15RequestRequiresPasswordBeforeAvailability(): Promise<void> {
   const passwordHash = await hashPassword(currentPassword);
   let availabilityRead = false;
 
@@ -173,6 +224,42 @@ async function testOtpCooldownDoesNotRevealAvailability(): Promise<void> {
     purpose: 'worker_phone_change',
     retry_after_seconds: 60,
   });
+}
+
+async function testBuild14LegacyRequestPreservesOtpCooldownError(): Promise<void> {
+  await setOtpCooldown(legacyThrottledPhone, 'worker_phone_change', 60_000);
+
+  await assert.rejects(
+    () => withMethods(
+      [
+        {
+          target: prisma.user as unknown as Record<string, unknown>,
+          method: 'findFirst',
+          replacement: async () => ({
+            ...userRecord(),
+            password_hash: 'legacy-route-must-not-read-password',
+            is_review_account: false,
+            worker: { id: 'worker-1', deleted_at: null },
+          }),
+        },
+        {
+          target: prisma.auditLog as unknown as Record<string, unknown>,
+          method: 'create',
+          replacement: async () => ({ id: 'legacy-cooldown-audit' }),
+        },
+        {
+          target: prisma.user as unknown as Record<string, unknown>,
+          method: 'findUnique',
+          replacement: async () => null,
+        },
+      ],
+      () => AuthService.requestWorkerPhoneChangeLegacy(
+        userId,
+        { phone: legacyThrottledPhone },
+      ),
+    ),
+    (error: any) => error?.statusCode === 429 && error?.code === 'OTP_COOLDOWN',
+  );
 }
 
 async function testAtomicConfirmedUpdate(): Promise<void> {
@@ -423,8 +510,17 @@ async function testUniqueConstraintRaceReturnsConflict(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  assert.equal(WorkerPhoneChangeRequestSchema.safeParse({ phone: newPhone }).success, false);
+  // Build 14 sends the legacy phone-only payload. Strict parsing prevents a
+  // caller from smuggling the v2 password field into the deprecated contract.
+  assert.equal(WorkerPhoneChangeRequestSchema.safeParse({ phone: newPhone }).success, true);
   assert.equal(WorkerPhoneChangeRequestSchema.safeParse({
+    phone: newPhone,
+    current_password: currentPassword,
+  }).success, false);
+
+  // Build 15 uses the versioned password-step-up payload.
+  assert.equal(WorkerPhoneChangeV2RequestSchema.safeParse({ phone: newPhone }).success, false);
+  assert.equal(WorkerPhoneChangeV2RequestSchema.safeParse({
     phone: '+994 (50) 111-22-44',
     current_password: currentPassword,
   }).success, true);
@@ -432,11 +528,23 @@ async function main(): Promise<void> {
 
   const appSource = readFileSync(join(__dirname, '../src/app.ts'), 'utf8');
   assert.match(appSource, /app\.use\('\/v1\/auth\/worker\/phone-change\/request', authLimiter\)/);
+  assert.match(appSource, /app\.use\('\/v1\/auth\/worker\/phone-change\/v2\/request', authLimiter\)/);
   assert.match(appSource, /app\.use\('\/v1\/auth\/worker\/phone-change\/confirm', authLimiter\)/);
+  const routerSource = readFileSync(join(__dirname, '../src/modules/auth/auth.router.ts'), 'utf8');
+  assert.match(routerSource, /scope:\s*'legacy_worker_phone_change'/);
+  assert.match(routerSource, /dimensions:\s*\['actor', 'target'\]/);
+  assert.match(
+    routerSource,
+    /router\.post\('\/worker\/phone-change\/request', requireAuth, legacyWorkerPhoneChangeLimiter/,
+  );
 
-  await testRequestRequiresPasswordBeforeAvailability();
+  await testBuild14LegacyRequestPreservesConflictAndAudit();
+  await testBuild14LegacyRequestPreservesOtpCooldownError();
+  console.log('worker-phone-change Build 14 legacy regression: OK');
+  await testBuild15RequestRequiresPasswordBeforeAvailability();
   await testDuplicateRequestIsNonEnumerating();
   await testOtpCooldownDoesNotRevealAvailability();
+  console.log('worker-phone-change Build 15 password-step-up regression: OK');
   await testAtomicConfirmedUpdate();
   await testDuplicateRejectedTransactionallyBeforeOtpConsumption();
   await testLostResponseRetryIsIdempotent();

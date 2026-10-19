@@ -18,6 +18,9 @@ const dockerfile = read('Dockerfile');
 const dockerignore = read('.dockerignore');
 const deploy = read('scripts/deploy-production.sh');
 const deploymentGuide = read('PRODUCTION_DEPLOYMENT.md');
+const readonlyAudit = read('scripts/production-readonly-audit.sh');
+const neonRehearsal = read('docs/neon-reviewer-release-rehearsal.md');
+const immutableRelease = read('docs/immutable-reviewer-release.md');
 
 assert.deepEqual(
   Object.keys(compose.services).sort(),
@@ -113,6 +116,36 @@ assert.match(deploy, /pull redis caddy clamav/);
 assert.match(deploy, /build --pull api malware-scanner outbox-worker migrate/);
 assert.match(deploy, /redis clamav malware-scanner outbox-worker api caddy/);
 assert.doesNotMatch(deploy, /docker compose down|down -v|migrate reset|db push|db:seed|git pull/i);
+
+assert.match(readonlyAudit, /^#!\/usr\/bin\/env bash/);
+assert.match(readonlyAudit, /SET TRANSACTION READ ONLY/);
+assert.match(readonlyAudit, /statement_timeout = '12s'/);
+assert.match(readonlyAudit, /lock_timeout = '3s'/);
+assert.match(readonlyAudit, /backup_pitr_status=NOT_VERIFIED/);
+assert.match(readonlyAudit, /database_error_details=redacted/);
+assert.doesNotMatch(readonlyAudit, /\.Config\.Env|docker\s+(?:compose\s+)?logs|curl\s+[^\n]*\s-v(?:\s|$)/);
+assert.doesNotMatch(readonlyAudit, /pg_stat_activity[\s\S]{0,300}\bquery\b/i);
+assert.doesNotMatch(readonlyAudit, /SELECT[\s\S]{0,120}\b(?:phone|email|password_hash|token|document)\b/i);
+
+for (const phrase of [
+  'protected point-in-time child branch',
+  'Production can never be a restore target',
+  'zero external provider calls',
+  '20261017121000_store_review_account_index',
+  'Production remains NO-GO',
+]) {
+  assert.match(neonRehearsal, new RegExp(phrase, 'i'));
+}
+
+for (const phrase of [
+  'repository@sha256',
+  'API and outbox from the same release SHA',
+  'dead-letter alerts',
+  'never roll back to code lacking reviewer',
+  'prisma migrate reset',
+]) {
+  assert.match(immutableRelease, new RegExp(phrase, 'i'));
+}
 
 for (const phrase of [
   'Cloudflare R2',

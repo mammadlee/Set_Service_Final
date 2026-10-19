@@ -208,20 +208,39 @@ function assertAdminRecoveryContract() {
 }
 
 function assertWorkerPhoneChangeContract() {
-  const requestSchema = document.components?.schemas?.WorkerPhoneChangeRequest;
+  const legacySchema = document.components?.schemas?.WorkerPhoneChangeRequest;
   assert.deepEqual(
-    [...(requestSchema?.required ?? [])].sort(),
+    [...(legacySchema?.required ?? [])].sort(),
+    ['phone'],
+  );
+  assert.equal(legacySchema?.additionalProperties, false);
+  assert.equal(legacySchema?.properties?.current_password, undefined);
+
+  const legacyRequest = document.paths?.['/auth/worker/phone-change/request']?.post;
+  assert.equal(legacyRequest?.deprecated, true);
+  assert.match(legacyRequest?.description ?? '', /Build 14 compatibility/i);
+  assert.match(legacyRequest?.description ?? '', /additional authenticated-actor\/target limiter/i);
+  assert.match(legacyRequest?.description ?? '', /redacted\s+audit/i);
+  assert.match(
+    legacyRequest?.responses?.['409']?.description ?? '',
+    /Target phone cannot be used/i,
+  );
+  assert.ok(legacyRequest?.responses?.['429']);
+
+  const v2Schema = document.components?.schemas?.WorkerPhoneChangeV2Request;
+  assert.deepEqual(
+    [...(v2Schema?.required ?? [])].sort(),
     ['current_password', 'phone'],
   );
-  assert.equal(requestSchema?.additionalProperties, false);
-  assert.equal(requestSchema?.properties?.current_password?.writeOnly, true);
-  assert.equal(requestSchema?.properties?.current_password?.maxLength, 128);
+  assert.equal(v2Schema?.additionalProperties, false);
+  assert.equal(v2Schema?.properties?.current_password?.writeOnly, true);
+  assert.equal(v2Schema?.properties?.current_password?.maxLength, 128);
 
-  const request = document.paths?.['/auth/worker/phone-change/request']?.post;
-  assert.match(request?.description ?? '', /current password/i);
-  assert.match(request?.description ?? '', /registered-phone enumeration/i);
-  assert.equal(request?.responses?.['409'], undefined);
-  assert.ok(request?.responses?.['429']);
+  const v2Request = document.paths?.['/auth/worker/phone-change/v2/request']?.post;
+  assert.match(v2Request?.description ?? '', /current password/i);
+  assert.match(v2Request?.description ?? '', /registered-phone enumeration/i);
+  assert.equal(v2Request?.responses?.['409'], undefined);
+  assert.ok(v2Request?.responses?.['429']);
 
   const confirm = document.paths?.['/auth/worker/phone-change/confirm']?.post;
   assert.ok(confirm?.responses?.['409']);

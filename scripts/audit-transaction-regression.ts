@@ -120,15 +120,23 @@ async function testAdminUpdateAndDeactivateAuditShareTransaction(): Promise<void
   const auditQueries: any[] = [];
   const sessionRevocations: Array<{ source: string; query: any }> = [];
   let updateQuery: any;
+  let adminLookupCount = 0;
   let nextRecord = {
     ...existing,
     user: { ...existing.user, name: 'Renamed Admin' },
   };
   const tx = {
+    $queryRaw: async () => [{ id: existing.id }],
     admin: {
-      update: async (query: any) => {
+      findFirst: async () => {
+        adminLookupCount += 1;
+        return adminLookupCount % 2 === 1 ? existing : nextRecord;
+      },
+    },
+    user: {
+      updateMany: async (query: any) => {
         updateQuery = query;
-        return nextRecord;
+        return { count: 1 };
       },
     },
     refreshToken: {
@@ -152,18 +160,13 @@ async function testAdminUpdateAndDeactivateAuditShareTransaction(): Promise<void
   };
 
   await withMethod(
-    prisma.admin as unknown as Record<string, unknown>,
-    'findUnique',
-    async () => existing,
-    () => withMethod(
-      prisma as unknown as Record<string, unknown>,
-      '$transaction',
-      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-      () => AdminService.updateAdmin(existing.id, actor, { name: 'Renamed Admin' }),
-    ),
+    prisma as unknown as Record<string, unknown>,
+    '$transaction',
+    async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    () => AdminService.updateAdmin(existing.id, actor, { name: 'Renamed Admin' }),
   );
 
-  assert.equal(updateQuery.data.user.update.name, 'Renamed Admin');
+  assert.equal(updateQuery.data.name, 'Renamed Admin');
   assert.equal(auditQueries[0].data.metadata.event, 'admin_updated');
   assert.deepEqual(auditQueries[0].data.metadata.changed_fields, ['name']);
   assert.equal(sessionRevocations.length, 0);
@@ -173,15 +176,10 @@ async function testAdminUpdateAndDeactivateAuditShareTransaction(): Promise<void
     user: { ...existing.user, is_active: false },
   };
   await withMethod(
-    prisma.admin as unknown as Record<string, unknown>,
-    'findUnique',
-    async () => existing,
-    () => withMethod(
-      prisma as unknown as Record<string, unknown>,
-      '$transaction',
-      async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
-      () => AdminService.deactivateAdmin(existing.id, actor),
-    ),
+    prisma as unknown as Record<string, unknown>,
+    '$transaction',
+    async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx),
+    () => AdminService.deactivateAdmin(existing.id, actor),
   );
 
   assert.equal(auditQueries[1].data.metadata.event, 'admin_deactivated');
@@ -199,7 +197,10 @@ async function testAssignmentCancellationRejectsOpenAttendance(): Promise<void> 
     assignment: {
       findFirst: async () => ({
         id: 'assignment-1',
+        order_id: 'order-1',
         status: 'accepted',
+        worker: { user: { is_review_account: false } },
+        order: { company: { user: { is_review_account: false } } },
       }),
       updateMany: async () => {
         assignmentUpdates += 1;

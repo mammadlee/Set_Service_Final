@@ -32,24 +32,31 @@ export async function recordAccountDeletionRequest(input: PublicAccountDeletionI
     deletionIdentifierSecret(),
   );
 
-  const user = await prisma.user.findFirst({
+  const matchedUsers = await prisma.user.findMany({
     where: {
-      role: input.role as Role,
-      is_active: true,
-      deleted_at: null,
       ...(identifierKind === 'email'
         ? { OR: [{ email: normalizedIdentifier }, { pending_email: normalizedIdentifier }] }
         : { phone: normalizedIdentifier }),
     },
     select: {
       id: true,
+      role: true,
+      is_active: true,
+      is_review_account: true,
+      deleted_at: true,
       worker: { select: { deleted_at: true } },
       company: { select: { deleted_at: true } },
     },
   });
+  // Reviewer identifiers are suppressed independently of account/profile
+  // lifecycle state and of the role selected in the public form. This keeps a
+  // disabled or partially-deprovisioned synthetic identity from creating a
+  // production deletion workflow or notifying operators.
+  if (matchedUsers.some((candidate) => candidate.is_review_account)) return;
+  const user = matchedUsers.find((candidate) => candidate.role === input.role) ?? null;
   const activeProfile = input.role === 'worker'
-    ? Boolean(user?.worker && !user.worker.deleted_at)
-    : Boolean(user?.company && !user.company.deleted_at);
+    ? Boolean(user?.is_active && !user.deleted_at && user.worker && !user.worker.deleted_at)
+    : Boolean(user?.is_active && !user.deleted_at && user.company && !user.company.deleted_at);
   const accountUserId = activeProfile ? user!.id : null;
   const requestId = crypto.randomUUID();
   const note = redactContactDetails(input.note, rawIdentifier, normalizedIdentifier);
@@ -69,6 +76,7 @@ export async function recordAccountDeletionRequest(input: PublicAccountDeletionI
     const admins = await tx.user.findMany({
       where: {
         role: 'super_admin',
+        is_review_account: false,
         is_active: true,
         deleted_at: null,
       },

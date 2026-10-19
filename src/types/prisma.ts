@@ -62,4 +62,5 @@ export type AuditAction =
   | 'worker_foc_training_removed'
   | 'status_changed'
   | 'login_failed'
+  | 'login_succeeded'
   | 'otp_blocked';

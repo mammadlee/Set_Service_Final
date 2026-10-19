@@ -47,7 +47,7 @@ function attach(table: string, row: Row): Row {
 function reset(positionId: string | null = OTHER_POSITION, role = 'admin', permissions = ['manage_assignments']): void {
   rows = Object.fromEntries(tables.map((table) => [table, []]));
   locks = [];
-  const user = { id: ADMIN, role, is_active: true, deleted_at: null, session_version: 0,
+  const user = { id: ADMIN, role, is_active: true, deleted_at: null, session_version: 0, is_review_account: false,
     admin: { permissions }, worker: { status: 'approved', deleted_at: null },
     company: { id: id(10), status: 'approved', deleted_at: null } };
   rows.user.push(user);
@@ -55,14 +55,14 @@ function reset(positionId: string | null = OTHER_POSITION, role = 'admin', permi
     deleted_at: null, version: 1, required_count: 1, location: 'Bakı',
     shift_start: new Date(Date.now() + 60_000), shift_end: new Date(Date.now() + 3_600_000),
     company_id: id(10), company: { id: id(10), name: 'Müəssisə', status: 'approved', deleted_at: null,
-      user: { id: id(11), name: 'Əlaqədar şəxs', is_active: true, deleted_at: null } },
+      user: { id: id(11), name: 'Əlaqədar şəxs', is_active: true, deleted_at: null, is_review_account: false } },
     category_items: [{ id: CATEGORY, category: 'Ofisiant', position_id: REQUIRED_POSITION,
       department_id: null, subdepartment_id: null, required_count: 1 }],
   });
   rows.worker.push({ id: WORKER, user_id: id(12), position: 'Barmen', status: 'approved', availability: true,
     deleted_at: null, worker_class: null, documents: [], skills: [], rating_avg: 0, rating_count: 0,
     created_at: new Date(), updated_at: new Date(),
-    user: { id: id(12), name: 'Təsdiqlənmiş işçi', phone: '+994700000999', is_active: true, deleted_at: null },
+    user: { id: id(12), name: 'Təsdiqlənmiş işçi', phone: '+994700000999', is_active: true, deleted_at: null, is_review_account: false },
     positions: positionId ? [{ position_id: positionId, position: { id: positionId, name_az: 'Vəzifə' } }] : [],
   });
 }

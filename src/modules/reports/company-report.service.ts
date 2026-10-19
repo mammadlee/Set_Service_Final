@@ -86,11 +86,12 @@ type CompanyReportOrder = Prisma.OrderGetPayload<{ select: typeof companyReportO
 export async function getCompanyDetailedReport(
   companyId: string,
   filters: CompanyReportQueryInput,
+  isReviewAccount = false,
 ) {
-  const company = await findCompany(companyId);
-  const orderWhere = buildOrderWhere(companyId, filters);
-  const assignmentWhere = buildAssignmentWhere(companyId, filters);
-  const attendanceWhere = buildAttendanceWhere(companyId, filters);
+  const company = await findCompany(companyId, isReviewAccount);
+  const orderWhere = buildOrderWhere(companyId, filters, isReviewAccount);
+  const assignmentWhere = buildAssignmentWhere(companyId, filters, isReviewAccount);
+  const attendanceWhere = buildAttendanceWhere(companyId, filters, isReviewAccount);
 
   const [
     totalOrders,
@@ -107,7 +108,7 @@ export async function getCompanyDetailedReport(
     prisma.order.count({ where: orderWhere }),
     prisma.order.findMany({
       where: orderWhere,
-      select: companyReportOrderSelectFor(filters),
+      select: companyReportOrderSelectFor(filters, isReviewAccount),
       orderBy: [{ created_at: filters.sort }, { id: filters.sort }],
       skip: (filters.page - 1) * filters.limit,
       take: filters.limit,
@@ -141,11 +142,11 @@ export async function getCompanyDetailedReport(
     prisma.attendanceLog.count({
       where: { ...attendanceWhere, checkin_time: { not: null }, checkout_time: null },
     }),
-    aggregateRecordedMinutes(companyId, filters),
+    aggregateRecordedMinutes(companyId, filters, isReviewAccount),
   ]);
 
   const filteredOrders = orders.map((order) => filterOrderAssignments(order, filters));
-  const assignmentActors = await loadAssignmentActors(filteredOrders);
+  const assignmentActors = await loadAssignmentActors(filteredOrders, isReviewAccount);
   const countsByStatus = Object.fromEntries(statusRows.map((row) => [row.status, row._count._all]));
   const activeOrders = ACTIVE_ORDER_STATUSES.reduce(
     (sum, status) => sum + (countsByStatus[status] ?? 0),
@@ -186,14 +187,15 @@ export async function getCompanyDetailedReport(
 export async function exportCompanyDetailedReportCsv(
   companyId: string,
   filters: CompanyReportExportQueryInput,
+  isReviewAccount = false,
 ) {
-  const company = await findCompany(companyId);
+  const company = await findCompany(companyId, isReviewAccount);
   const queryFilters: CompanyReportQueryInput = {
     ...filters,
     page: 1,
     limit: 100,
   };
-  const orderWhere = buildOrderWhere(companyId, queryFilters);
+  const orderWhere = buildOrderWhere(companyId, queryFilters, isReviewAccount);
   const header = [
     'company_name',
     'order_id',
@@ -221,7 +223,7 @@ export async function exportCompanyDetailedReportCsv(
     const take = Math.min(EXPORT_BATCH_SIZE, remaining) + (remaining <= EXPORT_BATCH_SIZE ? 1 : 0);
     const fetched = await prisma.order.findMany({
       where: orderWhere,
-      select: companyReportOrderSelectFor(queryFilters),
+      select: companyReportOrderSelectFor(queryFilters, isReviewAccount),
       orderBy: [{ created_at: filters.sort }, { id: filters.sort }],
       skip: exportedOrderCount,
       take,
@@ -231,7 +233,7 @@ export async function exportCompanyDetailedReportCsv(
       .map((order) => filterOrderAssignments(order, queryFilters));
     if (fetched.length > remaining) truncated = true;
     if (orders.length === 0) break;
-    const assignmentActors = await loadAssignmentActors(orders);
+      const assignmentActors = await loadAssignmentActors(orders, isReviewAccount);
 
     for (const order of orders) {
       if (order.assignments.length === 0) {
@@ -298,9 +300,13 @@ export async function exportCompanyDetailedReportCsv(
   };
 }
 
-async function findCompany(companyId: string) {
+async function findCompany(companyId: string, isReviewAccount: boolean) {
   const company = await prisma.company.findFirst({
-    where: { id: companyId, deleted_at: null },
+    where: {
+      id: companyId,
+      deleted_at: null,
+      user: { is_review_account: isReviewAccount },
+    },
     select: {
       id: true,
       name: true,
@@ -335,8 +341,9 @@ async function findCompany(companyId: string) {
 function buildOrderWhere(
   companyId: string,
   filters: Pick<CompanyReportQueryInput, 'start_date' | 'end_date' | 'order_status' | 'worker_id' | 'position_id'>,
+  isReviewAccount: boolean,
 ): Prisma.OrderWhereInput {
-  const assignmentFilter = buildAssignmentRelationFilter(filters);
+  const assignmentFilter = buildAssignmentRelationFilter(filters, isReviewAccount);
   const relationFilter = filters.worker_id
     ? (assignmentFilter ? { assignments: { some: assignmentFilter } } : {})
     : filters.position_id
@@ -350,6 +357,7 @@ function buildOrderWhere(
   return {
     company_id: companyId,
     deleted_at: null,
+    company: { user: { is_review_account: isReviewAccount } },
     ...(filters.order_status ? { status: filters.order_status } : {}),
     ...(filters.start_date || filters.end_date
       ? {
@@ -363,10 +371,11 @@ function buildOrderWhere(
 
 function buildAssignmentRelationFilter(
   filters: Pick<CompanyReportQueryInput, 'worker_id' | 'position_id'>,
+  isReviewAccount: boolean,
 ): Prisma.AssignmentWhereInput | undefined {
-  if (!filters.worker_id && !filters.position_id) return undefined;
   return {
     deleted_at: null,
+    worker: { user: { is_review_account: isReviewAccount } },
     ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
     ...(filters.position_id
       ? {
@@ -381,12 +390,13 @@ function buildAssignmentRelationFilter(
 
 function companyReportOrderSelectFor(
   filters: Pick<CompanyReportQueryInput, 'worker_id' | 'position_id'>,
+  isReviewAccount = false,
 ) {
   return {
     ...companyReportOrderSelect,
     assignments: {
       ...companyReportOrderSelect.assignments,
-      where: buildAssignmentRelationFilter(filters) ?? { deleted_at: null },
+      where: buildAssignmentRelationFilter(filters, isReviewAccount),
     },
   } satisfies Prisma.OrderSelect;
 }
@@ -394,9 +404,11 @@ function companyReportOrderSelectFor(
 function buildAssignmentWhere(
   companyId: string,
   filters: Pick<CompanyReportQueryInput, 'start_date' | 'end_date' | 'order_status' | 'worker_id' | 'position_id'>,
+  isReviewAccount: boolean,
 ): Prisma.AssignmentWhereInput {
   return {
     deleted_at: null,
+    worker: { user: { is_review_account: isReviewAccount } },
     ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
     ...(filters.position_id
       ? {
@@ -406,23 +418,29 @@ function buildAssignmentWhere(
           ],
         }
       : {}),
-    order: buildOrderWhere(companyId, { ...filters, worker_id: undefined, position_id: undefined }),
+    order: buildOrderWhere(
+      companyId,
+      { ...filters, worker_id: undefined, position_id: undefined },
+      isReviewAccount,
+    ),
   };
 }
 
 function buildAttendanceWhere(
   companyId: string,
   filters: Pick<CompanyReportQueryInput, 'start_date' | 'end_date' | 'order_status' | 'worker_id' | 'position_id'>,
+  isReviewAccount: boolean,
 ): Prisma.AttendanceLogWhereInput {
   return {
     deleted_at: null,
-    assignment: buildAssignmentWhere(companyId, filters),
+    assignment: buildAssignmentWhere(companyId, filters, isReviewAccount),
   };
 }
 
 async function aggregateRecordedMinutes(
   companyId: string,
   filters: Pick<CompanyReportQueryInput, 'start_date' | 'end_date' | 'order_status' | 'worker_id' | 'position_id'>,
+  isReviewAccount: boolean,
 ): Promise<number> {
   const clauses: Prisma.Sql[] = [
     Prisma.sql`o.company_id = ${companyId}`,
@@ -431,6 +449,8 @@ async function aggregateRecordedMinutes(
     Prisma.sql`al.deleted_at IS NULL`,
     Prisma.sql`al.checkin_time IS NOT NULL`,
     Prisma.sql`al.checkout_time IS NOT NULL`,
+    Prisma.sql`cu.is_review_account = ${isReviewAccount}`,
+    Prisma.sql`wu.is_review_account = ${isReviewAccount}`,
   ];
   if (filters.start_date) clauses.push(Prisma.sql`o.shift_end >= ${filters.start_date}`);
   if (filters.end_date) clauses.push(Prisma.sql`o.shift_start <= ${filters.end_date}`);
@@ -448,13 +468,20 @@ async function aggregateRecordedMinutes(
     FROM attendance_logs al
     JOIN assignments a ON a.id = al.assignment_id
     JOIN orders o ON o.id = a.order_id
+    JOIN companies c ON c.id = o.company_id
+    JOIN users cu ON cu.id = c.user_id
+    JOIN workers w ON w.id = a.worker_id
+    JOIN users wu ON wu.id = w.user_id
     LEFT JOIN order_category_items oci ON oci.id = a.order_category_item_id
     WHERE ${Prisma.join(clauses, ' AND ')}
   `);
   return Math.max(0, Number(rows[0]?.total_minutes ?? 0));
 }
 
-async function loadAssignmentActors(orders: CompanyReportOrder[]) {
+async function loadAssignmentActors(
+  orders: CompanyReportOrder[],
+  isReviewAccount: boolean,
+) {
   const assignmentIds = orders.flatMap((order) => order.assignments.map((assignment) => assignment.id));
   if (assignmentIds.length === 0) return new Map<string, { id: string; name: string; role: string }>();
   const events = await prisma.auditLog.findMany({
@@ -462,6 +489,7 @@ async function loadAssignmentActors(orders: CompanyReportOrder[]) {
       action: 'assignment_created',
       entity_type: 'assignment',
       entity_id: { in: assignmentIds },
+      actor: { is_review_account: isReviewAccount },
     },
     orderBy: { created_at: 'asc' },
     select: {

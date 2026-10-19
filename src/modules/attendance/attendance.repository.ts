@@ -49,7 +49,7 @@ export const attendanceInclude = {
         select: {
           id: true,
           status: true,
-          user: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true, phone: true, is_review_account: true } },
         },
       },
       order: {
@@ -65,7 +65,7 @@ export const attendanceInclude = {
               id: true,
               name: true,
               status: true,
-              user: { select: { id: true, name: true, phone: true } },
+              user: { select: { id: true, name: true, phone: true, is_review_account: true } },
             },
           },
         },
@@ -86,7 +86,7 @@ export const kioskSessionInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
-      user: { select: { is_active: true, deleted_at: true } },
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
     },
   },
   order: {
@@ -126,7 +126,7 @@ export const venueKioskInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
-      user: { select: { is_active: true, deleted_at: true } },
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
     },
   },
   active_sessions: {
@@ -167,7 +167,12 @@ export type VenueKioskWithContext = Prisma.VenueKioskGetPayload<{
 export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true, user: { select: { is_active: true, deleted_at: true } } },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+    },
   });
 }
 
@@ -177,17 +182,36 @@ const kioskManageableCompanyWhere = {
   user: { is_active: true, deleted_at: null },
 } satisfies Prisma.CompanyWhereInput;
 
-export function listKioskManageableCompanies() {
+export function listKioskManageableCompanies(isReviewAccount = false) {
   return prisma.company.findMany({
-    where: kioskManageableCompanyWhere,
+    where: {
+      ...kioskManageableCompanyWhere,
+      user: {
+        is_active: true,
+        deleted_at: null,
+        is_review_account: isReviewAccount,
+      },
+    },
     select: { id: true, name: true, status: true },
     orderBy: [{ name: 'asc' }, { id: 'asc' }],
   });
 }
 
-export function findKioskManageableCompanyById(id: string) {
+export function findKioskManageableCompanyById(id: string, isReviewAccount?: boolean) {
   return prisma.company.findFirst({
-    where: { ...kioskManageableCompanyWhere, id },
+    where: {
+      ...kioskManageableCompanyWhere,
+      id,
+      ...(isReviewAccount === undefined
+        ? {}
+        : {
+            user: {
+              is_active: true,
+              deleted_at: null,
+              is_review_account: isReviewAccount,
+            },
+          }),
+    },
     select: { id: true },
   });
 }
@@ -195,7 +219,12 @@ export function findKioskManageableCompanyById(id: string) {
 export function findWorkerByUserId(userId: string) {
   return prisma.worker.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true, user: { select: { is_active: true, deleted_at: true } } },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+    },
   });
 }
 
@@ -203,7 +232,14 @@ export function findAcceptedAssignmentById(id: string) {
   return prisma.assignment.findFirst({
     where: { id, deleted_at: null },
     include: {
-      worker: { select: { id: true, user_id: true, status: true } },
+      worker: {
+        select: {
+          id: true,
+          user_id: true,
+          status: true,
+          user: { select: { is_review_account: true } },
+        },
+      },
       order: {
         select: {
           id: true,
@@ -220,7 +256,7 @@ export function findAcceptedAssignmentById(id: string) {
               status: true,
               user_id: true,
               deleted_at: true,
-              user: { select: { is_active: true, deleted_at: true } },
+              user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
             },
           },
         },
@@ -238,7 +274,14 @@ export function findAcceptedAssignmentForWorkerOrder(workerId: string, orderId: 
       deleted_at: null,
     },
     include: {
-      worker: { select: { id: true, user_id: true, status: true } },
+      worker: {
+        select: {
+          id: true,
+          user_id: true,
+          status: true,
+          user: { select: { is_review_account: true } },
+        },
+      },
       order: {
         select: {
           id: true,
@@ -255,7 +298,7 @@ export function findAcceptedAssignmentForWorkerOrder(workerId: string, orderId: 
               status: true,
               user_id: true,
               deleted_at: true,
-              user: { select: { is_active: true, deleted_at: true } },
+              user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
             },
           },
         },
@@ -279,9 +322,18 @@ export function findOrderForKiosk(orderId: string) {
   });
 }
 
-export function listKioskEligibleOrders(companyId?: string, now: Date = new Date()) {
+export function listKioskEligibleOrders(
+  companyId?: string,
+  now: Date = new Date(),
+  isReviewAccount?: boolean,
+) {
   return prisma.order.findMany({
-    where: kioskEligibleOrderWhere({ now, companyId }),
+    where: {
+      ...kioskEligibleOrderWhere({ now, companyId }),
+      ...(isReviewAccount === undefined
+        ? {}
+        : { AND: [{ company: { user: { is_review_account: isReviewAccount } } }] }),
+    },
     select: {
       id: true,
       title: true,
@@ -299,7 +351,13 @@ export function listKioskEligibleOrders(companyId?: string, now: Date = new Date
       _count: {
         select: {
           assignments: {
-            where: { status: 'accepted', deleted_at: null },
+            where: {
+              status: 'accepted',
+              deleted_at: null,
+              ...(isReviewAccount === undefined
+                ? {}
+                : { worker: { user: { is_review_account: isReviewAccount } } }),
+            },
           },
         },
       },
@@ -426,9 +484,15 @@ export function listVenueKiosks(where: Prisma.VenueKioskWhereInput) {
   });
 }
 
-export function findVenueKioskById(id: string) {
+export function findVenueKioskById(id: string, isReviewAccount?: boolean) {
   return prisma.venueKiosk.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { company: { user: { is_review_account: isReviewAccount } } }),
+    },
     include: venueKioskInclude,
   });
 }
@@ -715,9 +779,15 @@ export function findKioskSessionByTokenHash(tokenHash: string) {
   });
 }
 
-export function findKioskSessionById(id: string) {
+export function findKioskSessionById(id: string, isReviewAccount?: boolean) {
   return prisma.kioskSession.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { company: { user: { is_review_account: isReviewAccount } } }),
+    },
     include: kioskSessionInclude,
   });
 }
@@ -889,18 +959,59 @@ export function findAttendanceById(id: string) {
   });
 }
 
-export function findAttendanceByIdForCompany(id: string, companyId: string) {
+export function findReviewAttendanceById(id: string) {
   return prisma.attendanceLog.findFirst({
     where: {
       id,
       deleted_at: null,
-      assignment: { order: { company_id: companyId, deleted_at: null } },
+      assignment: {
+        worker: { user: { is_review_account: true } },
+        order: { company: { user: { is_review_account: true } } },
+      },
     },
     include: attendanceInclude,
   });
 }
 
-export function findAttendanceByIdForWorker(id: string, workerId: string) {
+export function findAttendanceByIdForReviewScope(id: string, isReviewAccount: boolean) {
+  return prisma.attendanceLog.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      assignment: {
+        worker: { user: { is_review_account: isReviewAccount } },
+        order: { company: { user: { is_review_account: isReviewAccount } } },
+      },
+    },
+    include: attendanceInclude,
+  });
+}
+
+export function findAttendanceByIdForCompany(
+  id: string,
+  companyId: string,
+  isReviewAccount?: boolean,
+) {
+  return prisma.attendanceLog.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      assignment: {
+        ...(isReviewAccount === undefined
+          ? {}
+          : { worker: { user: { is_review_account: isReviewAccount } } }),
+        order: { company_id: companyId, deleted_at: null },
+      },
+    },
+    include: attendanceInclude,
+  });
+}
+
+export function findAttendanceByIdForWorker(
+  id: string,
+  workerId: string,
+  isReviewAccount?: boolean,
+) {
   return prisma.attendanceLog.findFirst({
     where: {
       id,
@@ -908,7 +1019,12 @@ export function findAttendanceByIdForWorker(id: string, workerId: string) {
       assignment: {
         worker_id: workerId,
         deleted_at: null,
-        order: { deleted_at: null },
+        order: {
+          deleted_at: null,
+          ...(isReviewAccount === undefined
+            ? {}
+            : { company: { user: { is_review_account: isReviewAccount } } }),
+        },
       },
     },
     include: attendanceInclude,
@@ -1041,9 +1157,21 @@ export function createCheckInWithAudit(input: {
         worker_id: input.workerId,
         deleted_at: null,
       },
-      select: { order_id: true },
+      select: {
+        order_id: true,
+        worker: { select: { user: { select: { is_review_account: true } } } },
+        order: {
+          select: {
+            company: { select: { user: { select: { is_review_account: true } } } },
+          },
+        },
+      },
     });
     if (!candidate) return { kind: 'assignment_not_accepted' as const };
+    if (
+      (candidate.worker.user.is_review_account === true)
+      !== (candidate.order.company.user.is_review_account === true)
+    ) return { kind: 'assignment_not_accepted' as const };
 
     // Every lifecycle path locks parent order first, then assignment. This keeps
     // check-in serialized with both whole-order and direct-assignment cancellation
@@ -1200,9 +1328,21 @@ export function checkOutWithAudit(input: {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const candidate = await tx.assignment.findFirst({
       where: { id: input.assignmentId, worker_id: input.workerId, deleted_at: null },
-      select: { order_id: true },
+      select: {
+        order_id: true,
+        worker: { select: { user: { select: { is_review_account: true } } } },
+        order: {
+          select: {
+            company: { select: { user: { select: { is_review_account: true } } } },
+          },
+        },
+      },
     });
     if (!candidate) return { kind: 'assignment_not_accepted' as const };
+    if (
+      (candidate.worker.user.is_review_account === true)
+      !== (candidate.order.company.user.is_review_account === true)
+    ) return { kind: 'assignment_not_accepted' as const };
     await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
 

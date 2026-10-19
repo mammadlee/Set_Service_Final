@@ -1,32 +1,70 @@
-# App Store review access — SET Service
+# App Store Connect review access — SET Service
 
-SET Service reuses the existing Google Play/local seed-account mechanism. There is no Apple-only authentication bypass, universal password or OTP override. The three accounts are ordinary password-authenticated users whose approved/active state is reconciled by `scripts/seed.ts`; normal registration, OTP and authorization rules remain unchanged.
+Use this text for App Store Connect **App Review Information** and TestFlight **Beta App Review Information**. Live identifiers and passwords must be copied from the approved secret handoff directly into App Store Connect. They must never be added to this file, source control, CI output, screenshots, tickets, or chat logs.
 
-| Role | Default login identifier | Password secret | Prepared state |
+## Sign-in required
+
+Yes. The application has three reviewable roles. The same three accounts are used for Apple and Google review.
+
+| Role | Username field | Password field | Prepared access |
 | --- | --- | --- | --- |
-| Worker | `+994700000003` | `APPLE_REVIEW_WORKER_PASSWORD` | `worker`, active and `approved` |
-| Company | `company@setservice.az` / `+994700000002` | `APPLE_REVIEW_COMPANY_PASSWORD` | `company`, active and `approved` |
-| Admin | `ops@setservice.az` / `+994700000101` | `APPLE_REVIEW_ADMIN_PASSWORD` | active restricted `admin`; exact view-only allowlist |
+| Worker | `<WORKER_PHONE_FROM_SECRET_MANAGER>` | `<WORKER_PASSWORD_FROM_SECRET_MANAGER>` | Approved synthetic worker with a complete profile, sample private documents, assignments, attendance history, and in-app notifications |
+| Company | `<COMPANY_EMAIL_FROM_SECRET_MANAGER>` | `<COMPANY_PASSWORD_FROM_SECRET_MANAGER>` | Approved synthetic company with sample orders and permission to create and inspect its own orders |
+| Admin | `<ADMIN_EMAIL_FROM_SECRET_MANAGER>` | `<ADMIN_PASSWORD_FROM_SECRET_MANAGER>` | Restricted review Admin with read-only access to review-cohort workers, companies, orders, assignments, attendance, and notifications |
 
-The identifiers are fixed for the Apple review accounts. Configure the three `APPLE_REVIEW_*_PASSWORD` values as separate strong secrets in the authorized deployment secret manager; never place their values in Git, CI logs, screenshots or this document. Production seeding remains disabled unless the operator deliberately enables the existing `ALLOW_PRODUCTION_SEED=true` guard. Re-running the guarded seed reconciles the stored hashes for these exact three accounts only.
+These accounts use the normal password authentication endpoints. Worker signs in with phone and password. Company and Admin sign in with email and password. No login OTP, registration, email verification, invitation, or expiring setup link is required. SET Service does not use a universal OTP, master password, or reviewer authentication bypass.
 
-Before submission, the authorized operator must configure the three `APPLE_REVIEW_*_PASSWORD` secrets, reconcile the accounts using the existing guarded seed workflow, then run `npm run review-accounts:check` against the intended environment. This read-only check verifies exact phone/email identifiers, roles, active/approved status, bcrypt password matches, password uniqueness against other seeded accounts and the exact restricted Admin permission allowlist without reading or printing passwords. Finally verify all three logins from an external device. Put the resulting identifiers and passwords only in App Store Connect Review Information or an approved secure reviewer channel. Accounts must remain active throughout review, must not be geoblocked, and must not require Apple to receive an OTP. Use only synthetic profile/documents and sample operational data.
+The Admin account is not a Super Admin. It cannot manage Admin users, production security settings, moderation, kiosks, permissions, or other production data. Review data is synthetic and isolated from ordinary production accounts. Sensitive documents remain in private object storage and are delivered only through authenticated, short-lived download URLs.
 
-The restricted Admin review account has this exact view-only allowlist: `view_dashboard`, `view_workers`, `view_companies`, `view_orders`, `view_assignments`, `view_attendance`, and `view_notifications`. It has no worker/assignment mutation permission, cannot manage Admin accounts, and does not receive `*` super-admin access.
+## Reviewer sign-in steps
 
-Reviewer login steps:
+1. **Worker:** On the role screen choose **İşçi** (Worker), choose **Daxil ol** (Sign in), enter the supplied Worker phone number and password, then tap **Daxil ol**.
+2. **Company:** Return to the role screen, choose **Müəssisə** (Company), enter the supplied Company email and password, then tap **Daxil ol**.
+3. **Admin:** Return to the role screen. Press and hold the large SET logo in the upper part of the screen to open the restricted Admin sign-in. Enter the supplied Admin email and password, then tap **Daxil ol**.
 
-1. Worker: open the app, choose **İşçi**, choose **Daxil ol**, enter the Worker phone and supplied password, then tap **Daxil ol**. No OTP is requested for an approved password account.
-2. Company: return to role selection, choose **Müəssisə**, enter the Company email and supplied password, then tap **Daxil ol**. No registration or OTP is required.
-3. Admin: return to role selection and press-and-hold the SET logo in the upper part of the screen to open the intentionally non-public Admin login, enter the Admin email and supplied password, then tap **Daxil ol**. Permission-hidden destructive/system-management functions are intentionally unavailable.
+If a reviewer signs in to the wrong role, the app rejects the session and asks them to use the matching role. The reviewer accounts are intentionally protected from account deletion, phone/email replacement, and password-reset flows so the shared credentials remain stable during review.
 
-Suggested Review Notes (adapt with actual account details and environment):
+## Main review paths
 
-1. Open the app and choose Worker or Company normally. For Admin, press-and-hold the upper SET logo; use the corresponding supplied credentials.
-2. Worker: Profile → work history/CV and documents → assignments → sample QR/attendance (requires a prepared valid kiosk and accepted assignment) → notifications → ratings/report → Privacy/Terms → Profile → Hesabı sil. Describe the physical QR/test token setup without weakening production validation.
-3. Company: approved account → create/view order → assignments and permitted worker profile → rating/report → More → Məxfilik və hesab → Hesabı sil.
-4. Admin: inspect the read-only dashboard, worker/company directories, orders, assignments, attendance and notifications. Worker/company approval, moderation and other mutation surfaces are intentionally unavailable to this review account.
+### Worker
 
-The public `/privacy`, `/terms` and `/account-deletion` URLs are accessible without login, but the public deletion form is not a substitute for the in-app deletion controls. Reconfirm their real production HTTP 200 responses before submission.
+1. Sign in as Worker.
+2. Open **Profile** and inspect the completed synthetic profile, profile image, work history, and test documents.
+3. Open **Assignments** to see current and completed synthetic examples.
+4. Open attendance history to inspect check-in, check-out, and recorded duration.
+5. Open **Notifications** to inspect in-app sample notifications.
+6. The QR scanner can be opened normally. A live scan requires a second screen showing a short-lived QR from the prepared review kiosk; no permanent QR or reusable token is used.
 
-Do not ask a reviewer to delete one of these shared stable accounts. If deletion must be demonstrated, prepare a separate disposable account. Immediately before submission, manually confirm that sample orders/assignments, any QR kiosk prerequisite and synthetic notification/moderation examples are still current; seed data alone cannot prove the live production dataset is review-ready.
+### Company
+
+1. Sign in as Company.
+2. Inspect the completed synthetic company profile and sample orders.
+3. Open an order to inspect status and assignment information.
+4. Create a clearly labelled test order if desired. Review-company actions remain in the review cohort and do not send SMS, email, or push notifications to ordinary production users.
+
+### Restricted Admin
+
+1. Use the SET-logo long press described above and sign in as Admin.
+2. Inspect the dashboard and the review Worker and Company records.
+3. Inspect sample orders, assignments, and attendance records.
+4. Confirm that mutation, moderation, Super Admin, permission-management, and production-security surfaces are unavailable.
+
+Do not delete a shared review account or replace its login details. If Apple requires a destructive account-deletion demonstration, the operator must provision a separate disposable synthetic account and provide it through App Store Connect.
+
+## Beta App Review Notes
+
+Copy the following text and replace only the three credential placeholders in App Store Connect:
+
+> SET Service is a workforce-management application with Worker, Company, and restricted Admin roles. Worker and Company can be selected on the first screen. To open the Admin sign-in, press and hold the large SET logo in the upper part of that screen. Worker uses phone plus password; Company and Admin use email plus password. Login does not require OTP for these approved review accounts. All displayed review data is synthetic. The restricted Admin can see only the isolated review cohort and has no Super Admin or production-security access. The Worker account contains sample assignments, attendance, notifications, and synthetic documents. The Company account contains sample orders and can create a review-only test order. A live QR attendance scan needs a second screen with the prepared review kiosk because QR tokens are short-lived and rotating; attendance history can be reviewed without that optional physical step. Please do not change credentials or delete these shared accounts during review. Support contact: `<APP_REVIEW_CONTACT_FROM_APP_STORE_CONNECT>`.
+
+## Operator pre-submission gate
+
+The authorized operator must deploy the reviewed backend and forward-only migration before creating the accounts. Account reconciliation is a separate, explicitly approved operation:
+
+```text
+npm run store-review:plan
+npm run store-review:apply
+npm run store-review:check
+```
+
+Between apply and check, upload the synthetic avatar, health certificate, and criminal-record certificate through the normal authenticated Worker upload flow so the existing R2 and malware-scanning controls remain in force. The plan and readiness commands must remain redacted. After the check passes, manually sign in to all three roles from an external iOS device, confirm API availability at `https://api.setservice.az/v1`, confirm the sample date windows are current, and place credentials only in App Store Connect. Keep the accounts active for the full review period and deactivate or rotate them after the review window under a separate approved operation.

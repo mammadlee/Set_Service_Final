@@ -162,6 +162,10 @@ jobs:
           npm run test:provider-delivery
           npm run test:document-backfill
           npm run test:seed-security
+          npm run test:review-account-security
+          npm run test:store-review-auth
+          npm run test:store-review-provisioning
+          npm run test:review-runtime-isolation
           npm run test:release-runbooks
           npm run test:dependency-policy
           npm run test:release-security
@@ -258,6 +262,12 @@ jobs:
       - name: Migration/schema drift gate
         run: npx prisma migrate diff --from-url "$DIRECT_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
 
+      - name: Store-review PostgreSQL 16 provisioning concurrency regression
+        env:
+          STORE_REVIEW_PG_INTEGRATION_CONFIRM: "1"
+          STORE_REVIEW_PG_TEST_DATABASE_URL: postgresql://postgres:ci-postgres-password@localhost:5432/setservice_review_provision_test_ci?schema=public
+        run: npm run test:store-review-postgres
+
       - name: PostgreSQL text ID row-lock regression
         env:
           TEXT_ID_LOCK_TEST_CONFIRM: "1"
@@ -340,6 +350,10 @@ jobs:
       - name: Web security regression
         working-directory: apps/admin_panel
         run: npm run test:security
+
+      - name: Admin UI regression
+        working-directory: apps/admin_panel
+        run: npm run test:regression
 
       - name: Typecheck
         working-directory: apps/admin_panel
@@ -450,6 +464,10 @@ jobs:
       - name: Web security regression
         working-directory: apps/qr_kiosk
         run: npm run test:security
+
+      - name: QR kiosk regression
+        working-directory: apps/qr_kiosk
+        run: npm run test:regression
 
       - name: Typecheck
         working-directory: apps/qr_kiosk

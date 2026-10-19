@@ -58,6 +58,7 @@ POST /v1/auth/worker/complete-registration
 POST /v1/auth/worker/forgot-password
 POST /v1/auth/worker/reset-password
 POST /v1/auth/worker/phone-change/request
+POST /v1/auth/worker/phone-change/v2/request
 POST /v1/auth/worker/phone-change/confirm
 POST /v1/auth/company/register
 POST /v1/auth/company/complete-registration
@@ -66,7 +67,7 @@ POST /v1/auth/company/reset-password
 POST /v1/auth/admin/forgot-password
 ```
 
-Worker phone change is a two-step authenticated flow. The request endpoint requires `phone` and `current_password`; it verifies the current password before inspecting target availability or requesting an OTP for the new canonical E.164 number. To prevent registered-phone enumeration, a target already registered to another user returns the same generic accepted response, without sending an OTP. The confirm endpoint atomically verifies and consumes the OTP, rechecks uniqueness inside the transaction, returns the persisted phone, and preserves existing access and refresh sessions. A retry after a lost success response is acknowledged only when the same recently consumed OTP is supplied. Both endpoints use the strict authentication rate limiter.
+Worker phone change is a two-step authenticated flow. Build 15 and later must use `/phone-change/v2/request` with `phone` and `current_password`; the server verifies the current password before inspecting target availability or requesting an OTP for the new canonical E.164 number. `/phone-change/request` is a deprecated Build 14 compatibility route accepting only `phone`. It has no password step-up, so it is additionally limited by authenticated actor and target and writes a redacted audit event. To preserve Build 14's existing UI contract, a target already registered to another user returns the generic `PHONE_ALREADY_REGISTERED` conflict so that the old app does not open an OTP screen when no SMS was sent. This legacy availability signal is a documented compatibility risk; Build 15's password-protected v2 route remains non-enumerating. The shared confirm endpoint atomically verifies and consumes the target handset's OTP, rechecks uniqueness inside the transaction, returns the persisted phone, and preserves existing sessions. A retry after a lost success response is acknowledged only with the same recently consumed OTP. Remove the legacy route only after Build 14 is outside the supported-version window.
 
 `POST /v1/auth/verify-otp` remains as a legacy verification endpoint. Login OTP purposes are deprecated and return `OTP_LOGIN_DEPRECATED`.
 

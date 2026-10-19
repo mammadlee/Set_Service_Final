@@ -34,6 +34,7 @@ async function rejected(operation: () => Promise<unknown>, code: string) {
 
 async function testTargetVisibility() {
   let assignmentQuery: any;
+  let ratingQuery: any;
   mockMethod(prisma.assignment, 'findFirst', async (query: any) => {
     assignmentQuery = query;
     if (query.where.order?.id === orderId && query.where.worker?.user_id === workerUserId) {
@@ -47,16 +48,20 @@ async function testTargetVisibility() {
     }
     return null;
   });
-  mockMethod(prisma.rating, 'findFirst', async (query: any) =>
-    query.where.id === ratingId && query.where.worker?.user_id === workerUserId
+  mockMethod(prisma.rating, 'findFirst', async (query: any) => {
+    ratingQuery = query;
+    return query.where.id === ratingId && query.where.worker?.user_id === workerUserId
       ? { id: ratingId }
-      : null);
+      : null;
+  });
 
   await Service.assertTargetVisible(workerUserId, 'worker', {
     target_type: 'order', target_id: orderId, reason: 'other',
   });
   assert.deepEqual(assignmentQuery.where.status.in, ['assigned', 'accepted', 'completed']);
   assert.equal(assignmentQuery.where.deleted_at, null);
+  assert.equal(assignmentQuery.where.worker.user.is_review_account, false);
+  assert.equal(assignmentQuery.where.order.company.user.is_review_account, false);
   await rejected(() => Service.assertTargetVisible(workerUserId, 'worker', {
     target_type: 'order', target_id: companyId, reason: 'other',
   }), 'REPORT_TARGET_FORBIDDEN');
@@ -70,6 +75,9 @@ async function testTargetVisibility() {
   await Service.assertTargetVisible(workerUserId, 'worker', {
     target_type: 'rating', target_id: ratingId, reason: 'other',
   });
+  assert.equal(ratingQuery.where.worker.user.is_review_account, false);
+  assert.equal(ratingQuery.where.order.company.user.is_review_account, false);
+  assert.equal(ratingQuery.where.rater.is_review_account, false);
   await rejected(() => Service.assertTargetVisible(workerUserId, 'worker', {
     target_type: 'rating', target_id: orderId, reason: 'other',
   }), 'REPORT_TARGET_FORBIDDEN');
@@ -78,6 +86,8 @@ async function testTargetVisibility() {
     target_type: 'worker_profile', target_id: workerId, reason: 'other',
   });
   assert.equal(assignmentQuery.where.order.company.status, 'approved');
+  assert.equal(assignmentQuery.where.worker.user.is_review_account, false);
+  assert.equal(assignmentQuery.where.order.company.user.is_review_account, false);
   await rejected(() => Service.assertTargetVisible(companyUserId, 'company', {
     target_type: 'worker_profile', target_id: orderId, reason: 'other',
   }), 'REPORT_TARGET_FORBIDDEN');
@@ -91,6 +101,8 @@ async function testPersistenceAndAuthorizedAdminNotification() {
   let created: any;
   let notifications: any[] = [];
   let audit: any;
+  let adminQuery: any;
+  mockMethod(prisma.user, 'findFirst', async () => ({ is_review_account: false }));
   mockMethod(prisma.assignment, 'findFirst', async () => ({ id: 'assignment-visible' }));
   mockMethod(prisma, '$transaction', async (callback: (tx: any) => Promise<any>) => callback({
     moderationReport: {
@@ -100,11 +112,14 @@ async function testPersistenceAndAuthorizedAdminNotification() {
       },
     },
     user: {
-      findMany: async () => [
-        { id: 'super', role: 'super_admin', admin: { permissions: [] } },
-        { id: 'moderator', role: 'admin', admin: { permissions: ['view_moderation'] } },
-        { id: 'restricted', role: 'admin', admin: { permissions: ['view_workers'] } },
-      ],
+      findMany: async (query: any) => {
+        adminQuery = query;
+        return [
+          { id: 'super', role: 'super_admin', admin: { permissions: [] } },
+          { id: 'moderator', role: 'admin', admin: { permissions: ['view_moderation'] } },
+          { id: 'restricted', role: 'admin', admin: { permissions: ['view_workers'] } },
+        ];
+      },
     },
     notification: {
       createMany: async (query: any) => { notifications = query.data; return { count: notifications.length }; },
@@ -121,10 +136,26 @@ async function testPersistenceAndAuthorizedAdminNotification() {
   assert.equal(created.reporter_user_id, workerUserId);
   assert.equal(created.target_id, orderId);
   assert.equal(created.reason, 'privacy');
+  assert.equal(adminQuery.where.is_review_account, false);
   assert.deepEqual(notifications.map((item) => item.recipient_id).sort(), ['moderator', 'super']);
   assert.deepEqual(notifications[0].metadata, { report_id: reportId });
   assert.equal(audit.entity_type, 'moderation_report');
   assert.equal(JSON.stringify(audit).includes('Şəxsi məlumat'), false);
+  restoreMocks();
+}
+
+async function testReviewAccountCannotNotifyProductionModerators() {
+  let transactionCalled = false;
+  mockMethod(prisma.user, 'findFirst', async () => ({ is_review_account: true }));
+  mockMethod(prisma, '$transaction', async () => {
+    transactionCalled = true;
+    throw new Error('transaction must not be called');
+  });
+
+  await rejected(() => Service.createReport(workerUserId, 'worker', {
+    target_type: 'order', target_id: orderId, reason: 'other', details: 'Review-only report',
+  }), 'STORE_REVIEW_MUTATION_FORBIDDEN');
+  assert.equal(transactionCalled, false);
   restoreMocks();
 }
 
@@ -147,27 +178,43 @@ async function testAdminListAndTransitions() {
     reporter: { id: workerUserId, name: 'İşçi', role: 'worker' },
   };
   let listQuery: any;
+  let detailQuery: any;
+  let targetQuery: any;
+  const updateQueries: any[] = [];
   let statusAuditCount = 0;
   mockMethod(prisma.moderationReport, 'count', async (query: any) => {
-    assert.deepEqual(query.where, { status: 'open' });
+    assert.deepEqual(query.where, {
+      OR: [
+        { reporter_user_id: null },
+        { reporter: { is_review_account: false } },
+      ],
+      status: 'open',
+    });
     return 1;
   });
   mockMethod(prisma.moderationReport, 'findMany', async (query: any) => {
     listQuery = query;
     return [{ ...report }];
   });
-  mockMethod(prisma.moderationReport, 'findUnique', async () => ({ ...report }));
-  mockMethod(prisma.order, 'findUnique', async () => ({ title: 'Görünən sifariş' }));
+  mockMethod(prisma.moderationReport, 'findFirst', async (query: any) => {
+    detailQuery = query;
+    return { ...report };
+  });
+  mockMethod(prisma.order, 'findFirst', async (query: any) => {
+    targetQuery = query;
+    return { title: 'Görünən sifariş' };
+  });
   mockMethod(prisma, '$transaction', async (input: any) => {
     if (Array.isArray(input)) return Promise.all(input);
     return input({
       moderationReport: {
         updateMany: async (query: any) => {
+          updateQueries.push(query);
           if (!query.where.status.in.includes(report.status)) return { count: 0 };
           Object.assign(report, query.data);
           return { count: 1 };
         },
-        findUnique: async () => ({ status: report.status }),
+        findFirst: async () => ({ status: report.status }),
       },
       auditLog: {
         create: async () => { statusAuditCount += 1; return { id: 'audit-id' }; },
@@ -180,10 +227,13 @@ async function testAdminListAndTransitions() {
   assert.equal(list.data[0].id, reportId);
   assert.equal(listQuery.take, 20);
   assert.equal(listQuery.skip, 0);
+  assert.equal(listQuery.where.OR[1].reporter.is_review_account, false);
 
   const detail = await Service.getModerationReport(reportId);
   assert.deepEqual(detail.target, { id: orderId, type: 'order', label: 'Görünən sifariş' });
   assert.equal(detail.reporter?.name, 'İşçi');
+  assert.equal(detailQuery.where.OR[1].reporter.is_review_account, false);
+  assert.equal(targetQuery.where.company.user.is_review_account, false);
 
   const actor = { sub: 'admin-id', role: 'admin' as const };
   const reviewing = await Service.updateModerationReport(reportId, actor, { status: 'reviewing' });
@@ -195,8 +245,82 @@ async function testAdminListAndTransitions() {
   assert.equal(resolved.status, 'resolved');
   assert.equal(resolved.resolution_note, 'Məzmun yoxlanıldı');
   assert.equal(statusAuditCount, 2);
+  assert.equal(updateQueries.every((query) =>
+    query.where.OR[1].reporter.is_review_account === false), true);
   await rejected(() => Service.updateModerationReport(reportId, actor, { status: 'dismissed' }),
     'MODERATION_STATUS_CONFLICT');
+  restoreMocks();
+}
+
+async function testReviewerAdminCohortQueries() {
+  const timestamp = new Date('2026-09-21T00:00:00.000Z');
+  const report: any = {
+    id: reportId,
+    reporter_role: 'worker',
+    reporter_user_id: workerUserId,
+    target_type: 'order',
+    target_id: orderId,
+    reason: 'other',
+    details: 'Synthetic reviewer report',
+    status: 'open',
+    reviewed_by_id: null,
+    reviewed_at: null,
+    resolution_note: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+    reporter: { id: workerUserId, name: 'Synthetic reviewer', role: 'worker' },
+  };
+  const listWheres: any[] = [];
+  const detailWheres: any[] = [];
+  const updateWheres: any[] = [];
+  const targetWheres: any[] = [];
+
+  mockMethod(prisma.moderationReport, 'count', async (query: any) => {
+    listWheres.push(query.where);
+    return 1;
+  });
+  mockMethod(prisma.moderationReport, 'findMany', async (query: any) => {
+    listWheres.push(query.where);
+    return [{ ...report }];
+  });
+  mockMethod(prisma.moderationReport, 'findFirst', async (query: any) => {
+    detailWheres.push(query.where);
+    return { ...report };
+  });
+  mockMethod(prisma.order, 'findFirst', async (query: any) => {
+    targetWheres.push(query.where);
+    return { title: 'Synthetic review order' };
+  });
+  mockMethod(prisma, '$transaction', async (input: any) => {
+    if (Array.isArray(input)) return Promise.all(input);
+    return input({
+      moderationReport: {
+        updateMany: async (query: any) => {
+          updateWheres.push(query.where);
+          Object.assign(report, query.data);
+          return { count: 1 };
+        },
+        findFirst: async () => ({ status: report.status }),
+      },
+      auditLog: { create: async () => ({ id: 'audit-id' }) },
+    });
+  });
+
+  await Service.listModerationReports({ page: 1, limit: 20 }, true);
+  await Service.getModerationReport(reportId, true);
+  await Service.updateModerationReport(
+    reportId,
+    { sub: 'review-admin-id', role: 'admin' },
+    { status: 'reviewing' },
+    true,
+  );
+
+  assert.equal(listWheres.length, 2);
+  assert.equal(listWheres.every((where) => where.reporter.is_review_account === true), true);
+  assert.equal(detailWheres.every((where) => where.reporter.is_review_account === true), true);
+  assert.equal(updateWheres.every((where) => where.reporter.is_review_account === true), true);
+  assert.equal(targetWheres.every((where) =>
+    where.company.user.is_review_account === true), true);
   restoreMocks();
 }
 
@@ -231,7 +355,9 @@ async function main() {
   try {
     await testTargetVisibility();
     await testPersistenceAndAuthorizedAdminNotification();
+    await testReviewAccountCannotNotifyProductionModerators();
     await testAdminListAndTransitions();
+    await testReviewerAdminCohortQueries();
     await testPermissionGate();
     testPayloadValidation();
     console.log('moderation-regression: OK');

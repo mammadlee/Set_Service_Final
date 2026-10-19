@@ -391,7 +391,11 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       if (!mounted) return false;
       setState(() {
         _phoneOtpSent = true;
-        _success = 'OTP yeni telefon nömrəsinə göndərildi.';
+        // The API deliberately returns the same acknowledgement when the
+        // target is already registered. Keep the UI equally non-enumerating
+        // and avoid claiming that an SMS was definitely dispatched.
+        _success =
+            'Nömrə uyğun olduqda OTP göndərilir. Kodu aldıqdan sonra daxil edin.';
       });
       return true;
     } on ApiException catch (error) {

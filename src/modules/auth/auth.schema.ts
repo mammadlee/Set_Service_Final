@@ -112,6 +112,10 @@ export const WorkerResetPasswordSchema = z.object({
 
 export const WorkerPhoneChangeRequestSchema = z.object({
   phone: PhoneSchema,
+}).strict();
+
+export const WorkerPhoneChangeV2RequestSchema = z.object({
+  phone: PhoneSchema,
   current_password: LoginPasswordSchema,
 }).strict();
 
@@ -244,6 +248,7 @@ export type WorkerCompleteRegistrationInput = z.infer<typeof WorkerCompleteRegis
 export type WorkerForgotPasswordInput = z.infer<typeof WorkerForgotPasswordSchema>;
 export type WorkerResetPasswordInput = z.infer<typeof WorkerResetPasswordSchema>;
 export type WorkerPhoneChangeRequestInput = z.infer<typeof WorkerPhoneChangeRequestSchema>;
+export type WorkerPhoneChangeV2RequestInput = z.infer<typeof WorkerPhoneChangeV2RequestSchema>;
 export type WorkerPhoneChangeConfirmInput = z.infer<typeof WorkerPhoneChangeConfirmSchema>;
 export type CompanyRegisterInput = z.infer<typeof CompanyRegisterSchema>;
 export type CompanyLoginInput = z.infer<typeof CompanyLoginSchema>;

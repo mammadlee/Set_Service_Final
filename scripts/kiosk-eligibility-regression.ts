@@ -85,7 +85,10 @@ assert.match(service, /listSelectableKioskOrders\(kiosk\.company_id/);
 assert.match(service, /activationSource: 'automatic'/);
 assert.match(service, /allowCheckoutOnly: true/);
 assert.match(service, /listVenueKioskCompanies/);
-assert.match(service, /findKioskManageableCompanyById\(requestedCompanyId\)/);
+assert.match(
+  service,
+  /findKioskManageableCompanyById\(\s*requestedCompanyId,\s*actorIsReviewAccount,\s*\)/,
+);
 assert.doesNotMatch(createVenueKioskImplementation, /listKioskEligibleOrders|assertKioskEligibleOrder/);
 assert.match(companyListImplementation, /role !== 'super_admin' && role !== 'admin'/);
 assert.doesNotMatch(companyListImplementation, /role !== 'company'/);

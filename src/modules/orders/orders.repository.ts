@@ -4,6 +4,7 @@ import { Errors } from '../../lib/errors';
 import { deleteExpiredIdempotencyKey } from '../../lib/idempotency';
 import { OrderStatus, Role } from '../../types/prisma';
 import { CreateOrderInput } from './orders.schema';
+import { mayDeliverExternally } from '../../lib/review-delivery-policy';
 
 export type NormalizedOrderCategoryItem = {
   category: string;
@@ -127,6 +128,84 @@ export const orderDetailInclude = {
   _count: { select: { assignments: true, ratings: true } },
 } satisfies Prisma.OrderInclude;
 
+const reviewAssignmentWhere = {
+  deleted_at: null,
+  worker: { user: { is_review_account: true } },
+} satisfies Prisma.AssignmentWhereInput;
+
+const reviewRatingWhere = {
+  deleted_at: null,
+  worker: { user: { is_review_account: true } },
+  rater: { is_review_account: true },
+} satisfies Prisma.RatingWhereInput;
+
+const productionAssignmentWhere = {
+  deleted_at: null,
+  worker: { user: { is_review_account: false } },
+} satisfies Prisma.AssignmentWhereInput;
+
+const productionRatingWhere = {
+  deleted_at: null,
+  worker: { user: { is_review_account: false } },
+  rater: { is_review_account: false },
+} satisfies Prisma.RatingWhereInput;
+
+const reviewOrderListInclude = {
+  ...orderListInclude,
+  assignments: {
+    ...orderListInclude.assignments,
+    where: reviewAssignmentWhere,
+  },
+  _count: {
+    select: {
+      assignments: { where: reviewAssignmentWhere },
+      ratings: { where: reviewRatingWhere },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
+const reviewOrderDetailInclude = {
+  ...orderDetailInclude,
+  assignments: {
+    ...orderDetailInclude.assignments,
+    where: reviewAssignmentWhere,
+  },
+  _count: {
+    select: {
+      assignments: { where: reviewAssignmentWhere },
+      ratings: { where: reviewRatingWhere },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
+const productionOrderListInclude = {
+  ...orderListInclude,
+  assignments: {
+    ...orderListInclude.assignments,
+    where: productionAssignmentWhere,
+  },
+  _count: {
+    select: {
+      assignments: { where: productionAssignmentWhere },
+      ratings: { where: productionRatingWhere },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
+const productionOrderDetailInclude = {
+  ...orderDetailInclude,
+  assignments: {
+    ...orderDetailInclude.assignments,
+    where: productionAssignmentWhere,
+  },
+  _count: {
+    select: {
+      assignments: { where: productionAssignmentWhere },
+      ratings: { where: productionRatingWhere },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
 export type OrderDetailRecord = Prisma.OrderGetPayload<{
   include: typeof orderDetailInclude;
 }>;
@@ -149,7 +228,7 @@ export type CreateOrderResult = {
 export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    include: { user: { select: { id: true, name: true, phone: true } } },
+    include: { user: { select: { id: true, name: true, phone: true, is_review_account: true } } },
   });
 }
 
@@ -160,10 +239,47 @@ export function findOrderById(id: string) {
   });
 }
 
-export function findOrderByIdForCompany(id: string, companyId: string) {
+export function findReviewOrderById(id: string) {
   return prisma.order.findFirst({
-    where: { id, company_id: companyId, deleted_at: null },
-    include: orderDetailInclude,
+    where: {
+      id,
+      deleted_at: null,
+      company: { user: { is_review_account: true } },
+    },
+    include: reviewOrderDetailInclude,
+  });
+}
+
+export function findOrderByIdForReviewScope(id: string, isReviewAccount: boolean) {
+  return prisma.order.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      company: { user: { is_review_account: isReviewAccount } },
+    },
+    include: isReviewAccount ? reviewOrderDetailInclude : productionOrderDetailInclude,
+  });
+}
+
+export function findOrderByIdForCompany(
+  id: string,
+  companyId: string,
+  isReviewAccount?: boolean,
+) {
+  return prisma.order.findFirst({
+    where: {
+      id,
+      company_id: companyId,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { company: { user: { is_review_account: isReviewAccount } } }),
+    },
+    include: isReviewAccount === undefined
+      ? orderDetailInclude
+      : isReviewAccount
+        ? reviewOrderDetailInclude
+        : productionOrderDetailInclude,
   });
 }
 
@@ -172,12 +288,13 @@ export async function listOrders(input: {
   page: number;
   limit: number;
   sort: 'asc' | 'desc';
+  isReviewAccount?: boolean;
 }) {
   const [total, data] = await prisma.$transaction([
     prisma.order.count({ where: input.where }),
     prisma.order.findMany({
       where: input.where,
-      include: orderListInclude,
+      include: input.isReviewAccount ? reviewOrderListInclude : productionOrderListInclude,
       orderBy: { created_at: input.sort },
       skip: (input.page - 1) * input.limit,
       take: input.limit,
@@ -192,6 +309,7 @@ export async function createOrderWithSideEffects(input: {
   actorRole: Role;
   companyId: string;
   companyName: string;
+  isReviewAccount?: boolean;
   order: CreateOrderForPersistence;
   idempotency?: OrderIdempotencyInput;
   buildResponse: (order: OrderDetailRecord) => Prisma.InputJsonValue;
@@ -205,6 +323,7 @@ async function createOrderWithSideEffectsAttempt(
     actorRole: Role;
     companyId: string;
     companyName: string;
+    isReviewAccount?: boolean;
     order: CreateOrderForPersistence;
     idempotency?: OrderIdempotencyInput;
     buildResponse: (order: OrderDetailRecord) => Prisma.InputJsonValue;
@@ -269,7 +388,19 @@ async function createOrderWithSideEffectsAttempt(
       });
 
       const admins = await tx.user.findMany({
-        where: { role: 'super_admin', is_active: true, deleted_at: null },
+        where: input.isReviewAccount
+          ? {
+              role: 'admin',
+              is_review_account: true,
+              is_active: true,
+              deleted_at: null,
+            }
+          : {
+              role: 'super_admin',
+              is_review_account: false,
+              is_active: true,
+              deleted_at: null,
+            },
         select: { id: true },
       });
 
@@ -290,24 +421,28 @@ async function createOrderWithSideEffectsAttempt(
         });
       }
 
-      const outboxEvent = await tx.outboxEvent.create({
-        data: {
-          aggregate: 'order',
-          aggregate_id: order.id,
-          event_type: 'order.created',
-          payload: {
-            role: 'super_admin',
-            title: 'Yeni sifariş yaradıldı',
-            body: `${input.companyName} "${input.order.title}" sifarişini yaratdı.`,
-            data: {
-              order_id: order.id,
-              company_id: input.companyId,
+      let outboxEventId: string | undefined;
+      if (!input.isReviewAccount) {
+        const outboxEvent = await tx.outboxEvent.create({
+          data: {
+            aggregate: 'order',
+            aggregate_id: order.id,
+            event_type: 'order.created',
+            payload: {
               role: 'super_admin',
+              title: 'Yeni sifariş yaradıldı',
+              body: `${input.companyName} "${input.order.title}" sifarişini yaratdı.`,
+              data: {
+                order_id: order.id,
+                company_id: input.companyId,
+                role: 'super_admin',
+              },
             },
           },
-        },
-        select: { id: true },
-      });
+          select: { id: true },
+        });
+        outboxEventId = outboxEvent.id;
+      }
 
       if (input.idempotency) {
         await tx.idempotencyKey.update({
@@ -330,7 +465,7 @@ async function createOrderWithSideEffectsAttempt(
       return {
         response,
         orderId: order.id,
-        outboxEventId: outboxEvent.id,
+        outboxEventId,
         replayed: false,
       };
     });
@@ -466,7 +601,11 @@ export async function cancelCompanyOrderWithAudit(input: {
           company_id: input.companyId,
           deleted_at: null,
         },
-        select: { status: true, version: true },
+        select: {
+          status: true,
+          version: true,
+          company: { select: { user: { select: { is_review_account: true } } } },
+        },
       });
       if (
         !currentOrder
@@ -502,8 +641,24 @@ export async function cancelCompanyOrderWithAudit(input: {
           deleted_at: null,
           status: { in: ['assigned', 'accepted'] },
         },
-        select: { worker: { select: { user_id: true } } },
+        select: {
+          worker: {
+            select: {
+              user_id: true,
+              user: { select: { is_review_account: true } },
+            },
+          },
+        },
       });
+      const companyIsReviewAccount = currentOrder.company.user.is_review_account === true;
+      if (assignments.some((assignment) => (
+        (assignment.worker.user.is_review_account === true) !== companyIsReviewAccount
+      ))) {
+        throw Errors.conflict(
+          'This order contains an assignment outside the account scope.',
+          'ASSIGNMENT_COHORT_MISMATCH',
+        );
+      }
       const workerUserIds = [...new Set(assignments.map((item) => item.worker.user_id))];
 
       const now = new Date();
@@ -595,6 +750,10 @@ export async function cancelCompanyOrderWithAudit(input: {
             metadata: { order_id: order.id, reason: input.reason },
           })),
         });
+      }
+
+      if (!mayDeliverExternally(companyIsReviewAccount)) {
+        return { order, outboxEventId: undefined };
       }
 
       const outboxEvent = await tx.outboxEvent.create({

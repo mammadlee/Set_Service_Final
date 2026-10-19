@@ -9,7 +9,9 @@ import {
 import {
   buildOtpProviderOutboxEvent,
   decryptProviderPayload,
+  deliverProviderOutboxEvent,
 } from '../src/lib/provider-outbox';
+import { isOutboxDeliveryStateHealthy } from '../src/lib/outbox';
 import { generateOtpCode } from '../src/lib/crypto';
 
 const root = path.resolve(__dirname, '..');
@@ -26,9 +28,24 @@ async function main(): Promise<void> {
   await opensCircuitAfterRepeatedFailures();
   verifiesSecureOtpGenerationAndSmsText();
   verifiesEncryptedDeterministicOutboxEvents();
+  await suppressesReviewProviderDeliveryAtDispatch();
+  verifiesMergedOutboxHealthContract();
   verifiesStaticProviderSafety();
 
   console.log('Provider delivery regression checks passed.');
+}
+
+function verifiesMergedOutboxHealthContract(): void {
+  assert.equal(
+    isOutboxDeliveryStateHealthy({ lastBatchDeliveryFailures: 0, deadEvents: 7 }),
+    true,
+    'historical dead letters must remain metrics/alerts rather than permanently failing readiness',
+  );
+  assert.equal(
+    isOutboxDeliveryStateHealthy({ lastBatchDeliveryFailures: 1, deadEvents: 0 }),
+    false,
+    'a current delivery failure must still fail outbox readiness',
+  );
 }
 
 function verifiesSecureOtpGenerationAndSmsText(): void {
@@ -224,6 +241,66 @@ function verifiesEncryptedDeterministicOutboxEvents(): void {
   );
 }
 
+async function suppressesReviewProviderDeliveryAtDispatch(): Promise<void> {
+  const sms = buildOtpProviderOutboxEvent({
+    channel: 'sms',
+    to: '+994501234567',
+    purpose: 'worker_login',
+    code: '413927',
+    dedupeKey: 'review-delivery-sms',
+  });
+  const email = buildOtpProviderOutboxEvent({
+    channel: 'email',
+    to: 'review@example.invalid',
+    purpose: 'email_verification',
+    code: '413927',
+    dedupeKey: 'review-delivery-email',
+  });
+  let smsCalls = 0;
+  let emailCalls = 0;
+  const delivery = {
+    deliverSms: async () => { smsCalls += 1; },
+    deliverEmail: async () => { emailCalls += 1; },
+  };
+
+  for (const owners of [
+    [{ is_review_account: true }],
+    [{ is_review_account: undefined }],
+    [{ is_review_account: false }, { is_review_account: true }],
+  ]) {
+    await deliverProviderOutboxEvent(sms.id, sms.event_type, sms.payload, {
+      ...delivery,
+      resolveRecipientOwners: async () => owners,
+    });
+    await deliverProviderOutboxEvent(email.id, email.event_type, email.payload, {
+      ...delivery,
+      resolveRecipientOwners: async () => owners,
+    });
+  }
+  assert.equal(smsCalls, 0);
+  assert.equal(emailCalls, 0);
+
+  await deliverProviderOutboxEvent(sms.id, sms.event_type, sms.payload, {
+    ...delivery,
+    resolveRecipientOwners: async () => [{ is_review_account: false }],
+  });
+  await deliverProviderOutboxEvent(email.id, email.event_type, email.payload, {
+    ...delivery,
+    resolveRecipientOwners: async () => [],
+  });
+  assert.equal(smsCalls, 1, 'ordinary account SMS delivery must remain enabled');
+  assert.equal(emailCalls, 1, 'ownerless registration email delivery must remain enabled');
+
+  await assert.rejects(
+    deliverProviderOutboxEvent(sms.id, sms.event_type, sms.payload, {
+      ...delivery,
+      resolveRecipientOwners: async () => { throw new Error('lookup unavailable'); },
+    }),
+    /lookup unavailable/,
+  );
+  assert.equal(smsCalls, 1, 'recipient lookup failure must fail closed before provider delivery');
+}
+
 function verifiesStaticProviderSafety(): void {
   const authSource = read('src/modules/auth/auth.service.ts');
   const smsSource = read('src/lib/sms.ts');
@@ -231,6 +308,7 @@ function verifiesStaticProviderSafety(): void {
   const fcmSource = read('src/lib/fcm.ts');
   const outboxSource = read('src/lib/outbox.ts');
   const envSource = read('src/lib/check-env.ts');
+  const providerOutboxSource = read('src/lib/provider-outbox.ts');
 
   assert.equal(authSource.includes('sendOtpSms'), false);
   assert.equal(authSource.includes('sendEmailCode'), false);
@@ -244,6 +322,8 @@ function verifiesStaticProviderSafety(): void {
   assert.match(fcmSource, /from 'firebase-admin\/messaging'/);
   assert.equal(fcmSource.includes("import admin from 'firebase-admin'"), false);
   assert.match(outboxSource, /isPermanentProviderError\(error\)/);
+  assert.match(providerOutboxSource, /resolveProviderRecipientOwners/);
+  assert.match(providerOutboxSource, /owners\.every\(mayDeliverExternally\)/);
   assert.match(envSource, /PROVIDER_OUTBOX_ENCRYPTION_SECRET must be dedicated/);
 }
 

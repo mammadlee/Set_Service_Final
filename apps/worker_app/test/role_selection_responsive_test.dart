@@ -191,6 +191,39 @@ void main() {
     },
   );
 
+  testWidgets(
+    'review admin entry requires a deliberate long press and selects admin',
+    (tester) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final roleSession = RoleSessionController();
+      addTearDown(roleSession.dispose);
+      _setViewport(tester, const Size(390, 844));
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<RoleSessionController>.value(
+          value: roleSession,
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: const RoleSelectionScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final adminEntry = find.bySemanticsLabel(AppStrings.adminLogin);
+      expect(adminEntry, findsOneWidget);
+
+      await tester.tap(adminEntry);
+      await tester.pumpAndSettle();
+      expect(roleSession.activeRole, isNull);
+
+      await tester.longPress(adminEntry);
+      await tester.pumpAndSettle();
+      expect(roleSession.activeRole, AppRole.admin);
+      _expectNoException(tester, const Size(390, 844));
+    },
+  );
+
   testWidgets('contact cards are separate links with production URIs', (
     tester,
   ) async {

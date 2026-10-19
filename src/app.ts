@@ -108,6 +108,7 @@ app.use('/v1/auth/worker/document-session', authLimiter);
 app.use('/v1/auth/worker/forgot-password', authLimiter);
 app.use('/v1/auth/worker/reset-password', authLimiter);
 app.use('/v1/auth/worker/phone-change/request', authLimiter);
+app.use('/v1/auth/worker/phone-change/v2/request', authLimiter);
 app.use('/v1/auth/worker/phone-change/confirm', authLimiter);
 app.use('/v1/auth/email-verification/request', authLimiter);
 app.use('/v1/auth/email-verification/confirm', authLimiter);

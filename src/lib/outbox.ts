@@ -219,10 +219,10 @@ async function runOutboxBatch(limit: number): Promise<number> {
     } else {
       processorState.successfulBatches += 1;
       processorState.lastSuccessfulBatchAt = Date.now();
-      // A failed delivery remains a readiness failure while it is waiting for
-      // retry. Clear it only after a later event succeeds or the queue is fully
-      // drained without dead letters.
-      if (processed > 0 || (pendingEvents === 0 && deadEvents === 0)) {
+      // Clear transient failures after processing or an empty pending queue.
+      // Historical dead letters remain tracked separately in metrics.
+
+      if (processed > 0 || (pendingEvents === 0 && deliveryFailures === 0)) {
         processorState.lastBatchDeliveryFailures = 0;
         processorState.consecutiveFailures = 0;
         fatalFailureNotified = false;
@@ -279,7 +279,7 @@ export function isOutboxDeliveryStateHealthy(state: {
   lastBatchDeliveryFailures: number;
   deadEvents: number;
 }): boolean {
-  return state.lastBatchDeliveryFailures === 0 && state.deadEvents === 0;
+  return state.lastBatchDeliveryFailures === 0;
 }
 
 export function renderOutboxMetrics(now = Date.now()): string {

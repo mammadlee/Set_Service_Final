@@ -11,8 +11,8 @@ function main(): void {
   );
   assert.match(
     source,
-    /\{ includePendingWorkerApprovals: false \}/,
-    'company report entry point must explicitly disable platform approval metrics',
+    /includePendingWorkerApprovals:\s*false,[\s\S]*?isReviewAccount:\s*company\.user\.is_review_account === true/,
+    'company report entry point must disable platform approval metrics and preserve its review cohort',
   );
   console.log('company-report-isolation-regression: OK');
 }

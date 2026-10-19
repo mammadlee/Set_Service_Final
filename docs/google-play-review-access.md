@@ -1,15 +1,52 @@
-# Google Play reviewer access — SET Service
+# Google Play Console app access — SET Service
 
-Use the same approved seed-backed review accounts documented for App Store review. Do not create a store-specific auth bypass and do not commit real passwords or OTP secrets. The Flutter role selector currently exposes Worker, Company and Admin; therefore provide all three roles unless the public release build is changed to hide Admin before submission. The Admin web panel is a separate surface, but the mobile Admin role remains reviewable.
+Use this text in Google Play Console **Policy and programs → App content → App access**. Select that all or some functionality is restricted and add the instructions below. Live identifiers and passwords must be copied from the approved secret handoff directly into Play Console. They must never be added to this file, source control, CI output, screenshots, tickets, or chat logs.
 
-| Role | Login placeholder | Password placeholder | Required state |
+## Access credentials
+
+The same three accounts are supplied to Apple App Review and Google Play review.
+
+| Role | Username field | Password field | Access |
 | --- | --- | --- | --- |
-| Worker | `+994700000003` | `APPLE_REVIEW_WORKER_PASSWORD` | Approved, with safe sample assignment and QR/attendance path |
-| Company | `company@setservice.az` / `+994700000002` | `APPLE_REVIEW_COMPANY_PASSWORD` | Approved, with safe sample order/assignment data |
-| Admin | `ops@setservice.az` / `+994700000101` | `APPLE_REVIEW_ADMIN_PASSWORD` | Least-privilege view-only Operations Admin; exact allowlist, no wildcard or Admin-management permission |
+| Worker | `<WORKER_PHONE_FROM_SECRET_MANAGER>` | `<WORKER_PASSWORD_FROM_SECRET_MANAGER>` | Approved synthetic worker with profile, assignments, attendance, notifications, and test documents |
+| Company | `<COMPANY_EMAIL_FROM_SECRET_MANAGER>` | `<COMPANY_PASSWORD_FROM_SECRET_MANAGER>` | Approved synthetic company with sample orders and review-only order creation |
+| Admin | `<ADMIN_EMAIL_FROM_SECRET_MANAGER>` | `<ADMIN_PASSWORD_FROM_SECRET_MANAGER>` | Least-privilege Admin limited to isolated review data |
 
-Place the actual credentials only in Play Console **App access** (or the approved secure reviewer handoff), never in this repository. Configure the three `APPLE_REVIEW_*_PASSWORD` values in the deployment secret manager, reconcile through the existing guarded seed workflow, and run the read-only `npm run review-accounts:check` preflight. They must remain active throughout review, work from Google's review location, and allow immediate password login without registration, inaccessible phone OTP, email verification or expiring setup links. If login has device/risk controls, explicitly document the reviewer-safe path without weakening production security generally. Do not provide access to real personal documents or production secrets in sample content.
+Worker uses phone and password. Company and Admin use email and password. These approved accounts do not require login OTP, SMS reception, registration, email verification, invitation acceptance, or an expiring link. There is no global OTP, master password, or authentication bypass. Normal-user OTP and account-security controls remain unchanged.
 
-Reviewer walkthrough: choose Worker or Company normally; open Admin by pressing and holding the upper SET logo on the role screen. Sign in, open profile and legal links, Worker assignments/QR scanner, Company orders/QR creation, and the Admin read-only dashboard/directories/orders/assignments/attendance/notifications. Approval, moderation and other mutation surfaces are intentionally unavailable to this review account. The QR check-in path needs an accepted assignment and a valid test kiosk/session; explain any physical QR prerequisite in Play Console instructions. Provide an account-deletion explanation and public deletion-page URL separately; do not ask the reviewer to delete a shared test account.
+## App access instructions
 
-Pre-submission manual checks: confirm credentials, account approval status, sample data, non-expiration, role permissions, HTTPS API reachability from outside Azerbaijan, and that the candidate's versionCode is still unused in Play Console. Put live passwords only in Play Console, not in this document.
+1. Launch SET Service.
+2. For **Worker**, choose **İşçi**, choose **Daxil ol**, and enter the supplied Worker phone and password.
+3. For **Company**, return to the role screen, choose **Müəssisə**, and enter the supplied Company email and password.
+4. For **Admin**, return to the role screen and press and hold the large SET logo in the upper part of the screen. Enter the supplied Admin email and password.
+5. If the wrong role is selected, return to the first screen and choose the matching role.
+
+## Suggested review steps
+
+### Worker
+
+- Inspect the completed synthetic profile, profile image, work history, and test documents.
+- Inspect current and completed assignments.
+- Inspect attendance check-in/check-out history and recorded duration.
+- Inspect in-app notifications.
+- Open the QR scanner. A live scan is optional and requires a second screen showing the prepared review kiosk because its QR token is short-lived and rotating.
+
+### Company
+
+- Inspect the synthetic company profile and sample orders.
+- Open an order and inspect its status and assignment information.
+- Create a clearly labelled test order if desired. This review-cohort action does not contact ordinary production users or trigger external SMS, email, or push delivery to them.
+
+### Restricted Admin
+
+- Inspect the dashboard, review Worker and Company records, orders, assignments, attendance, and in-app notifications.
+- The account is deliberately read-only and cannot access Super Admin, Admin management, production security settings, moderation, or real customer data.
+
+The shared review accounts are protected from account deletion, credential replacement, and password-reset flows during review. Do not ask the reviewer to delete them. If Google requires a destructive deletion demonstration, prepare a separately approved disposable synthetic account.
+
+## Text for the Play Console instruction field
+
+> SET Service has Worker, Company, and restricted Admin roles. Select Worker or Company on the first screen. To open Admin sign-in, press and hold the large SET logo near the top of the first screen. Worker signs in with phone and password; Company and Admin sign in with email and password. The supplied approved review accounts do not require OTP or SMS access. All review content is synthetic and isolated from ordinary production data. Worker includes sample assignments, attendance, notifications, and test documents. Company includes sample orders and review-only order creation. Admin is read-only and limited to the review cohort. Live QR attendance is optional and requires a second screen with the prepared rotating-QR kiosk. Please do not change the credentials or delete these shared accounts.
+
+Before submission, the authorized operator must run the redacted read-only readiness check, sign in to every role on an external Android device, confirm API availability at `https://api.setservice.az/v1`, and verify that the Android application ID is `az.setservice.app`. Put the live credentials only in Play Console. Keep them active for the full review period, then deactivate or rotate them through a separately approved operation.

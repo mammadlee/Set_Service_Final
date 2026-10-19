@@ -31,7 +31,7 @@ const ADMIN_PASSWORD = requiredSmokePassword('SMOKE_ADMIN_PASSWORD', 'SEED_ADMIN
 const REPORTS_ADMIN_EMAIL = process.env.SMOKE_REPORTS_ADMIN_EMAIL ?? process.env.SEED_REPORTS_ADMIN_EMAIL ?? 'reports@setservice.az';
 const RESTRICTED_ADMIN_PASSWORD = process.env.SMOKE_RESTRICTED_ADMIN_PASSWORD ?? process.env.SEED_RESTRICTED_ADMIN_PASSWORD ?? ADMIN_PASSWORD;
 const COMPANY_EMAIL = process.env.SMOKE_COMPANY_EMAIL ?? 'company@setservice.az';
-const COMPANY_PASSWORD = requiredSmokePassword('SMOKE_COMPANY_PASSWORD', 'APPLE_REVIEW_COMPANY_PASSWORD');
+const COMPANY_PASSWORD = requiredSmokePassword('SMOKE_COMPANY_PASSWORD', 'SEED_COMPANY_PASSWORD');
 const WORKER_PASSWORD = process.env.SMOKE_WORKER_PASSWORD ?? randomSmokePassword();
 const AUDIT_ADMIN_PASSWORD = process.env.SMOKE_AUDIT_ADMIN_PASSWORD ?? randomSmokePassword();
 const RUN_ID = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -1123,8 +1123,8 @@ async function main() {
     const newPhone = createPhone(4);
 
     const request = await post(
-      '/auth/worker/phone-change/request',
-      { phone: newPhone },
+      '/auth/worker/phone-change/v2/request',
+      { phone: newPhone, current_password: WORKER_PASSWORD },
       workerTokens.accessToken,
     );
     expectStatus(request.response, request.json, 200);

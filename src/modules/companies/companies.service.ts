@@ -10,6 +10,7 @@ import { createUploadService } from '../../lib/uploads';
 import { inspectUpload, scanUpload } from '../../lib/file-security';
 import { logger } from '../../lib/logger';
 import { enqueueStorageCleanupEvents } from '../../lib/storage-cleanup-outbox';
+import { assertStoreReviewAccountMutationAllowed } from '../../lib/store-review-account-guard';
 
 const COMPANY_STATUSES = new Set<string>([
   'pending_approval',
@@ -18,6 +19,14 @@ const COMPANY_STATUSES = new Set<string>([
   'suspended',
   'inactive',
 ]);
+
+function assertReviewAdminCompanyMutationAllowed(isReviewAccount: boolean): void {
+  if (!isReviewAccount) return;
+  throw Errors.forbidden(
+    'Store review administrators have read-only access.',
+    'STORE_REVIEW_ADMIN_VIEW_ONLY',
+  );
+}
 
 export async function getMyCompany(userId: string) {
   const company = await prisma.company.findUnique({
@@ -34,15 +43,40 @@ export async function getMyCompany(userId: string) {
 }
 
 export async function updateMyCompany(userId: string, data: { name?: string; email?: string | null }) {
-  const company = await prisma.company.findUnique({ where: { user_id: userId } });
+  const company = await prisma.company.findUnique({
+    where: { user_id: userId },
+    include: {
+      user: {
+        select: {
+          is_review_account: true,
+          email: true,
+          email_verified_at: true,
+          pending_email: true,
+        },
+      },
+    },
+  });
   if (!company || company.deleted_at) throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   if (company.status !== 'approved') {
     throw Errors.forbidden('Company must be approved before using company APIs.', 'ACCOUNT_NOT_APPROVED', {
       status: company.status,
     });
   }
-
   const { email } = data;
+  const cleanedEmail = email === undefined
+    ? undefined
+    : email === null || email.trim() === ''
+      ? null
+      : normalizeEmail(email);
+  const emailMutationRequested = cleanedEmail !== undefined && (
+    cleanedEmail === null
+      ? company.user.email !== null || company.user.pending_email !== null
+      : cleanedEmail === company.user.pending_email
+        ? false
+        : cleanedEmail !== company.user.email || !company.user.email_verified_at
+  );
+  if (emailMutationRequested) assertStoreReviewAccountMutationAllowed(company.user);
+
   const companyData: Prisma.CompanyUpdateInput = {};
   if (data.name !== undefined) companyData.name = data.name;
   let updated = await prisma.company.update({
@@ -51,8 +85,7 @@ export async function updateMyCompany(userId: string, data: { name?: string; ema
     include: { user: { select: { name: true, phone: true, email: true, email_verified_at: true, pending_email: true } } },
   });
 
-  if (email !== undefined) {
-    const cleanedEmail = email === null || email.trim() === '' ? null : normalizeEmail(email);
+  if (cleanedEmail !== undefined) {
     if (cleanedEmail === null) {
       await prisma.user.update({
         where: { id: userId },
@@ -101,11 +134,13 @@ export async function requestMyAccountDeletion(userId: string, initiatedBy?: { s
         deleted_at: true,
         documents: true,
         docs_url: true,
+        user: { select: { is_review_account: true } },
       },
     });
     if (current.deleted_at) {
       throw Errors.gone('Company account has already been deleted.', 'COMPANY_ALREADY_DELETED');
     }
+    assertStoreReviewAccountMutationAllowed(current.user);
 
     const currentDocuments = normalizeCompanyDocuments(current.documents);
     const cleanups = currentDocuments.flatMap((document) => {
@@ -210,7 +245,7 @@ export async function listCompanies(filters: {
   search?: string;
   status?: string;
   sort: 'asc' | 'desc';
-}) {
+}, isReviewAccount = false) {
   const page = filters.page;
   const limit = filters.limit;
   const where: Record<string, unknown> = {
@@ -231,6 +266,9 @@ export async function listCompanies(filters: {
       ],
     }],
   };
+  (where.AND as Record<string, unknown>[]).push({
+    user: { is_review_account: isReviewAccount },
+  });
 
   if (filters.status && !COMPANY_STATUSES.has(filters.status)) {
     throw Errors.badRequest('Invalid company status filter.', 'INVALID_COMPANY_STATUS');
@@ -267,18 +305,31 @@ export async function listCompanies(filters: {
   };
 }
 
-export async function getCompanyById(id: string) {
+export async function getCompanyById(id: string, isReviewAccount = false) {
   const company = await prisma.company.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: isReviewAccount },
+    },
     include: { user: { select: { name: true, phone: true, email: true } } },
   });
   if (!company) throw Errors.notFound('Company not found.', 'COMPANY_NOT_FOUND');
   return toCompanyProfile(company);
 }
 
-export async function approveCompany(id: string, actor: { sub: string; role: string }) {
+export async function approveCompany(
+  id: string,
+  actor: { sub: string; role: string },
+  actorIsReviewAccount = false,
+) {
+  assertReviewAdminCompanyMutationAllowed(actorIsReviewAccount);
   const company = await prisma.company.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: {
       user: {
         include: {
@@ -314,6 +365,7 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
           password_set_at: { not: null },
           is_active: true,
           deleted_at: null,
+          is_review_account: actorIsReviewAccount,
           otp_codes: {
             some: { purpose: 'company_registration', consumed_at: { not: null } },
           },
@@ -329,7 +381,11 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
 
     if (transition.count !== 1) {
       const current = await tx.company.findFirst({
-        where: { id, deleted_at: null },
+        where: {
+          id,
+          deleted_at: null,
+          user: { is_review_account: actorIsReviewAccount },
+        },
         include: { user: { select: { name: true, phone: true, email: true } } },
       });
       if (current?.status === 'approved') {
@@ -378,9 +434,19 @@ export async function approveCompany(id: string, actor: { sub: string; role: str
   return toCompanyProfile(updated.company);
 }
 
-export async function rejectCompany(id: string, reason: string, actor: { sub: string; role: string }) {
+export async function rejectCompany(
+  id: string,
+  reason: string,
+  actor: { sub: string; role: string },
+  actorIsReviewAccount = false,
+) {
+  assertReviewAdminCompanyMutationAllowed(actorIsReviewAccount);
   const company = await prisma.company.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      user: { is_review_account: actorIsReviewAccount },
+    },
     include: { user: true },
   });
   if (!company) throw Errors.notFound('Company not found.', 'COMPANY_NOT_FOUND');
@@ -399,6 +465,7 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
         id,
         status: 'pending_approval',
         deleted_at: null,
+        user: { is_review_account: actorIsReviewAccount },
       },
       data: {
         status: 'rejected' as CompanyStatus,
@@ -410,7 +477,11 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
 
     if (transition.count !== 1) {
       const current = await tx.company.findFirst({
-        where: { id, deleted_at: null },
+        where: {
+          id,
+          deleted_at: null,
+          user: { is_review_account: actorIsReviewAccount },
+        },
         select: { status: true },
       });
       throw Errors.conflict(
@@ -425,10 +496,13 @@ export async function rejectCompany(id: string, reason: string, actor: { sub: st
       include: { user: { select: { name: true, phone: true, email: true } } },
     });
 
-    const rejectionPushTargets = await tx.deviceToken.findMany({
+    const rejectionPushTargets = (await tx.deviceToken.findMany({
       where: { user_id: company.user_id, revoked_at: null, deleted_at: null },
       select: { id: true, token: true },
-    });
+    })).map((target) => ({
+      ...target,
+      is_review_account: company.user.is_review_account,
+    }));
     await tx.user.update({
       where: { id: company.user_id },
       data: { session_version: { increment: 1 } },
@@ -621,13 +695,19 @@ export async function uploadMyCompanyDocument(
 }
 
 export async function getCompanyDocumentDownload(
-  actor: { sub: string; role: string },
+  actor: { sub: string; role: string; isReviewAccount?: boolean },
   companyId: string,
   type: string
 ) {
   const documentType = parseCompanyDocumentType(type);
   const company = await prisma.company.findFirst({
-    where: { id: companyId, deleted_at: null },
+    where: {
+      id: companyId,
+      deleted_at: null,
+      ...((actor.role === 'admin' || actor.role === 'super_admin')
+        ? { user: { is_review_account: actor.isReviewAccount === true } }
+        : {}),
+    },
     select: { id: true, documents: true },
   });
   if (!company) throw Errors.notFound('Company document not found.', 'COMPANY_DOCUMENT_NOT_FOUND');

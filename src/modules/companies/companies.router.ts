@@ -5,6 +5,7 @@ import { requireAuth, requireEnrollmentAuth } from '../../middleware/auth';
 import { requireApprovedAccount, requirePermission, requireRole } from '../../middleware/rbac';
 import { validate } from '../../middleware/validate';
 import * as Service from './companies.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 const upload = multer({
@@ -91,12 +92,12 @@ router.get('/companies/me/documents/:type/download', requireEnrollmentAuth, requ
 router.get('/admin/companies', requireAuth, requirePermission('view_companies'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const query = CompanyListQuerySchema.parse(req.query);
-    res.json(await Service.listCompanies(query));
+    res.json(await Service.listCompanies(query, isReviewScopedRequest(req)));
   } catch (e) { next(e); }
 });
 
 router.get('/admin/companies/:id', requireAuth, requirePermission('view_companies'), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.getCompanyById(req.params.id)); } catch (e) { next(e); }
+  try { res.json(await Service.getCompanyById(req.params.id, isReviewScopedRequest(req))); } catch (e) { next(e); }
 });
 
 router.get('/admin/companies/:id/documents/:type/download', requireAuth, requirePermission('view_companies'), async (req: Request, res: Response, next: NextFunction) => {
@@ -105,16 +106,33 @@ router.get('/admin/companies/:id/documents/:type/download', requireAuth, require
     res.set('Cache-Control', 'private, no-store, max-age=0');
     res.set('Pragma', 'no-cache');
     res.set('Referrer-Policy', 'no-referrer');
-    res.json(await Service.getCompanyDocumentDownload(req.user!, params.id!, params.type));
+    res.json(await Service.getCompanyDocumentDownload(
+      { ...req.user!, isReviewAccount: isReviewScopedRequest(req) },
+      params.id!,
+      params.type,
+    ));
   } catch (e) { next(e); }
 });
 
 router.patch('/admin/companies/:id/approve', requireAuth, requirePermission('manage_companies'), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.approveCompany(req.params.id, req.user!)); } catch (e) { next(e); }
+  try {
+    res.json(await Service.approveCompany(
+      req.params.id,
+      req.user!,
+      isReviewScopedRequest(req),
+    ));
+  } catch (e) { next(e); }
 });
 
 router.patch('/admin/companies/:id/reject', requireAuth, requirePermission('manage_companies'), validate(CompanyRejectSchema), async (req: Request, res: Response, next: NextFunction) => {
-  try { res.json(await Service.rejectCompany(req.params.id, req.body.reason, req.user!)); } catch (e) { next(e); }
+  try {
+    res.json(await Service.rejectCompany(
+      req.params.id,
+      req.body.reason,
+      req.user!,
+      isReviewScopedRequest(req),
+    ));
+  } catch (e) { next(e); }
 });
 
 export default router;

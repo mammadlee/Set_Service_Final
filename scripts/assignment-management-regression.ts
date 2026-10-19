@@ -21,6 +21,7 @@ const registeredPositionId = '30000000-0000-4000-8000-000000000002';
 const invalidWorkerId = '20000000-0000-4000-8000-000000000003';
 const capacityWorkerId = '20000000-0000-4000-8000-000000000004';
 const conflictWorkerId = '20000000-0000-4000-8000-000000000005';
+const cohortWorkerId = '20000000-0000-4000-8000-000000000006';
 
 function testCreateContracts(): void {
   assert.equal(CreateAssignmentsSchema.safeParse({ order_id: orderId, worker_ids: [workerId] }).success, true);
@@ -225,6 +226,9 @@ async function testBulkResultsAndPermission(): Promise<void> {
         }],
       };
     }
+    if (requestedWorker.workerId === cohortWorkerId) {
+      return { kind: 'cohort_mismatch' as const, workerIds: [cohortWorkerId] };
+    }
     return {
       kind: 'created' as const,
       assignments: [assignmentRecord(`assignment-${requestedWorker.workerId}`, requestedWorker.workerId)],
@@ -256,19 +260,21 @@ async function testBulkResultsAndPermission(): Promise<void> {
       { worker_id: invalidWorkerId, position_id: requestedPositionId },
       { worker_id: capacityWorkerId, position_id: requestedPositionId },
       { worker_id: conflictWorkerId, position_id: requestedPositionId },
+      { worker_id: cohortWorkerId, position_id: requestedPositionId },
     ],
   });
 
   assert.equal(response.assigned_count, 2, 'valid workers are assigned independently');
-  assert.equal(response.failed_count, 4, 'every invalid row returns a result without hiding successes');
+  assert.equal(response.failed_count, 5, 'every invalid row returns a result without hiding successes');
   assert.deepEqual(response.results.map((result) => result.status), [
-    'assigned', 'assigned', 'failed', 'failed', 'failed', 'failed',
+    'assigned', 'assigned', 'failed', 'failed', 'failed', 'failed', 'failed',
   ]);
   assert.equal(response.results[0].warnings[0]?.code, 'WORKER_POSITION_MISMATCH');
   assert.equal(response.results[2].status === 'failed' && response.results[2].error.code, 'DUPLICATE_WORKER_ID');
   assert.equal(response.results[3].status === 'failed' && response.results[3].error.code, 'WORKERS_NOT_FOUND');
   assert.equal(response.results[4].status === 'failed' && response.results[4].error.code, 'ORDER_CAPACITY_EXCEEDED');
   assert.equal(response.results[5].status === 'failed' && response.results[5].error.code, 'WORKER_SCHEDULE_CONFLICT');
+  assert.equal(response.results[6].status === 'failed' && response.results[6].error.code, 'ASSIGNMENT_COHORT_MISMATCH');
 
   const filters = ListAssignmentsQuerySchema.parse({});
   creatorLookupCount = 0;

@@ -123,6 +123,7 @@ enum AuditAction {
   worker_foc_training_removed
   status_changed
   login_failed
+  login_succeeded
   otp_blocked
 }
 
@@ -173,6 +174,7 @@ model User {
   name                          String
   fcm_token                     String?
   is_active                     Boolean   @default(true)
+  is_review_account             Boolean   @default(false)
   session_version               Int       @default(0)
   created_at                    DateTime  @default(now())
   updated_at                    DateTime  @updatedAt
@@ -204,6 +206,7 @@ model User {
   @@index([phone])
   @@index([email])
   @@index([email_verified_at])
+  @@index([is_review_account, role])
   @@index([email_verification_blocked_until])
   @@index([role])
   @@index([deleted_at])
@@ -843,7 +846,10 @@ model ExternalAccountDeletionRequest {
   reviewed_by  User? @relation("external_deletion_reviewer", fields: [reviewed_by_id], references: [id], onDelete: SetNull)
 
   @@index([status, created_at])
-  @@index([account_user_id, created_at])
-  @@index([identifier_hmac, created_at])
+  // PostgreSQL truncates identifiers to 63 bytes. Map these indexes to the
+  // names already created by the applied 202609 migration so Prisma does not
+  // report a perpetual rename drift against production.
+  @@index([account_user_id, created_at], map: "external_account_deletion_requests_account_user_id_created_at_i")
+  @@index([identifier_hmac, created_at], map: "external_account_deletion_requests_identifier_hmac_created_at_i")
   @@map("external_account_deletion_requests")
 }

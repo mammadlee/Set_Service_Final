@@ -9,17 +9,6 @@ const {
   resolveSeedPassword,
   safeSeedErrorName,
 } = require('../src/lib/seed-safety');
-const {
-  APPLE_REVIEW_ADMIN_EMAIL,
-  APPLE_REVIEW_ADMIN_PERMISSIONS,
-  APPLE_REVIEW_ADMIN_PHONE,
-  APPLE_REVIEW_COMPANY_EMAIL,
-  APPLE_REVIEW_COMPANY_PHONE,
-  APPLE_REVIEW_WORKER_PHONE,
-  assertAppleReviewPasswordsUnique,
-  resolveAppleReviewPasswordsForSeed,
-} = require('../src/lib/apple-review-accounts');
-
 assertSeedAllowed();
 
 const prisma = new PrismaClient();
@@ -35,14 +24,11 @@ const REPORTS_ADMIN_EMAIL = seedIdentifier(
   'SEED_REPORTS_ADMIN_EMAIL',
   'reports@setservice.az',
 ).toLowerCase();
+const COMPANY_EMAIL = seedIdentifier(
+  'SEED_COMPANY_EMAIL',
+  'company@setservice.az',
+).toLowerCase();
 const RESTRICTED_ADMIN_PASSWORD = resolveSeedPassword('SEED_RESTRICTED_ADMIN_PASSWORD');
-const APPLE_REVIEW_PASSWORDS = resolveAppleReviewPasswordsForSeed();
-assertAppleReviewPasswordsUnique(APPLE_REVIEW_PASSWORDS, {
-  SEED_ADMIN_PASSWORD: ADMIN_PASSWORD,
-  SEED_COMPANY_PASSWORD: COMPANY_PASSWORD,
-  SEED_WORKER_PASSWORD: WORKER_PASSWORD,
-  SEED_RESTRICTED_ADMIN_PASSWORD: RESTRICTED_ADMIN_PASSWORD,
-});
 
 const REPORTS_ADMIN_PERMISSIONS = [
   'view_dashboard',
@@ -56,10 +42,8 @@ async function main() {
   console.log('Seed starting.');
   const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
   const restrictedAdminPasswordHash = await bcrypt.hash(RESTRICTED_ADMIN_PASSWORD, 12);
+  const companyPasswordHash = await bcrypt.hash(COMPANY_PASSWORD, 12);
   const workerPasswordHash = await bcrypt.hash(WORKER_PASSWORD, 12);
-  const appleReviewWorkerPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.worker, 12);
-  const appleReviewCompanyPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.company, 12);
-  const appleReviewAdminPasswordHash = await bcrypt.hash(APPLE_REVIEW_PASSWORDS.admin, 12);
 
   const admin = await prisma.user.upsert({
     where: { phone: '+994700000001' },
@@ -86,15 +70,6 @@ async function main() {
   console.log('Super admin seed reconciled.');
 
   await seedRestrictedAdmin({
-    phone: APPLE_REVIEW_ADMIN_PHONE,
-    email: APPLE_REVIEW_ADMIN_EMAIL,
-    name: 'Operations Admin',
-    permissions: APPLE_REVIEW_ADMIN_PERMISSIONS,
-    password_hash: appleReviewAdminPasswordHash,
-    reconcile_password: true,
-  });
-
-  await seedRestrictedAdmin({
     phone: '+994700000102',
     email: REPORTS_ADMIN_EMAIL,
     name: 'Reports Admin',
@@ -105,37 +80,35 @@ async function main() {
   await seedTaxonomy();
 
   const companyUser = await prisma.user.upsert({
-    where: { phone: APPLE_REVIEW_COMPANY_PHONE },
+    where: { phone: '+994700000007' },
     update: {
-      email: APPLE_REVIEW_COMPANY_EMAIL,
+      email: COMPANY_EMAIL,
       role: 'company',
-      name: 'Hilton Baku Əməliyyat Meneceri',
+      name: 'Local Seed Company Manager',
       is_active: true,
       deleted_at: null,
-      password_hash: appleReviewCompanyPasswordHash,
-      password_set_at: new Date(),
     },
     create: {
-      phone: APPLE_REVIEW_COMPANY_PHONE,
-      email: APPLE_REVIEW_COMPANY_EMAIL,
-      password_hash: appleReviewCompanyPasswordHash,
+      phone: '+994700000007',
+      email: COMPANY_EMAIL,
+      password_hash: companyPasswordHash,
       password_set_at: new Date(),
       role: 'company',
-      name: 'Hilton Baku Əməliyyat Meneceri',
+      name: 'Local Seed Company Manager',
     },
   });
 
   const company = await prisma.company.upsert({
     where: { user_id: companyUser.id },
     update: {
-      name: 'Hilton Baku',
+      name: 'Local Seed Company',
       status: 'approved',
       approved_at: new Date(),
       deleted_at: null,
     },
     create: {
       user_id: companyUser.id,
-      name: 'Hilton Baku',
+      name: 'Local Seed Company',
       status: 'approved',
       approved_at: new Date(),
     },
@@ -143,14 +116,13 @@ async function main() {
   console.log('Company seed reconciled.');
 
   await seedWorker({
-    phone: APPLE_REVIEW_WORKER_PHONE,
-    name: 'Elvin Məmmədov',
-    position: 'Ofisiant',
+    phone: '+994700000006',
+    name: 'Approved Seed Worker',
+    position: 'Event Service Worker',
     status: 'approved',
-    skills: [{ name: 'Servis', level: 4 }, { name: 'Qonaq qarşılama', level: 3 }],
+    skills: [{ name: 'Guest service', level: 4 }, { name: 'Event setup', level: 3 }],
     languages: ['Azərbaycan', 'English'],
-    password_hash: appleReviewWorkerPasswordHash,
-    reconcile_password: true,
+    password_hash: workerPasswordHash,
     position_slug: 'waiter-waitress',
   });
 
@@ -185,7 +157,7 @@ async function main() {
   const existingSeedOrder = await prisma.order.findFirst({
     where: {
       company_id: company.id,
-      title: { startsWith: 'Four Seasons Baku' },
+      title: { startsWith: 'Local seed event service' },
     },
     select: { id: true },
   });
@@ -194,16 +166,16 @@ async function main() {
     await prisma.order.create({
     data: {
       company_id: company.id,
-      title: 'Four Seasons Baku banket xidməti',
-      description: 'Axşam tədbiri üçün premium servis və zal dəstəyi.',
+      title: 'Local seed event service',
+      description: 'Local-only synthetic order used by development and CI smoke tests.',
       category: waiterPosition?.name_az ?? 'Ofisiant',
       shift_start: new Date(Date.now() + 24 * 60 * 60 * 1000),
       shift_end: new Date(Date.now() + 36 * 60 * 60 * 1000),
       required_count: 2,
       required_skills: ['Servis', 'Qonaq qarşılama'],
-      location: 'Hilton Baku, Bakı',
+      location: 'Synthetic Test Venue',
       pay_rate: 18,
-      notes: 'Banket növbəsi; klassik uniforma tələb olunur',
+      notes: 'Synthetic local seed fixture.',
       status: 'active',
       category_items: {
         create: {
@@ -212,7 +184,7 @@ async function main() {
           subdepartment_id: waiterPosition?.subdepartment_id,
           position_id: waiterPosition?.id,
           required_count: 2,
-          notes: 'Banket novbesi; klassik uniforma teleb olunur',
+          notes: 'Synthetic local seed fixture.',
         },
       },
     },

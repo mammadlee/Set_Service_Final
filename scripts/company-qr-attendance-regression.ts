@@ -181,7 +181,7 @@ async function main() {
     Date.now = realDateNow;
   }
   const companyA = { id: 'company-a', user_id: 'company-user-a', name: 'Müəssisə A', status: 'approved', deleted_at: null,
-    user: { id: 'company-user-a', name: 'Əlaqədar şəxs', phone: '+994501111111', is_active: true, deleted_at: null } };
+    user: { id: 'company-user-a', name: 'Əlaqədar şəxs', phone: '+994501111111', is_active: true, deleted_at: null, is_review_account: false } };
   const companyB = { ...companyA, id: 'company-b', user_id: 'company-user-b', name: 'Müəssisə B', user: { ...companyA.user, id: 'company-user-b' } };
   rows.company.push(companyA, companyB);
   const ordersService = await import('../src/modules/orders/orders.service');
@@ -206,7 +206,7 @@ async function main() {
   const otherOrder: Row = { ...order, id: 'order-b', company_id: companyB.id };
   rows.order.push(otherOrder);
   const worker = { id: '10000000-0000-4000-8000-000000000001', user_id: 'worker-user-a', status: 'approved', deleted_at: null, availability: true, positions: [],
-    user: { id: 'worker-user-a', name: 'İşçi A', phone: '+994502222222', is_active: true, deleted_at: null } };
+    user: { id: 'worker-user-a', name: 'İşçi A', phone: '+994502222222', is_active: true, deleted_at: null, is_review_account: false } };
   rows.worker.push(worker, { ...worker, id: 'worker-b', user_id: 'worker-user-b' });
 
   const query = (scope?: 'active' | 'staffing') => ListOrdersQuerySchema.parse({ scope, limit: 100 });

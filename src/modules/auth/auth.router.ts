@@ -23,6 +23,7 @@ import {
   WorkerLoginSchema,
   WorkerPhoneChangeConfirmSchema,
   WorkerPhoneChangeRequestSchema,
+  WorkerPhoneChangeV2RequestSchema,
   WorkerRegisterSchema,
   WorkerRequestOtpSchema,
   WorkerResetPasswordSchema,
@@ -36,8 +37,20 @@ import {
   webTokenResponse,
   type WebSessionRole,
 } from './web-session';
+import { authTarget, createRateLimitMiddleware } from '../../middleware/rate-limit';
 
 const router = Router();
+
+// Build 14 cannot perform password step-up. Keep this compatibility route
+// tightly bounded by authenticated actor and target in addition to the global
+// auth IP/target limiter. Build 15 and later use the v2 route below.
+const legacyWorkerPhoneChangeLimiter = createRateLimitMiddleware({
+  scope: 'legacy_worker_phone_change',
+  windowMs: 5 * 60 * 1000,
+  max: 5,
+  dimensions: ['actor', 'target'],
+  target: authTarget,
+});
 
 const clientIp = (req: Request) =>
   req.ip || req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim();
@@ -86,7 +99,13 @@ router.post('/worker/reset-password', validate(WorkerResetPasswordSchema), async
   } catch (e) { next(e); }
 });
 
-router.post('/worker/phone-change/request', requireAuth, validate(WorkerPhoneChangeRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/worker/phone-change/request', requireAuth, legacyWorkerPhoneChangeLimiter, validate(WorkerPhoneChangeRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await AuthService.requestWorkerPhoneChangeLegacy(req.user!.sub, req.body, clientIp(req)));
+  } catch (e) { next(e); }
+});
+
+router.post('/worker/phone-change/v2/request', requireAuth, validate(WorkerPhoneChangeV2RequestSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.requestWorkerPhoneChange(req.user!.sub, req.body, clientIp(req)));
   } catch (e) { next(e); }

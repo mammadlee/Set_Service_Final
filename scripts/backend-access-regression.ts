@@ -173,7 +173,7 @@ async function testCompanyWorkerReportBolaIsBlockedBeforeMetadataLookup(): Promi
   await withPrismaMethod(
     prisma.company as unknown as Record<string, unknown>,
     'findFirst',
-    async () => ({ id: companyId }),
+    async () => ({ id: companyId, user: { is_review_account: false } }),
     async () => withPrismaMethod(
       prisma.assignment as unknown as Record<string, unknown>,
       'findFirst',

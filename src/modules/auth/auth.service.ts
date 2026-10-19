@@ -19,6 +19,10 @@ import {
 } from '../../lib/company-enrollment';
 import { logger } from '../../lib/logger';
 import {
+  assertStoreReviewAccountMutationAllowed,
+  buildStoreReviewLoginAudit,
+} from '../../lib/store-review-account-guard';
+import {
   assertOtpCooldown,
   assertOtpNotBlocked,
   blockOtp,
@@ -47,6 +51,7 @@ import {
   WorkerLoginInput,
   WorkerPhoneChangeConfirmInput,
   WorkerPhoneChangeRequestInput,
+  WorkerPhoneChangeV2RequestInput,
   WorkerRegisterInput,
   WorkerRequestOtpInput,
   WorkerResetPasswordInput,
@@ -276,6 +281,10 @@ export async function requestWorkerOtp(input: WorkerRequestOtpInput, ip?: string
     throw Errors.badRequest('Bu işçi OTP əməliyyatı dəstəklənmir.', 'UNSUPPORTED_OTP_PURPOSE');
   }
 
+  if (purpose === 'worker_password_reset' && user.is_review_account) {
+    return genericOtpResponse();
+  }
+
   await requestOtp({ phone, purpose, user_id: user.id, ip_address: ip });
   return { otp_sent: true, purpose, retry_after_seconds: 60 };
 }
@@ -284,7 +293,13 @@ export async function loginWorker(input: WorkerLoginInput, ip?: string) {
   const phone = normalizePhone(input.phone);
   const user = await prisma.user.findUnique({ where: { phone }, include: { worker: true } });
   if (!user || user.role !== 'worker' || !user.worker || !(await verifyPassword(input.password, user.password_hash))) {
-    await recordLoginFailed(null, 'worker', 'worker', phone, { reason: 'invalid_credentials' });
+    await recordLoginFailed(
+      null,
+      'worker',
+      'worker',
+      failedLoginEntityId(user, phone),
+      { reason: 'invalid_credentials' },
+    );
     throw Errors.unauthorized('Telefon nömrəsi və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
   }
 
@@ -369,6 +384,7 @@ export async function createWorkerDocumentSession(input: WorkerLoginInput) {
 export async function forgotWorkerPassword(input: WorkerForgotPasswordInput, ip?: string) {
   const identity = await findPasswordResetUser('worker', input);
   if (!identity.user || !identity.worker) return genericOtpResponse();
+  if (identity.user.is_review_account) return genericOtpResponse();
 
   if (identity.email) {
     await requestEmailOtp({
@@ -391,6 +407,7 @@ export async function forgotWorkerPassword(input: WorkerForgotPasswordInput, ip?
 export async function resetWorkerPassword(input: WorkerResetPasswordInput) {
   const identity = await findPasswordResetUser('worker', input);
   if (!identity.user || !identity.worker) return genericPasswordResetResponse();
+  if (identity.user.is_review_account) return genericPasswordResetResponse();
 
   const otpTarget = identity.email ? emailOtpKey(identity.email) : identity.phone!;
   const otp = await verifyOtpProof({
@@ -416,8 +433,25 @@ export async function resetWorkerPassword(input: WorkerResetPasswordInput) {
 
 export async function requestWorkerPhoneChange(
   userId: string,
+  input: WorkerPhoneChangeV2RequestInput,
+  ip?: string
+) {
+  return requestWorkerPhoneChangeOtp(userId, input, ip, true);
+}
+
+export async function requestWorkerPhoneChangeLegacy(
+  userId: string,
   input: WorkerPhoneChangeRequestInput,
   ip?: string
+) {
+  return requestWorkerPhoneChangeOtp(userId, input, ip, false);
+}
+
+async function requestWorkerPhoneChangeOtp(
+  userId: string,
+  input: WorkerPhoneChangeRequestInput | WorkerPhoneChangeV2RequestInput,
+  ip: string | undefined,
+  requirePasswordStepUp: boolean,
 ) {
   const phone = normalizePhone(input.phone);
   const user = await prisma.user.findFirst({
@@ -425,21 +459,53 @@ export async function requestWorkerPhoneChange(
     include: { worker: true },
   });
   if (!user || !user.worker) throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
-  // Require a fresh knowledge factor before inspecting target availability or
-  // queuing a code to the new handset. A bearer token alone is insufficient to
-  // change the login identity.
-  if (!(await verifyPassword(input.current_password, user.password_hash))) {
-    throw Errors.unauthorized('Cari şifrə yanlışdır.', 'INVALID_CREDENTIALS');
+  assertStoreReviewAccountMutationAllowed(user);
+  if (requirePasswordStepUp) {
+    // Build 15+ requires a fresh knowledge factor before inspecting target
+    // availability or queuing a code to the new handset. A bearer token alone
+    // is insufficient to start the stronger flow.
+    const password = 'current_password' in input ? input.current_password : '';
+    if (!(await verifyPassword(password, user.password_hash))) {
+      throw Errors.unauthorized('Cari şifrə yanlışdır.', 'INVALID_CREDENTIALS');
+    }
   }
   if (user.phone === phone) {
     throw Errors.badRequest('Yeni telefon nömrəsi mövcud nömrədən fərqli olmalıdır.', 'PHONE_UNCHANGED');
   }
 
+  if (!requirePasswordStepUp) {
+    // The legacy Build 14 contract has no password field. Record use of this
+    // compatibility path without storing the target phone or request IP. OTP
+    // ownership and the atomic confirm step still prevent a bearer token alone
+    // from changing the login identity.
+    await recordAudit({
+      actor_id: user.id,
+      actor_role: 'worker',
+      action: 'status_changed',
+      entity_type: 'worker_phone',
+      entity_id: user.id,
+      metadata: {
+        event: 'worker_phone_change_requested',
+        contract: 'legacy_v1',
+        password_step_up: false,
+      },
+    });
+  }
+
   const existing = await prisma.user.findUnique({ where: { phone }, select: { id: true } });
   if (existing && existing.id !== user.id) {
-    // Do not reveal another account's registered phone identity. No OTP is
-    // delivered, while the observable response remains identical to an
-    // accepted request. Confirmation still enforces uniqueness transactionally.
+    if (!requirePasswordStepUp) {
+      // Preserve the deployed Build 14 contract: its UI only opens the OTP
+      // step after a successful response and otherwise renders this generic
+      // conflict. The compatibility route's resulting availability signal is
+      // bounded by the authenticated actor/target limiter and redacted audit.
+      throw Errors.conflict(
+        'Bu telefon nömrəsindən istifadə etmək mümkün deyil.',
+        'PHONE_ALREADY_REGISTERED',
+      );
+    }
+    // Build 15 has password step-up and a non-enumerating client message. Do
+    // not disclose another account's registered phone and do not send an OTP.
     return workerPhoneChangeRequestAccepted();
   }
 
@@ -449,7 +515,7 @@ export async function requestWorkerPhoneChange(
     // Cooldown, block, and OTP-specific rate state must not turn the generic
     // acknowledgement into a target-registration oracle. The stricter HTTP
     // auth limiter still returns 429 uniformly before this handler.
-    if (!isSuppressedPhoneChangeOtpError(error)) throw error;
+    if (!requirePasswordStepUp || !isSuppressedPhoneChangeOtpError(error)) throw error;
   }
   return workerPhoneChangeRequestAccepted();
 }
@@ -467,11 +533,12 @@ export async function confirmWorkerPhoneChange(
       deleted_at: null,
       worker: { is: { deleted_at: null } },
     },
-    select: { id: true, phone: true, session_version: true },
+    select: { id: true, phone: true, session_version: true, is_review_account: true },
   });
   if (!currentUser) {
     throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
   }
+  assertStoreReviewAccountMutationAllowed(currentUser);
 
   // A successful request may be retried after the client loses the response.
   // Only accept that retry when the submitted code matches a recently consumed
@@ -508,11 +575,12 @@ export async function confirmWorkerPhoneChange(
           deleted_at: null,
           worker: { is: { deleted_at: null } },
         },
-        select: { id: true, phone: true, session_version: true },
+        select: { id: true, phone: true, session_version: true, is_review_account: true },
       });
       if (!lockedUser) {
         throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
       }
+      assertStoreReviewAccountMutationAllowed(lockedUser);
       if (lockedUser.phone === phone) {
         return workerPhoneChangeResponse(lockedUser, true);
       }
@@ -650,6 +718,7 @@ export async function startEmailVerification(userId: string, email: string) {
       email_verified_at: true,
       pending_email: true,
       email_verification_sent_at: true,
+      is_review_account: true,
     },
   });
   if (!user) throw Errors.unauthorized('Giriş tələb olunur.', 'UNAUTHORIZED');
@@ -662,6 +731,7 @@ export async function startEmailVerification(userId: string, email: string) {
       email_verification_sent: false,
     };
   }
+  assertStoreReviewAccountMutationAllowed(user);
 
   const existing = await prisma.user.findFirst({
     where: {
@@ -738,9 +808,11 @@ export async function confirmEmailVerification(
           email_verification_expires_at: true,
           email_verification_attempts: true,
           email_verification_blocked_until: true,
+          is_review_account: true,
         },
       });
       if (!user) throw Errors.unauthorized('Giriş tələb olunur.', 'UNAUTHORIZED');
+      assertStoreReviewAccountMutationAllowed(user);
       if (user.email_verification_blocked_until && user.email_verification_blocked_until > now) {
         return {
           status: 'blocked' as const,
@@ -946,7 +1018,13 @@ export async function loginCompany(input: CompanyLoginInput, ip?: string) {
   const user = await prisma.user.findUnique({ where: { email }, include: { company: true } });
 
   if (!user || user.role !== 'company' || !user.company || !(await verifyPassword(input.password, user.password_hash))) {
-    await recordLoginFailed(null, 'company', 'company', email, { reason: 'invalid_credentials' });
+    await recordLoginFailed(
+      null,
+      'company',
+      'company',
+      failedLoginEntityId(user, email),
+      { reason: 'invalid_credentials' },
+    );
     throw Errors.unauthorized('Email və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
   }
   if (user.company.status !== 'approved') {
@@ -967,6 +1045,7 @@ export async function loginCompany(input: CompanyLoginInput, ip?: string) {
 export async function forgotCompanyPassword(input: CompanyForgotPasswordInput, ip?: string) {
   const identity = await findPasswordResetUser('company', input);
   if (!identity.user || !identity.company) return genericOtpResponse();
+  if (identity.user.is_review_account) return genericOtpResponse();
 
   if (identity.email) {
     await requestEmailOtp({
@@ -989,6 +1068,7 @@ export async function forgotCompanyPassword(input: CompanyForgotPasswordInput, i
 export async function resetCompanyPassword(input: CompanyResetPasswordInput) {
   const identity = await findPasswordResetUser('company', input);
   if (!identity.user || !identity.company) return genericPasswordResetResponse();
+  if (identity.user.is_review_account) return genericPasswordResetResponse();
 
   const otpTarget = identity.email ? emailOtpKey(identity.email) : identity.phone!;
   const otp = await verifyOtpProof({
@@ -1021,7 +1101,13 @@ export async function loginAdmin(input: AdminLoginInput, ip?: string) {
     !user.admin ||
     !(await verifyPassword(input.password, user.password_hash))
   ) {
-    await recordLoginFailed(null, 'super_admin', 'admin', email, { reason: 'invalid_credentials' });
+    await recordLoginFailed(
+      null,
+      'super_admin',
+      'admin',
+      failedLoginEntityId(user, email),
+      { reason: 'invalid_credentials' },
+    );
     throw Errors.unauthorized('Email və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
   }
 
@@ -1263,9 +1349,40 @@ export async function logoutByRefreshToken(refreshToken: string): Promise<void> 
 export async function registerFcmToken(userId: string, input: FcmTokenInput) {
   const user = await prisma.user.findFirst({
     where: { id: userId, deleted_at: null, is_active: true },
-    select: { id: true, role: true },
+    select: { id: true, role: true, is_review_account: true },
   });
   if (!user) throw Errors.unauthorized('Giriş tələb olunur.', 'UNAUTHORIZED');
+
+  if (user.is_review_account) {
+    const now = new Date();
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Review accounts must remain provider-silent. Revoke any stale tokens as
+      // part of registration so a previously captured device cannot be used.
+      await tx.deviceToken.updateMany({
+        where: {
+          user_id: userId,
+          revoked_at: null,
+          deleted_at: null,
+        },
+        data: {
+          revoked_at: now,
+          deleted_at: now,
+        },
+      });
+      await tx.user.updateMany({
+        where: { id: userId, is_review_account: true },
+        data: { fcm_token: null },
+      });
+    });
+
+    return {
+      id: null,
+      platform: input.platform ?? null,
+      app_role: user.role,
+      registered: false,
+      last_seen_at: null,
+    };
+  }
 
   const tokenHash = sha256(input.fcm_token);
   const now = new Date();
@@ -1703,15 +1820,22 @@ async function buildTokenResponse(userId: string, role: string, ip?: string) {
     session_version: user.session_version,
   });
   const refreshPayload = verifyRefreshToken(refreshToken);
-  await prisma.refreshToken.create({
-    data: {
-      user_id: userId,
-      token_hash: sha256(refreshToken),
-      jti: refreshPayload.jti,
-      family_id: refreshPayload.family_id!,
-      expires_at: getTokenExpiration(refreshToken),
-      created_by_ip: ip,
-    },
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.refreshToken.create({
+      data: {
+        user_id: userId,
+        token_hash: sha256(refreshToken),
+        jti: refreshPayload.jti,
+        family_id: refreshPayload.family_id!,
+        expires_at: getTokenExpiration(refreshToken),
+        created_by_ip: ip,
+      },
+    });
+    if (user.is_review_account) {
+      await tx.auditLog.create({
+        data: buildStoreReviewLoginAudit(user),
+      });
+    }
   });
 
   return tokenResponse(user, accessToken, refreshToken);
@@ -1852,4 +1976,15 @@ async function recordLoginFailed(
     entity_id: entityId,
     metadata,
   });
+}
+
+function failedLoginEntityId(
+  user: { id: string; is_review_account: boolean } | null,
+  normalizedIdentifier: string,
+): string {
+  // Reviewer identifiers are operational credentials distributed to external
+  // reviewers. Once the account resolves, keep those values out of audit rows
+  // even when the password is wrong; the immutable internal user id is enough
+  // for investigation. Unknown and ordinary accounts retain legacy behavior.
+  return user?.is_review_account === true ? user.id : normalizedIdentifier;
 }

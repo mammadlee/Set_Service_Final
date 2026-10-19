@@ -9,6 +9,7 @@ import {
   UpdateReportSchema,
 } from './moderation.schema';
 import * as Service from './moderation.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 const reportLimiter = createRateLimitMiddleware({
@@ -41,7 +42,10 @@ router.get(
   requirePermission('view_moderation'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await Service.listModerationReports(ListReportsSchema.parse(req.query)));
+      res.json(await Service.listModerationReports(
+        ListReportsSchema.parse(req.query),
+        isReviewScopedRequest(req),
+      ));
     } catch (error) {
       next(error);
     }
@@ -55,7 +59,7 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = ReportIdSchema.parse(req.params);
-      res.json(await Service.getModerationReport(id));
+      res.json(await Service.getModerationReport(id, isReviewScopedRequest(req)));
     } catch (error) {
       next(error);
     }
@@ -71,7 +75,12 @@ router.patch(
       const { id } = ReportIdSchema.parse(req.params);
       const input = UpdateReportSchema.parse(req.body);
       const actor = req.user! as { sub: string; role: 'admin' | 'super_admin' };
-      res.json(await Service.updateModerationReport(id, actor, input));
+      res.json(await Service.updateModerationReport(
+        id,
+        actor,
+        input,
+        isReviewScopedRequest(req),
+      ));
     } catch (error) {
       next(error);
     }

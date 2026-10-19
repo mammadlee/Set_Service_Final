@@ -452,6 +452,13 @@ components:
 
     WorkerPhoneChangeRequest:
       type: object
+      required: [phone]
+      additionalProperties: false
+      properties:
+        phone: { type: string, example: "+994501234569" }
+
+    WorkerPhoneChangeV2Request:
+      type: object
       required: [phone, current_password]
       additionalProperties: false
       properties:
@@ -1971,9 +1978,42 @@ paths:
     post:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
-      summary: Request OTP for worker phone number change
+      deprecated: true
+      summary: Request phone-change OTP using the Build 14 compatibility contract
       description: |
-        Requires the authenticated worker's current password as a step-up check before target-phone
+        Legacy Build 14 compatibility route accepting only `phone`. It remains protected by worker JWT,
+        strict IP/target rate limiting, an additional authenticated-actor/target limiter, and a redacted
+        audit event. It does not provide current-password step-up, so clients that support the v2 route
+        must not use it. A bearer token alone still cannot change the login identity: the target handset's
+        one-time code is required by the shared atomic confirmation route. To preserve the deployed Build 14
+        UI contract, an already-registered target returns the existing generic 409 conflict instead of opening
+        an OTP screen when no SMS was sent. This legacy availability signal is bounded by the additional
+        actor/target limiter and redacted audit and is removed from the password-protected v2 flow.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerPhoneChangeRequest' }
+      responses:
+        '200':
+          description: OTP request accepted; delivery is not guaranteed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '400': { description: Invalid phone number or the submitted phone is unchanged }
+        '401': { description: Worker authentication is required }
+        '404': { description: Worker profile not found }
+        '409': { description: Target phone cannot be used by the authenticated worker }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/worker/phone-change/v2/request:
+    post:
+      tags: [Auth]
+      security: [{ BearerAuth: [] }]
+      summary: Request phone-change OTP with current-password step-up
+      description: |
+        Build 15 and later route. Requires the authenticated worker's current password before target-phone
         availability is inspected. The worker phone identity is not changed until OTP confirmation succeeds.
         To prevent registered-phone enumeration, an already-registered target receives the same accepted
         response as an available target, but no OTP is sent. Therefore success acknowledges the request only;
@@ -1982,7 +2022,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/WorkerPhoneChangeRequest' }
+            schema: { $ref: '#/components/schemas/WorkerPhoneChangeV2Request' }
       responses:
         '200':
           description: Generic request acknowledgement; does not disclose target registration or OTP delivery
