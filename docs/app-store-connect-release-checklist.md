@@ -1,6 +1,13 @@
 # SET Service — App Store Connect release checklist
 
-Status: **manual account-holder work, not submitted**. Build 8 is already submitted/in testing; the responsive UI and review-account changes are prepared as source candidate `1.0.0+9`. Bundle ID in the iOS project is `az.setservice.app`. Confirm that identifier exists for the intended Apple Developer team and App Store Connect record and that build number 9 is still unused immediately before archive/upload. Play versionCode and iOS build number are independent counters. Do not reuse or overwrite the Build 8 IPA/archive.
+Status: **manual account-holder work, not submitted**. The release source is
+prepared as `1.0.0+15`; the local preparation started from
+`d42d6081b801f3d876ec585fe434a815e4cd551f`, and the final approved commit SHA
+must be recorded after all local checks. Bundle ID in the iOS project is
+`az.setservice.app`. Confirm that identifier exists for the intended Apple
+Developer team and App Store Connect record and recheck that build number 15 is
+unused immediately before archive/upload. Play versionCode and iOS build number
+are independent counters. Do not reuse or overwrite any previous IPA/archive.
 
 ## App Information — owner completion
 
@@ -34,4 +41,13 @@ Status: **manual account-holder work, not submitted**. Build 8 is already submit
 
 ## Release gates
 
-Xcode 26+/iOS 26 SDK+ macOS build, `pod install`, native SDK manifest/signature review, no-codesign build, signed archive validation, APNs/FCM device test, App Store Connect record/build-number check, reviewer accounts and privacy/metadata sign-off are outstanding. TestFlight upload, production App Store upload and Review submission each require separate explicit authorization. This checklist does not approve deployment.
+Before any push or pull request, remove only the `ios_release` push and
+pull-request mappings in the Bitrise dashboard and preserve both `run_tests`
+mappings. Capture the resulting manual-only trigger state; this configuration
+change has not been performed locally. A supported macOS/Xcode/iOS SDK build,
+`pod install`, native SDK manifest/signature review, no-code-sign build, signed
+archive validation, APNs/FCM device test, App Store Connect record/build-number
+check, reviewer accounts and privacy/metadata sign-off remain outstanding.
+TestFlight upload, production App Store upload, and Review submission each
+require separate explicit authorization. This checklist does not approve
+deployment.

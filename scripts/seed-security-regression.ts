@@ -67,6 +67,10 @@ function testSeedSourceSafety(): void {
     path.resolve('scripts/provision-store-review.ts'),
     'utf8',
   );
+  const runtimeProvisionerSource = fs.readFileSync(
+    path.resolve('scripts/run-store-review-provisioner.ts'),
+    'utf8',
+  );
   assert.ok(source.includes('assertSeedAllowed();'));
   assert.ok(source.includes("resolveSeedPassword('SEED_RESTRICTED_ADMIN_PASSWORD')"));
   assert.ok(source.includes("resolveSeedPassword('SEED_COMPANY_PASSWORD')"));
@@ -95,6 +99,11 @@ function testSeedSourceSafety(): void {
   assert.ok(provisionSource.includes('ALLOW_PRODUCTION_REVIEW_ADOPTION'));
   assert.ok(provisionSource.includes('pg_advisory_xact_lock'));
   assert.ok(provisionSource.includes('Prisma.TransactionIsolationLevel.Serializable'));
+  assert.ok(runtimeProvisionerSource.includes("type ProvisionerCommand = 'plan' | 'apply' | 'check'"));
+  assert.ok(runtimeProvisionerSource.includes('adoptExisting: false'));
+  assert.ok(runtimeProvisionerSource.includes('rotatePasswords: false'));
+  assert.ok(runtimeProvisionerSource.includes('assertStoreReviewProvisionAllowed(options)'));
+  assert.ok(!runtimeProvisionerSource.includes('console.log(config'));
 }
 
 function testSafeErrorName(): void {

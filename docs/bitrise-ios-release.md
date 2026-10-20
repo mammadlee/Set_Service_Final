@@ -1,12 +1,63 @@
-# Bitrise iOS release preparation — no build triggered
+# Bitrise iOS 1.0.0+15 release preparation — no build triggered
 
-This is a human-reviewed future workflow, not authorization to upload or deploy. Select the exact reviewed Git SHA on `codex/play-store-live-final-hardening` (or its later approved successor); do not build a moving branch head. Record SHA, UTC build time, Flutter version, Xcode/iOS SDK, CocoaPods version, bundle ID, `1.0.0+4` or approved next version/build number, and production HTTPS API define.
+This is a human-reviewed future workflow. It does not authorize a build,
+upload, deploy, or Bitrise configuration change. The current local release
+candidate was based on
+`d42d6081b801f3d876ec585fe434a815e4cd551f`; use the full SHA of the final
+approved release commit after local preparation and remote verification. Never
+build a moving branch head.
 
-1. Choose a macOS Bitrise stack with **Xcode 26+ and iOS 26 SDK+** (recheck Apple's current requirement when building). Install the project-compatible Flutter SDK, run `flutter --version`, `xcodebuild -version`, `xcrun --sdk iphoneos --show-sdk-version`, `pod --version`.
-2. In `apps/worker_app`, run `flutter clean`, `flutter pub get`, `flutter analyze`, `flutter test`. From `ios`, run normal `pod install` on the isolated CI checkout; use `pod repo update` only when resolution genuinely requires it. Inspect the resolved Podfile.lock, SDK privacy manifests/signatures and Xcode-generated privacy report. Do not commit generated secrets.
-3. Inject `Runner/GoogleService-Info.plist` through secure file storage with the matching iOS Firebase app. If push is enabled, configure the Apple App ID and APNs/Firebase mapping. The signed provisioning profile must supply the matching Push Notifications capability and `aps-environment`; do not hardcode a guessed entitlement. Test device token, refresh, delivery and logout token removal on a physical device.
-4. First run `flutter build ios --release --no-codesign` with production-safe defines. Inspect built Info.plist, privacy manifest, ATS, bundle ID/version, app icon, URL schemes, entitlements, native dependency list and absence of localhost/debug endpoints.
-5. Only after approval, connect the Apple Developer team, distribution certificate/private key and App Store provisioning profile in Bitrise secure signing storage. Validate a Release Archive and export IPA without upload. Validate real-device Worker/Company/Admin flows and screenshots.
-6. TestFlight upload is a separate **future approval gate**. App Store production upload and App Review submission are further distinct gates. An App Store Connect API key (`<ASC_KEY_ID>`, `<ASC_ISSUER_ID>`, `<ASC_P8_SECRET>`) is needed only if the chosen approved automation uses that API.
+The Bitrise dashboard was previously verified with these hosted trigger
+mappings:
 
-Never log or commit signing files, `.p8`, passwords or the real Firebase file. Check the next unused App Store Connect build number before any upload. No Bitrise job or external account state was changed in this phase.
+- `ios_release`: push only from `codex/play-store-live-final-hardening`, plus a
+  wildcard pull-request trigger.
+- `run_tests`: push only from `codex/play-store-live-final-hardening`, plus a
+  wildcard pull-request trigger.
+
+The `ios_release` workflow archives and uploads to App Store Connect, so either
+of its current mappings can start an automatic upload. The configuration is
+dashboard-hosted; there is no repository `bitrise.yml` that can safely change
+these mappings in this commit.
+
+Before pushing or opening a pull request, make the minimal dashboard change:
+
+1. Remove only the `ios_release` push trigger mapping.
+2. Remove only the `ios_release` pull-request trigger mapping.
+3. Leave both `run_tests` mappings unchanged.
+4. Save, reload the trigger page, and capture evidence that `ios_release` is
+   manual-only and `run_tests` remains enabled.
+
+This change has been prepared but has **not** been performed. Until its evidence
+is reviewed, do not push the release branch or open a pull request.
+
+For the approved manual build, select workflow `ios_release`, the exact remote
+commit SHA, and version `1.0.0+15`. Confirm the Bitrise checkout log shows that
+full SHA before signing. Build 15 was reported unused during local preparation;
+check App Store Connect again immediately before archive/upload because that
+external state can change.
+
+1. Choose a supported macOS Bitrise stack and recheck Apple's current Xcode/iOS
+   SDK requirement. The previous successful build #50 used Xcode 27.0. Record
+   `flutter --version`, `xcodebuild -version`, the iOS SDK, CocoaPods version,
+   bundle ID, version/build, production API define, selected workflow, and full
+   SHA.
+2. In `apps/worker_app`, run `flutter clean`, `flutter pub get`,
+   `flutter analyze`, and `flutter test`. Run normal `pod install` in `ios` and
+   inspect the resolved lockfile, privacy manifests/signatures, and generated
+   Xcode privacy report.
+3. Inject `Runner/GoogleService-Info.plist` through Bitrise secure file storage
+   for the matching iOS Firebase app. Keep signing certificates, profiles, API
+   keys, `.p8` content, and passwords out of Git and logs.
+4. Build the no-code-sign Release app first with
+   `--dart-define=BASE_URL=https://api.setservice.az`. Verify bundle ID
+   `az.setservice.app`, `CFBundleShortVersionString=1.0.0`,
+   `CFBundleVersion=15`, ATS, privacy manifest, app icons, URL schemes,
+   entitlements, and absence of localhost/debug endpoints.
+5. After the separate build approval, run the manual `ios_release` job for that
+   exact SHA. Confirm the signed archive identity and perform physical-device
+   Worker, Company, and Admin reviewer-login checks before submission.
+
+The App Store Connect upload produced by `ios_release` and the later App Review
+submission are separate approval gates. No Bitrise job or external account
+state was changed while preparing this document.

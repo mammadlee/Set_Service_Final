@@ -17,10 +17,12 @@ COPY prisma ./prisma
 RUN npm ci \
     && npx prisma generate
 
-COPY tsconfig.json swagger.yaml ./
+COPY tsconfig.json tsconfig.provisioner.json swagger.yaml ./
 COPY src ./src
+COPY scripts/provision-store-review.ts scripts/review-account-readiness.ts scripts/run-store-review-provisioner.ts ./scripts/
 RUN npm run build \
-    && find dist -type f -name '*.map' -delete
+    && ./node_modules/.bin/tsc -p tsconfig.provisioner.json \
+    && find dist provisioner-dist -type f -name '*.map' -delete
 
 FROM build AS production-dependencies
 RUN npm prune --omit=dev
@@ -56,6 +58,15 @@ COPY --chown=65532:65532 --from=build /app/swagger.yaml ./swagger.yaml
 
 USER 65532:65532
 ENTRYPOINT ["/nodejs/bin/node"]
+
+FROM app-runtime-base AS reviewer-provisioner
+COPY --chown=65532:65532 --from=production-dependencies /app/package.json /app/package-lock.json ./
+COPY --chown=65532:65532 --from=production-dependencies /app/node_modules ./node_modules
+COPY --chown=65532:65532 --from=build /app/provisioner-dist ./provisioner-dist
+COPY --chown=65532:65532 --from=build /app/prisma ./prisma
+USER 65532:65532
+ENTRYPOINT ["/nodejs/bin/node", "provisioner-dist/scripts/run-store-review-provisioner.js"]
+CMD ["plan"]
 
 FROM runtime-common AS outbox-worker
 ENV OUTBOX_HEALTH_PORT=3001

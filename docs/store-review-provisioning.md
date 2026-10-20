@@ -8,27 +8,76 @@ variables. Never place their values in a repository, command transcript,
 screenshot, issue, or application log.
 
 The generic `npm run db:seed` command is for local/CI fixtures. It is not the
-store-review installer and must not be run in production for this purpose.
+store-review installer and must not be run in production for this purpose. The
+release installer is the digest-pinned `reviewer-provisioner` image. It is a
+distroless, numeric-uid 65532 one-shot runtime with no shell, npm, npx, ts-node,
+or package manager. It accepts exactly `plan`, `apply`, or `check`; omitting the
+command safely defaults to read-only `plan`. The release entrypoint cannot adopt
+existing users or rotate passwords. Those remain separate exceptional tooling
+and require their independent gates, rehearsal, and approval.
+
+Define the reviewed image by registry digest, never a mutable tag. Inject the
+database connection, encryption key, five identifiers, and three passwords from
+the production secret manager. Do not put their values in shell history or
+command arguments, enable shell tracing, or print the resolved environment.
+The examples below use a short-lived, owner-readable environment file only as an
+operator interface; the approved platform secret-injection mechanism is
+preferred. Delete the file immediately after the one-off container exits.
+
+```bash
+REVIEWER_IMAGE='registry.example/setservice-reviewer-provisioner@sha256:<approved-digest>'
+REVIEW_ENV_FILE='/run/set-service/reviewer-provision.env'
+test "$(stat -c '%a' "$REVIEW_ENV_FILE")" = '600'
+cleanup_review_env() {
+  rm -f -- "$REVIEW_ENV_FILE"
+  unset REVIEW_ENV_FILE REVIEWER_IMAGE
+}
+trap cleanup_review_env EXIT HUP INT TERM
+
+docker run --rm --network set-service_egress \
+  --read-only --tmpfs /tmp:size=64m,mode=1777 \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --env-file "$REVIEW_ENV_FILE" "$REVIEWER_IMAGE" plan
+```
 
 ## Safe operator sequence
 
 1. Deploy the two ordered additive migrations and reviewed application code.
    They add `users.is_review_account` (default `false`), its concurrent role
    index, and the `login_succeeded` audit action. They create no accounts.
-2. Inject the eight `STORE_REVIEW_*` values into a short-lived one-off shell or
-   container. Keep `ALLOW_PRODUCTION_REVIEW_PROVISION=false` in long-running
-   services.
-3. Run `npm run store-review:plan`. This is read-only and reports counts only.
-   It never prints identifiers or passwords.
-4. Before every apply, including creation of new accounts, pause new outbox
+2. Confirm the active `waiter-waitress` position exists and resolves to an
+   active subdepartment and department. This taxonomy row is mandatory for the
+   synthetic Worker, Company orders, and assignments. Run a read-only query on
+   the isolated rehearsal clone first and then in the production preflight; do
+   not create or rename taxonomy during the release window.
+
+   ```sql
+   SELECT count(*) AS active_waiter_path
+   FROM positions AS p
+   JOIN subdepartments AS s ON s.id = p.subdepartment_id
+   JOIN departments AS d ON d.id = s.department_id
+   WHERE p.slug = 'waiter-waitress'
+     AND p.status = 'active'
+     AND s.status = 'active'
+     AND d.status = 'active';
+   ```
+
+   Continue only when the result is exactly `1`.
+3. Inject the eight `STORE_REVIEW_*` values and database/encryption variables
+   into the short-lived provisioner container. Keep
+   `ALLOW_PRODUCTION_REVIEW_PROVISION=false` in every long-running service.
+4. Run the digest-pinned image with `plan`. This is read-only and reports counts
+   only. It never prints identifiers, passwords, or connection strings.
+5. Before every apply, including creation of new accounts, pause new outbox
    claims and let every processing SMS/email provider event finish. Verify the
    provider-event processing count is zero. Then set both
    `ALLOW_PRODUCTION_REVIEW_PROVISION=true` and
-   `STORE_REVIEW_OUTBOX_QUIESCED=true` only in the one-off process and run
-   `npm run store-review:apply`. The second gate is an operator attestation;
+   `STORE_REVIEW_OUTBOX_QUIESCED=true` only in the one-off process and run the
+   immutable image with `apply`. The second gate is an operator attestation;
    it does not pause the worker itself.
-5. If the plan detects legacy accounts that predate `is_review_account`, stop
-   and verify their ownership independently. Adoption requires both the
+6. If the plan detects legacy accounts that predate `is_review_account`, stop
+   and verify their ownership independently. Do not attempt adoption through
+   the release image. The separate source-level maintenance tool requires both the
    `--adopt-existing` flag and the separate
    `ALLOW_PRODUCTION_REVIEW_ADOPTION=true` gate. The provisioner rejects split
    identifiers, configured emails found in any other account's pending-email
@@ -40,18 +89,18 @@ store-review installer and must not be run in production for this purpose.
    rejection timestamps, or existing Admin permissions. Adoption is only for
    an independently verified, otherwise pristine account scaffold whose Worker
    and Company moderation state is still at the schema default.
-6. The apply gate is mandatory in every environment, regardless of `NODE_ENV`
+7. The apply gate is mandatory in every environment, regardless of `NODE_ENV`
    or the database hostname. Adoption remains disabled by default and requires
    both `--adopt-existing` and the separate adoption gate. Never enable
    adoption merely to work around an identifier collision.
-7. Keep the outbox paused through apply and readiness. Passwords are preserved when they already match,
+8. Keep the outbox paused through apply and readiness. Passwords are preserved when they already match,
    but adoption always increments the session version, revokes every refresh
    and device token, clears FCM, and consumes outstanding OTP records. A
    password mismatch fails
    closed. An approved rotation requires `--rotate-passwords`; rotation bumps
    the session version, revokes refresh and device tokens, and clears the
    legacy FCM token.
-8. Every apply clears the legacy FCM field and revokes active device-delivery
+9. Every apply clears the legacy FCM field and revokes active device-delivery
    tokens, even when the password already matches. Company and Admin review
    emails are marked verified and stale pending-email challenges are cleared.
    If an already marked Worker or Company review profile is inactive,
@@ -59,9 +108,34 @@ store-review installer and must not be run in production for this purpose.
    as a reactivation: it increments the session version, revokes refresh and
    device tokens, and consumes outstanding user-bound and identifier-bound OTP
    records before restoring the synthetic profile.
-9. After readiness succeeds, resume the outbox worker. Immediately return all
+10. Run the same digest-pinned image with `check`. After readiness succeeds,
+   resume the outbox worker. Immediately return all
    three production gates to `false` and remove the short-lived secret
    injection.
+
+Approved apply/check command form after the outbox drain and gate attestation:
+
+```bash
+docker run --rm --network set-service_egress \
+  --read-only --tmpfs /tmp:size=64m,mode=1777 \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --env-file "$REVIEW_ENV_FILE" \
+  -e ALLOW_PRODUCTION_REVIEW_PROVISION=true \
+  -e STORE_REVIEW_OUTBOX_QUIESCED=true \
+  "$REVIEWER_IMAGE" apply
+
+docker run --rm --network set-service_egress \
+  --read-only --tmpfs /tmp:size=64m,mode=1777 \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --env-file "$REVIEW_ENV_FILE" "$REVIEWER_IMAGE" check
+
+cleanup_review_env
+trap - EXIT HUP INT TERM
+```
+
+The cleanup removes the transient file from the operator filesystem; it is not
+a substitute for secret-manager revocation or rotation. Do not place this file
+under `/opt/set-service` or in a backup path.
 
 The readiness check repeats the exact phone/email/pending-email collision scan;
 an otherwise healthy reviewer cohort is not ready while any cross-field
@@ -160,7 +234,7 @@ completed successfully.
 
 ## Final readiness
 
-Run `npm run store-review:check` from a one-off process with the same secret
+Run the digest-pinned reviewer-provisioner with `check` and the same secret
 injection. It checks normal password hashes, approved/active state, the review
 scope marker, exact least-privilege Admin permissions, profile completeness,
 owned private documents, synthetic orders, assignments, closed attendance,

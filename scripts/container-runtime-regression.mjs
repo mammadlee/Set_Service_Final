@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 
-const [apiImage, outboxImage, malwareScannerImage, migrationImage] = process.argv.slice(2);
-if (!apiImage || !outboxImage || !malwareScannerImage || !migrationImage) {
+const [apiImage, outboxImage, malwareScannerImage, migrationImage, provisionerImage] = process.argv.slice(2);
+if (!apiImage || !outboxImage || !malwareScannerImage || !migrationImage || !provisionerImage) {
   throw new Error(
-    'usage: node scripts/container-runtime-regression.mjs <api-image> <outbox-image> <malware-scanner-image> <migration-image>',
+    'usage: node scripts/container-runtime-regression.mjs <api-image> <outbox-image> <malware-scanner-image> <migration-image> <reviewer-provisioner-image>',
   );
 }
 
@@ -26,18 +26,23 @@ function inspect(image) {
 }
 
 const expectedCommands = new Map([
-  [apiImage, ['dist/index.js']],
-  [outboxImage, ['dist/outbox-worker.js']],
-  [malwareScannerImage, ['dist/malware-scanner/index.js']],
-  [migrationImage, ['scripts/run-prisma-migrate-deploy.mjs']],
+  [apiImage, { entrypoint: ['/nodejs/bin/node'], command: ['dist/index.js'], healthcheck: true }],
+  [outboxImage, { entrypoint: ['/nodejs/bin/node'], command: ['dist/outbox-worker.js'], healthcheck: true }],
+  [malwareScannerImage, { entrypoint: ['/nodejs/bin/node'], command: ['dist/malware-scanner/index.js'], healthcheck: true }],
+  [migrationImage, { entrypoint: ['/nodejs/bin/node'], command: ['scripts/run-prisma-migrate-deploy.mjs'], healthcheck: false }],
+  [provisionerImage, {
+    entrypoint: ['/nodejs/bin/node', 'provisioner-dist/scripts/run-store-review-provisioner.js'],
+    command: ['plan'],
+    healthcheck: false,
+  }],
 ]);
 
-for (const [image, expectedCommand] of expectedCommands) {
+for (const [image, expected] of expectedCommands) {
   const config = inspect(image);
   assert.equal(config.User, '65532:65532', `${image} must run as uid/gid 65532`);
-  assert.deepEqual(config.Entrypoint, ['/nodejs/bin/node']);
-  assert.deepEqual(config.Cmd, expectedCommand);
-  if (image === migrationImage) {
+  assert.deepEqual(config.Entrypoint, expected.entrypoint);
+  assert.deepEqual(config.Cmd, expected.command);
+  if (!expected.healthcheck) {
     assert.equal(config.Healthcheck, undefined);
   } else {
     assert.equal(config.Healthcheck?.Test?.[0], 'CMD');
@@ -63,25 +68,66 @@ for (const [image, expectedCommand] of expectedCommands) {
   ]);
 }
 
+for (const image of [migrationImage, provisionerImage]) {
+  docker([
+    'run',
+    '--rm',
+    '--entrypoint',
+    '/nodejs/bin/node',
+    image,
+    '-e',
+    `
+      require.resolve('@prisma/client');
+      for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
+        try {
+          require.resolve(dependency);
+          throw new Error(dependency + ' must not be present in the one-shot runtime image');
+        } catch (error) {
+          if (error?.code !== 'MODULE_NOT_FOUND') throw error;
+        }
+      }
+    `,
+  ]);
+}
+
 docker([
   'run',
   '--rm',
   '--entrypoint',
   '/nodejs/bin/node',
-  migrationImage,
+  provisionerImage,
   '-e',
   `
-    require.resolve('prisma');
-    for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
-      try {
-        require.resolve(dependency);
-        throw new Error(dependency + ' must not be present in the migration image');
-      } catch (error) {
-        if (error?.code !== 'MODULE_NOT_FOUND') throw error;
-      }
+    const fs = require('node:fs');
+    for (const path of [
+      'provisioner-dist/src/index.js',
+      'provisioner-dist/src/app.js',
+      'provisioner-dist/src/outbox-worker.js',
+      'provisioner-dist/src/malware-scanner',
+      'provisioner-dist/src/modules',
+    ]) {
+      if (fs.existsSync(path)) throw new Error(path + ' must not be present in the dedicated provisioner image');
     }
   `,
 ]);
+
+const invalidProvisioner = spawnSync('docker', [
+  'run', '--rm', provisionerImage, 'invalid-command',
+], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+assert.notEqual(invalidProvisioner.status, 0, 'provisioner must reject unknown commands');
+assert.match(
+  `${invalidProvisioner.stdout}\n${invalidProvisioner.stderr}`,
+  /STORE_REVIEW_PROVISIONER_COMMAND_INVALID/,
+);
+
+const extraProvisionerArgument = spawnSync('docker', [
+  'run', '--rm', provisionerImage, 'plan', '--adopt-existing',
+], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+assert.notEqual(extraProvisionerArgument.status, 0, 'provisioner must reject extra arguments');
+assert.match(
+  `${extraProvisionerArgument.stdout}\n${extraProvisionerArgument.stderr}`,
+  /STORE_REVIEW_PROVISIONER_COMMAND_INVALID/,
+);
 
 docker([
   'run',

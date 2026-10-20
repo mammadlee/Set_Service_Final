@@ -3,6 +3,7 @@
 !package.json
 !package-lock.json
 !tsconfig.json
+!tsconfig.provisioner.json
 !swagger.yaml
 !src
 !src/**
@@ -11,3 +12,6 @@
 !scripts/preflight-attendance-deploy.sql
 !scripts/preflight-attendance-deploy.mjs
 !scripts/run-prisma-migrate-deploy.mjs
+!scripts/provision-store-review.ts
+!scripts/review-account-readiness.ts
+!scripts/run-store-review-provisioner.ts

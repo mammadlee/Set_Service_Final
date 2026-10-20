@@ -537,6 +537,7 @@ jobs:
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target outbox-worker --tag setservice-outbox:${{ github.sha }} .
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target migration --tag setservice-migration:${{ github.sha }} .
           docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target malware-scanner --tag setservice-malware-scanner:${{ github.sha }} .
+          docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target reviewer-provisioner --tag setservice-reviewer-provisioner:${{ github.sha }} .
 
       - name: Verify non-root runtime metadata
         run: |
@@ -544,10 +545,10 @@ jobs:
             setservice-api:${{ github.sha }} \
             setservice-outbox:${{ github.sha }} \
             setservice-migration:${{ github.sha }} \
-            setservice-malware-scanner:${{ github.sha }}
+            setservice-malware-scanner:${{ github.sha }} \
+            setservice-reviewer-provisioner:${{ github.sha }}
           do
             test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "65532:65532"
-            test "$(docker image inspect --format '{{json .Config.Entrypoint}}' "$image")" = '["/nodejs/bin/node"]'
             docker run --rm --entrypoint /nodejs/bin/node "$image" -e "
               const fs = require('node:fs');
               for (const path of ['/bin/sh', '/usr/local/bin/npm', '/usr/local/bin/npx', '/usr/bin/psql']) {
@@ -564,17 +565,27 @@ jobs:
             setservice-outbox:${{ github.sha }} | grep -q "/health"
           docker image inspect --format '{{json .Config.Healthcheck.Test}}' \
             setservice-malware-scanner:${{ github.sha }} | grep -q "/health"
-          docker run --rm --entrypoint /nodejs/bin/node setservice-migration:${{ github.sha }} -e "
-            require.resolve('prisma');
-            for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
-              try {
-                require.resolve(dependency);
-                throw new Error(dependency + ' must not be present in the migration image');
-              } catch (error) {
-                if (error && error.code !== 'MODULE_NOT_FOUND') throw error;
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' setservice-api:${{ github.sha }})" = '["/nodejs/bin/node"]'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' setservice-outbox:${{ github.sha }})" = '["/nodejs/bin/node"]'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' setservice-migration:${{ github.sha }})" = '["/nodejs/bin/node"]'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' setservice-malware-scanner:${{ github.sha }})" = '["/nodejs/bin/node"]'
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' setservice-reviewer-provisioner:${{ github.sha }})" = '["/nodejs/bin/node","provisioner-dist/scripts/run-store-review-provisioner.js"]'
+          for image in \
+            setservice-migration:${{ github.sha }} \
+            setservice-reviewer-provisioner:${{ github.sha }}
+          do
+            docker run --rm --entrypoint /nodejs/bin/node "$image" -e "
+              require.resolve('@prisma/client');
+              for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
+                try {
+                  require.resolve(dependency);
+                  throw new Error(dependency + ' must not be present in the one-shot image');
+                } catch (error) {
+                  if (error && error.code !== 'MODULE_NOT_FOUND') throw error;
+                }
               }
-            }
-          "
+            "
+          done
 
       - name: Verify distroless runtime compatibility
         run: >-
@@ -583,10 +594,18 @@ jobs:
           setservice-outbox:${{ github.sha }}
           setservice-malware-scanner:${{ github.sha }}
           setservice-migration:${{ github.sha }}
+          setservice-reviewer-provisioner:${{ github.sha }}
 
       - name: Exercise migration image against PostgreSQL 16
         run: >-
           node scripts/migration-container-regression.mjs
+          setservice-migration:${{ github.sha }}
+          "$POSTGRES_CI_IMAGE"
+
+      - name: Exercise reviewer provisioner image against PostgreSQL 16
+        run: >-
+          node scripts/reviewer-provisioner-container-regression.mjs
+          setservice-reviewer-provisioner:${{ github.sha }}
           setservice-migration:${{ github.sha }}
           "$POSTGRES_CI_IMAGE"
 
@@ -622,6 +641,14 @@ jobs:
           output-file: setservice-malware-scanner.spdx.json
           upload-artifact: false
 
+      - name: Generate reviewer provisioner SPDX SBOM
+        uses: anchore/sbom-action@da167eac915b4e86f08b264dbdbc867b61be6f0c # v0.20.6
+        with:
+          image: setservice-reviewer-provisioner:${{ github.sha }}
+          format: spdx-json
+          output-file: setservice-reviewer-provisioner.spdx.json
+          upload-artifact: false
+
       - name: Scan release images with immutable Trivy 0.76.0
         shell: bash
         run: |
@@ -631,7 +658,8 @@ jobs:
             setservice-api:${{ github.sha }} \
             setservice-outbox:${{ github.sha }} \
             setservice-migration:${{ github.sha }} \
-            setservice-malware-scanner:${{ github.sha }}
+            setservice-malware-scanner:${{ github.sha }} \
+            setservice-reviewer-provisioner:${{ github.sha }}
           do
             docker run --rm \
               --volume /var/run/docker.sock:/var/run/docker.sock \
@@ -654,6 +682,7 @@ jobs:
             setservice-outbox.spdx.json
             setservice-migration.spdx.json
             setservice-malware-scanner.spdx.json
+            setservice-reviewer-provisioner.spdx.json
           if-no-files-found: error
           retention-days: 30
 

@@ -1,6 +1,12 @@
 # iOS final validation command pack
 
-Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands have not been run here and no signed archive or IPA has been created. Build 8 is already submitted/in testing. Execute the next validation from the exact reviewed `1.0.0+9` SHA on `codex/play-store-live-final-hardening` (or an explicitly approved successor).
+Status: **PENDING MACOS EXECUTION**. The current host is Windows; these commands
+have not been run here and no signed archive or IPA has been created. Execute
+the next validation for `1.0.0+15` from the exact final approved SHA. The local
+preparation started from
+`d42d6081b801f3d876ec585fe434a815e4cd551f`; do not treat that baseline or a
+moving branch head as the final release identity. Recheck in App Store Connect
+that build 15 is unused immediately before archive/upload.
 
 ## Toolchain and source checks
 
@@ -42,7 +48,7 @@ Inspect the built app before any signing step:
 
 - `CFBundleIdentifier=az.setservice.app`
 - `CFBundleShortVersionString=1.0.0`
-- `CFBundleVersion=9`; confirm in App Store Connect that it is unused before upload
+- `CFBundleVersion=15`; confirm in App Store Connect that it is unused before upload
 - HTTPS production API only; no localhost or debug endpoint
 - ATS does not allow arbitrary loads
 - camera/photo usage strings are present; no location/microphone/tracking strings
@@ -53,6 +59,11 @@ Inspect the built app before any signing step:
 ## Archive validation — no upload
 
 Inject signing through the approved CI/keychain only. Do not put certificates, profiles, `.p8` keys or passwords in Git.
+
+Before pushing or opening a pull request, remove only the `ios_release` push and
+pull-request trigger mappings in the Bitrise dashboard, preserve both
+`run_tests` mappings, and capture evidence that `ios_release` is manual-only.
+This dashboard change has not been performed by the local preparation.
 
 ```bash
 xcodebuild -workspace ios/Runner.xcworkspace \

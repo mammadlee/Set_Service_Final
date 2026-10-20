@@ -12,7 +12,8 @@ migration, service restart, reviewer-account creation, push, or store build.
    `git rev-parse HEAD` to equal the approved full SHA. Verify signatures or
    protected-branch provenance according to repository policy.
 3. On a trusted Linux builder, build `api`, `outbox-worker`,
-   `malware-scanner`, and `migration` from that SHA for `linux/amd64`. Pass the
+   `malware-scanner`, `migration`, and `reviewer-provisioner` from that SHA for
+   `linux/amd64`. Pass the
    base image by digest, add `org.opencontainers.image.revision=<full SHA>`,
    create SBOM/provenance, and tag each artifact with the full SHA. Never use
    `latest` or a moving branch as the release identity.
@@ -28,11 +29,27 @@ docker buildx build --pull --platform linux/amd64 --target api \
   --provenance=mode=max --sbom=true --push .
 ```
 
-Repeat for the other three Dockerfile targets with their distinct repository
+Repeat for the other four Dockerfile targets with their distinct repository
 names. Resolve and record each registry digest. Scan and sign by digest, verify
 SBOM/provenance and revision labels, then create a reviewed deployment manifest
 that references only `repository@sha256:<digest>` values. Validate Compose with
 `config -q`; do not print the resolved environment.
+
+The reviewer-provisioner must retain its numeric uid/gid 65532 distroless
+runtime and direct Node entrypoint. It contains no shell, npm, npx, ts-node, or
+package manager. Its only accepted commands are `plan`, `apply`, and `check`,
+with `plan` as the default. Use the digest-pinned image for ordinary reviewer
+provisioning. Account adoption and password rotation remain separate tooling;
+the release image must not expose those flags.
+
+The protected GitHub Actions variables for this release are:
+
+```text
+NODE_BASE_IMAGE=node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315
+RUNTIME_BASE_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:59c479c9b8c123e66047315c968aa2d35e31ae5149c856e4110a79c8b3563f0b
+POSTGRES_CI_IMAGE=postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+REDIS_CI_IMAGE=redis:7.4.10-alpine3.21@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+```
 
 The current `scripts/deploy-production.sh` builds local mutable tags and couples
 migration with rollout. It must not be used unchanged for this digest-pinned,
@@ -47,7 +64,9 @@ archive checksum during the approved window.
 
 1. Complete the Neon clone/restore rehearsal and approve its evidence.
 2. Run the production read-only audit and reconcile the exact pending migration
-   list and lock state.
+   list and lock state. Confirm the `waiter-waitress` position and its parent
+   subdepartment and department are active; reviewer provisioning must stop if
+   this taxonomy path is absent or duplicated.
 3. Keep the current services running while the digest-pinned migration image
    performs the approved preflight and migration. Use its default timeout-
    enforcing command; a lock timeout aborts the release and is not retried.
@@ -60,8 +79,9 @@ archive checksum during the approved window.
    `setservice_outbox_queue_events{state="dead"} > 0`, current-batch failures,
    pending growth, and heartbeat staleness.
 7. Provisioning is a later, separate approval. Pause and drain the outbox for
-   every reviewer apply, set the one-off quiescence gate, apply, run readiness,
-   clear all gates, and only then resume the worker.
+   every reviewer apply, run `plan`, set the one-off apply and quiescence gates,
+   run `apply`, then run `check` with the same digest-pinned provisioner image.
+   Clear all gates and secret injection before resuming the worker.
 
 ## Application rollback
 

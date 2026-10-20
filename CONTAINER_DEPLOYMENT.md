@@ -1,14 +1,15 @@
 # Container deployment
 
-The production image is built once and exposes separate targets for schema
-migrations, the HTTP API, and the outbox processor. Runtime secrets are supplied
+The production image is built once and exposes five separate targets: schema
+migration, HTTP API, outbox processing, malware scanning, and one-shot reviewer
+provisioning. Runtime secrets are supplied
 by the deployment platform; they are never baked into an image.
 
 Before building, set both immutable base-image inputs. `NODE_BASE_IMAGE` is the
 verified official multi-architecture manifest for Node 24.22.0 trixie-slim and
 is used only for build tooling. `RUNTIME_BASE_IMAGE` is the official nonroot
-distroless Node 24 Debian 13 manifest used by the API, outbox, migration, and
-malware-scanner final images. Each reference must include the full lowercase
+distroless Node 24 Debian 13 manifest used by all five final images. Each
+reference must include the full lowercase
 SHA-256 digest published by its official registry. The Dockerfile intentionally
 has no mutable fallback and fails when either value is absent.
 
@@ -27,13 +28,22 @@ docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_
 docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target outbox-worker -t setservice-outbox:release .
 docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target migration -t setservice-migration:release .
 docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target malware-scanner -t setservice-malware-scanner:release .
+docker build --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" --target reviewer-provisioner -t setservice-reviewer-provisioner:release .
 ```
 
-CI additionally requires protected repository variables `POSTGRES_CI_IMAGE` and
-`REDIS_CI_IMAGE`. They must identify fully versioned official Postgres 16
-bookworm and Redis 7 alpine images, respectively, each followed by a verified
-`@sha256:` manifest digest. The immutable-input gate validates all four image
-references, including `RUNTIME_BASE_IMAGE`, before any dependent job can start.
+Configure these exact protected GitHub Actions variables for the reviewed
+release. Re-verify each official manifest before changing it:
+
+```text
+NODE_BASE_IMAGE=node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315
+RUNTIME_BASE_IMAGE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:59c479c9b8c123e66047315c968aa2d35e31ae5149c856e4110a79c8b3563f0b
+POSTGRES_CI_IMAGE=postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4
+REDIS_CI_IMAGE=redis:7.4.10-alpine3.21@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+```
+
+The immutable-input gate validates all four references before any dependent job
+starts. PostgreSQL and Redis are CI integration dependencies; the other two are
+the build and runtime bases.
 
 Run the migration target as a one-off release job before rolling out the API and
 worker. On the SET Service VPS, use the production Compose file so API, Redis,
@@ -50,9 +60,13 @@ Only Caddy publishes host ports 80 and 443. See
 [`PRODUCTION_DEPLOYMENT.md`](./PRODUCTION_DEPLOYMENT.md) for the complete VPS
 sequence, migration preflight, verification, and rollback procedure.
 
-The API, outbox, migration, and malware-scanner targets run as numeric uid/gid
-65532 on a shell-free distroless runtime and invoke Node directly, without npm,
-psql, or a package manager. The migration target calls the vendored Prisma CLI
+All five targets run as numeric uid/gid 65532 on a shell-free distroless runtime
+and invoke Node directly, without npm, npx, ts-node, psql, or a package manager.
+The reviewer-provisioner is a one-shot image with `plan`, `apply`, and `check`
+commands; its default command is the read-only `plan`. Its release entrypoint
+does not expose adoption or password rotation. Those exceptional operations
+remain separate operator tooling with their independent gates and approval.
+The migration target calls the vendored Prisma CLI
 through a Node wrapper that appends fixed session options to both database URLs:
 `lock_timeout=5s`, `statement_timeout=15min`, and
 `idle_in_transaction_session_timeout=60s`. It also runs its read-only attendance

@@ -23,6 +23,7 @@ const attendancePreflight = read('scripts/preflight-attendance-deploy.mjs');
 const attendancePreflightSql = read('scripts/preflight-attendance-deploy.sql');
 const migrationRunner = read('scripts/run-prisma-migrate-deploy.mjs');
 const migrationContainerRegression = read('scripts/migration-container-regression.mjs');
+const provisionerContainerRegression = read('scripts/reviewer-provisioner-container-regression.mjs');
 const neonRehearsal = read('docs/neon-reviewer-release-rehearsal.md');
 const immutableRelease = read('docs/immutable-reviewer-release.md');
 
@@ -106,7 +107,9 @@ assert.match(dockerfile, /FROM runtime-common AS api/);
 assert.match(dockerfile, /FROM runtime-common AS outbox-worker/);
 assert.match(dockerfile, /FROM app-runtime-base AS migration/);
 assert.match(dockerfile, /FROM app-runtime-base AS malware-scanner/);
+assert.match(dockerfile, /FROM app-runtime-base AS reviewer-provisioner/);
 assert.match(dockerfile, /dist\/malware-scanner\/index\.js/);
+assert.match(dockerfile, /provisioner-dist\/scripts\/run-store-review-provisioner\.js/);
 assert.match(dockerfile, /USER 65532:65532/);
 assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
 assert.equal(compose.services.api.init, true);
@@ -121,6 +124,8 @@ assert.equal(
 );
 assert.doesNotMatch(dockerfile, /COPY\s+\.\s+\./);
 assert.match(dockerignore, /!prisma\/\*\*/);
+assert.match(dockerignore, /!tsconfig\.provisioner\.json/);
+assert.match(dockerignore, /!scripts\/run-store-review-provisioner\.ts/);
 assert.doesNotMatch(dockerignore, /!apps/);
 
 assert.match(deploy, /set -Eeuo pipefail/);
@@ -178,7 +183,15 @@ assert.match(migrationContainerRegression, /P3009/);
 assert.match(migrationContainerRegression, /unfinished\|not_rolled_back/);
 assert.match(migrationContainerRegression, /information_schema\.columns/);
 assert.match(migrationContainerRegression, /pg_indexes/);
+assert.match(provisionerContainerRegression, /'--read-only'/);
+assert.match(provisionerContainerRegression, /'\/tmp:size=64m,mode=1777'/);
+assert.match(provisionerContainerRegression, /'--cap-drop',[\s\S]*?'ALL'/);
+assert.match(provisionerContainerRegression, /'no-new-privileges:true'/);
 assert.match(read('.github/workflows/ci.yml'), /Exercise migration image against PostgreSQL 16/);
+assert.match(
+  read('.github/workflows/ci.yml'),
+  /Exercise reviewer provisioner image against PostgreSQL 16/,
+);
 
 for (const phrase of [
   'protected point-in-time child branch',

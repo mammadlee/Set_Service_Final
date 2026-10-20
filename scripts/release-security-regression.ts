@@ -260,13 +260,13 @@ function testCiWorkflow(): void {
   assert.doesNotMatch(workflowText, /node-version:\s+(?:20|22|24)\s*$/m);
   assert.equal(
     (workflowText.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
-    4,
+    5,
   );
   assert.equal(
     (workflowText.match(/--build-arg RUNTIME_BASE_IMAGE="\$RUNTIME_BASE_IMAGE"/g) ?? []).length,
-    4,
+    5,
   );
-  assert.equal((workflowText.match(/uses: anchore\/sbom-action@/g) ?? []).length, 4);
+  assert.equal((workflowText.match(/uses: anchore\/sbom-action@/g) ?? []).length, 5);
   assert.doesNotMatch(workflowText, /uses: aquasecurity\/trivy-action@/);
   assert.match(
     workflowText,
@@ -282,6 +282,7 @@ function testCiWorkflow(): void {
     'setservice-outbox',
     'setservice-migration',
     'setservice-malware-scanner',
+    'setservice-reviewer-provisioner',
   ]) {
     assert.match(workflowText, new RegExp(`${image}:\\$\\{\\{ github\\.sha \\}\\}`));
   }
@@ -334,6 +335,17 @@ function testContainerPolicy(): void {
   assert.match(dockerfile, /CMD \["dist\/outbox-worker\.js"\]/);
   assert.match(dockerfile, /FROM app-runtime-base AS malware-scanner[\s\S]*USER 65532:65532[\s\S]*HEALTHCHECK[\s\S]*\/health/);
   assert.match(dockerfile, /CMD \["dist\/malware-scanner\/index\.js"\]/);
+  const provisionerStage = dockerfile.match(
+    /FROM app-runtime-base AS reviewer-provisioner([\s\S]*?)FROM runtime-common AS outbox-worker/,
+  )?.[1];
+  assert.ok(provisionerStage, 'reviewer provisioner stage was not found');
+  assert.match(
+    provisionerStage,
+    /ENTRYPOINT \["\/nodejs\/bin\/node", "provisioner-dist\/scripts\/run-store-review-provisioner\.js"\]/,
+  );
+  assert.match(provisionerStage, /CMD \["plan"\]/);
+  assert.match(provisionerStage, /USER 65532:65532/);
+  assert.doesNotMatch(provisionerStage, /(?:npm|npx|ts-node|typescript|\/bin\/sh|HEALTHCHECK)/);
   assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
   assert.doesNotMatch(dockerfile, /CMD \["npm", "run", "start:(?:api|outbox)"\]/);
   assert.doesNotMatch(dockerfile, /postgresql-client/);
@@ -356,17 +368,22 @@ function testRunbooks(): void {
   const containerRunbook = read('CONTAINER_DEPLOYMENT.md');
   assert.equal(
     (containerRunbook.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
-    4,
+    5,
   );
   assert.equal(
     (containerRunbook.match(/--build-arg RUNTIME_BASE_IMAGE="\$RUNTIME_BASE_IMAGE"/g) ?? []).length,
-    4,
+    5,
   );
-  for (const target of ['api', 'outbox-worker', 'migration', 'malware-scanner']) {
+  for (const target of ['api', 'outbox-worker', 'migration', 'malware-scanner', 'reviewer-provisioner']) {
     assert.match(containerRunbook, new RegExp(`--target ${target} `));
   }
   assert.match(containerRunbook, /POSTGRES_CI_IMAGE/);
   assert.match(containerRunbook, /REDIS_CI_IMAGE/);
+  const reviewerRunbook = read('docs/store-review-provisioning.md');
+  assert.equal((reviewerRunbook.match(/--network set-service_egress/g) ?? []).length, 3);
+  assert.equal((reviewerRunbook.match(/--read-only --tmpfs \/tmp:size=64m,mode=1777/g) ?? []).length, 3);
+  assert.equal((reviewerRunbook.match(/--cap-drop ALL --security-opt no-new-privileges:true/g) ?? []).length, 3);
+  assert.doesNotMatch(reviewerRunbook, /set-service_default/);
 }
 
 function testP0RotationControls(): void {
