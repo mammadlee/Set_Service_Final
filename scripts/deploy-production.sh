@@ -66,18 +66,19 @@ info "Building API, malware scanner, outbox worker, and migration images"
 "${compose[@]}" build --pull api malware-scanner outbox-worker migrate
 
 info "Validating production environment without connecting to providers"
-"${compose[@]}" run --rm --no-deps --entrypoint node api \
+"${compose[@]}" run --rm --no-deps --entrypoint /nodejs/bin/node api \
   -e 'require("./dist/lib/check-env").checkEnv()'
 
 info "Validating Prisma schema"
-"${compose[@]}" --profile tools run --rm --no-deps migrate npx prisma validate
+"${compose[@]}" --profile tools run --rm --no-deps migrate \
+  node_modules/prisma/build/index.js validate
 
 info "Running read-only attendance migration preflight"
-"${compose[@]}" --profile tools run --rm --no-deps --entrypoint sh migrate \
-  -c 'psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f scripts/preflight-attendance-deploy.sql'
+"${compose[@]}" --profile tools run --rm --no-deps migrate \
+  scripts/preflight-attendance-deploy.mjs
 
 info "Applying approved Prisma migrations"
-"${compose[@]}" --profile tools run --rm --no-deps migrate npm run db:migrate:deploy
+"${compose[@]}" --profile tools run --rm --no-deps migrate
 
 info "Starting or updating production services"
 "${compose[@]}" up -d --remove-orphans redis clamav malware-scanner outbox-worker api caddy
@@ -85,7 +86,7 @@ info "Starting or updating production services"
 info "Waiting for API dependency readiness"
 ready=false
 for _ in $(seq 1 30); do
-  if "${compose[@]}" exec -T api node -e '
+  if "${compose[@]}" exec -T api /nodejs/bin/node -e '
     fetch("http://127.0.0.1:3000/ready")
       .then((response) => process.exit(response.ok ? 0 : 1))
       .catch(() => process.exit(1));

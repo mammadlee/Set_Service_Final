@@ -59,11 +59,14 @@ age without SQL text, and initial WAL LSN. Warm the clone and keep cold- and
 warm-cache timing separate.
 
 Run the exact digest-pinned migration image with both `DATABASE_URL` and
-`DIRECT_URL` pointed at the clone direct endpoint. Set `lock_timeout=5s`,
-`statement_timeout=15min`, and `idle_in_transaction_session_timeout=60s`.
+`DIRECT_URL` pointed at the clone direct endpoint. Its default Node wrapper must
+enforce `lock_timeout=5s`, `statement_timeout=15min`, and
+`idle_in_transaction_session_timeout=60s` on both URLs. Do not override the
+entrypoint or default command for the apply step.
 
 1. Run `prisma validate`.
-2. Run `scripts/preflight-attendance-deploy.sql` read-only.
+2. Run `scripts/preflight-attendance-deploy.mjs`; it executes the immutable
+   `scripts/preflight-attendance-deploy.sql` inside a read-only transaction.
 3. Run `prisma migrate status` and require exactly the three migrations above.
 4. Run `prisma migrate deploy` once. Do not automatically retry a lock timeout.
 5. Observe aggregate locks, connections, WAL growth and
@@ -72,6 +75,26 @@ Run the exact digest-pinned migration image with both `DATABASE_URL` and
    external providers replaced by sinks. Cover role login/profile, order and
    assignment list/detail, safe writes, legacy and versioned phone change, QR
    check-in/out and duplicate prevention, and in-app notifications.
+
+### Required lock-timeout recovery rehearsal
+
+Deliberately hold an `ACCESS EXCLUSIVE` lock on the clone's `assignments`
+table and run the digest-pinned migration image once. Require a failure in
+about five seconds that identifies
+`20261014120000_assignment_attendance_activity`, Prisma `P3018`, and PostgreSQL
+`55P03` (or the equivalent lock-timeout text). Prove from aggregate metadata
+that the newest migration row is unfinished and not rolled back, while all
+three assignment columns and all three indexes named above remain absent.
+Also prove a second deploy is blocked by `P3009`; do not loop it.
+
+With the lock released, rehearse the approval-gated recovery described in
+`PRODUCTION_DEPLOYMENT.md`. Only after the absence checks and two-person clone
+approval, run `migrate resolve --rolled-back
+20261014120000_assignment_attendance_activity` using the same immutable
+`repository@sha256:...` migration image. Confirm that resolve changes only the
+migration ledger, then rerun the read-only preflight and status before one
+controlled deploy. If a column/index exists, the error differs, or state is
+uncertain, stop and restore the rehearsal clone instead of resolving.
 
 Acceptance requires all three migrations finished with expected checksums, no
 rolled-back/unfinished migration, no schema drift, four new indexes ready and

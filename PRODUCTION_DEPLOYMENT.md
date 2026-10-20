@@ -302,14 +302,57 @@ assessing their lock profiles separately:
   index if interrupted. Confirm `indisvalid` and `indisready` after migration.
 
 Before running `prisma migrate deploy`, capture the exact migration state,
-check for waiting locks and long transactions, record a tested backup/PITR
-restore point, and set an operator-approved lock-wait policy for the change
-window. Do not edit an already-applied migration or mark a failed migration as
+check for waiting locks and long transactions, and record a tested backup/PITR
+restore point. The migration image enforces `lock_timeout=5s`,
+`statement_timeout=15min`, and `idle_in_transaction_session_timeout=60s` on the
+actual Prisma migration connections. A lock timeout is a hard stop and must not
+be retried automatically. Prisma records this PostgreSQL `55P03` failure as
+`P3018`, with an unfinished row that makes a later deploy fail with `P3009`.
+Do not edit an already-applied migration or mark a failed migration as
 successful merely to continue deployment. Application rollback may leave these
 additive columns, enum value, and valid indexes in place. If reviewer accounts
 have already been provisioned, do not roll back to code that lacks reviewer
 isolation until those accounts are safely deactivated through the reviewed
 cleanup procedure.
+
+#### Approval-gated recovery after a lock timeout
+
+Keep the existing application services running and stop the release. An
+operator and database owner must inspect the failed migration row and the
+schema without printing connection strings or row data. For
+`20261014120000_assignment_attendance_activity`, require all of this evidence:
+
+- its newest `_prisma_migrations` row is unfinished, not rolled back, and its
+  redacted failure category is `P3018`/`55P03`;
+- `attendance_activity_at`, `last_checkin_at`, and `last_checkout_at` are all
+  absent from `assignments`;
+- `assignments_attendance_activity_at_idx`,
+  `assignments_last_checkin_at_idx`, and
+  `assignments_last_checkout_at_idx` are all absent;
+- no later release migration was attempted, the blocking transaction is gone,
+  and backup/PITR plus the clone restore rehearsal remain valid.
+
+If any object exists, the error is different, or the result is uncertain, do
+not resolve or retry. Preserve evidence, rehearse recovery on the restored
+clone, and escalate to the database owner. Only when every absence check is
+proven and a separate recovery approval is recorded may the operator use the
+same reviewed migration image by immutable registry digest:
+
+```bash
+# MIGRATION_IMAGE must be the approved repository@sha256:... reference.
+# DATABASE_URL and DIRECT_URL remain in the protected environment and are not echoed.
+docker run --rm --init --read-only --tmpfs /tmp:size=64m,mode=1777 \
+  --env DATABASE_URL --env DIRECT_URL \
+  --entrypoint /nodejs/bin/node "$MIGRATION_IMAGE" \
+  node_modules/prisma/build/index.js migrate resolve \
+  --rolled-back 20261014120000_assignment_attendance_activity
+```
+
+The resolve command records the failed transaction as rolled back; it does not
+apply schema changes. Re-run the read-only preflight and `prisma migrate
+status`, recapture lock/transaction evidence, and obtain a new migration-window
+approval before one controlled deploy attempt. Never run `resolve --applied`
+for this failure and never loop or automatically retry the migration command.
 
 ```bash
 cd /opt/set-service
@@ -349,13 +392,17 @@ export RELEASE_TAG="${RELEASE_SHA:0:12}"
 docker compose -f docker-compose.prod.yml --env-file .env config -q
 docker compose -f docker-compose.prod.yml --env-file .env pull redis caddy clamav
 docker compose -f docker-compose.prod.yml --env-file .env build --pull api malware-scanner outbox-worker migrate
-docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate npx prisma validate
-docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate npm run db:migrate:deploy
+docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate node_modules/prisma/build/index.js validate
+docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate scripts/preflight-attendance-deploy.mjs
+docker compose -f docker-compose.prod.yml --env-file .env --profile tools run --rm --no-deps migrate
 docker compose -f docker-compose.prod.yml --env-file .env up -d --remove-orphans redis clamav malware-scanner outbox-worker api caddy
 ```
 
-The deployment helper additionally runs the required attendance preflight before
-the migration command. Prefer the helper for the real release.
+The migration image is shell-free and has no npm or psql. Its Node entrypoint
+invokes a checked-in wrapper around the vendored Prisma CLI so the migration
+session receives the fixed lock, statement, and idle timeouts above; the
+attendance preflight is a read-only Prisma transaction. Prefer the helper for
+the real release.
 
 ## 8. Verification and operations
 
@@ -365,12 +412,12 @@ the migration command. Prefer the helper for the real release.
 cd /opt/set-service
 docker compose -f docker-compose.prod.yml --env-file .env ps
 docker compose -f docker-compose.prod.yml --env-file .env exec -T api \
-  node -e 'fetch("http://127.0.0.1:3000/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
+  /nodejs/bin/node -e 'fetch("http://127.0.0.1:3000/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
 docker compose -f docker-compose.prod.yml --env-file .env exec -T api \
-  node -e 'fetch("http://127.0.0.1:3000/ready").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
+  /nodejs/bin/node -e 'fetch("http://127.0.0.1:3000/ready").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
 docker compose -f docker-compose.prod.yml --env-file .env exec -T clamav clamdcheck.sh
 docker compose -f docker-compose.prod.yml --env-file .env exec -T malware-scanner \
-  node -e 'fetch("http://127.0.0.1:8080/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
+  /nodejs/bin/node -e 'fetch("http://127.0.0.1:8080/health").then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})'
 ```
 
 The first ClamAV start can take several minutes while FreshClam initializes the
@@ -383,7 +430,7 @@ Run a clean in-memory canary from the API container; it should print
 `200 {"status":"clean","scanner":"clamav"}`:
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env exec -T api node -e '
+docker compose -f docker-compose.prod.yml --env-file .env exec -T api /nodejs/bin/node -e '
 const crypto=require("node:crypto");
 const body=Buffer.from("SET Service scanner deployment canary");
 fetch(process.env.MALWARE_SCANNER_URL,{method:"POST",headers:{
@@ -401,7 +448,7 @@ adapter result is `200 {"status":"infected","scanner":"clamav"}`; the file is
 never uploaded to R2:
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env exec -T api node -e '
+docker compose -f docker-compose.prod.yml --env-file .env exec -T api /nodejs/bin/node -e '
 const crypto=require("node:crypto");
 fetch("https://secure.eicar.org/eicar.com.txt").then(r=>{if(!r.ok)throw Error("EICAR download failed");return r.arrayBuffer()}).then(raw=>{
   const body=Buffer.from(raw);

@@ -22,6 +22,7 @@ Example form, to be filled only after approval:
 ```bash
 docker buildx build --pull --platform linux/amd64 --target api \
   --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
+  --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" \
   --label "org.opencontainers.image.revision=$RELEASE_SHA" \
   --tag "$REGISTRY/setservice-api:$RELEASE_SHA" \
   --provenance=mode=max --sbom=true --push .
@@ -48,7 +49,8 @@ archive checksum during the approved window.
 2. Run the production read-only audit and reconcile the exact pending migration
    list and lock state.
 3. Keep the current services running while the digest-pinned migration image
-   performs the approved preflight and migration.
+   performs the approved preflight and migration. Use its default timeout-
+   enforcing command; a lock timeout aborts the release and is not retried.
 4. Verify schema state and index validity.
 5. Roll API and outbox from the same release SHA/digest set. The reviewer-aware
    schema must exist before either new image starts because ownership checks use

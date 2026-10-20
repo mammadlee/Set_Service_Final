@@ -9,3 +9,5 @@
 !prisma
 !prisma/**
 !scripts/preflight-attendance-deploy.sql
+!scripts/preflight-attendance-deploy.mjs
+!scripts/run-prisma-migrate-deploy.mjs

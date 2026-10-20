@@ -238,9 +238,11 @@ function testCiWorkflow(): void {
   );
   assert.match(workflowText, /node \.\.\/\.\.\/scripts\/validate-web-env\.mjs worker/);
   assert.match(workflowText, /NODE_BASE_IMAGE: \$\{\{ vars\.NODE_BASE_IMAGE \}\}/);
+  assert.match(workflowText, /RUNTIME_BASE_IMAGE: \$\{\{ vars\.RUNTIME_BASE_IMAGE \}\}/);
   assert.match(workflowText, /POSTGRES_CI_IMAGE: \$\{\{ vars\.POSTGRES_CI_IMAGE \}\}/);
   assert.match(workflowText, /REDIS_CI_IMAGE: \$\{\{ vars\.REDIS_CI_IMAGE \}\}/);
   assert.match(workflowText, /NODE_BASE_IMAGE.*sha256:\[a-f0-9\]\{64\}/);
+  assert.match(workflowText, /RUNTIME_BASE_IMAGE.*sha256:\[a-f0-9\]\{64\}/);
   assert.match(workflowText, /POSTGRES_CI_IMAGE.*sha256:\[a-f0-9\]\{64\}/);
   assert.match(workflowText, /REDIS_CI_IMAGE.*sha256:\[a-f0-9\]\{64\}/);
   assert.match(
@@ -254,38 +256,88 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /needs: \[release-inputs, backend\]/);
   assert.doesNotMatch(workflowText, /image:\s+postgres:16(?:\s|$)/);
   assert.doesNotMatch(workflowText, /image:\s+redis:7-alpine(?:\s|$)/);
-  assert.equal((workflowText.match(/node-version: 24\.17\.0/g) ?? []).length, 6);
+  assert.equal((workflowText.match(/node-version: 24\.22\.0/g) ?? []).length, 6);
   assert.doesNotMatch(workflowText, /node-version:\s+(?:20|22|24)\s*$/m);
   assert.equal(
     (workflowText.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
     4,
   );
+  assert.equal(
+    (workflowText.match(/--build-arg RUNTIME_BASE_IMAGE="\$RUNTIME_BASE_IMAGE"/g) ?? []).length,
+    4,
+  );
   assert.equal((workflowText.match(/uses: anchore\/sbom-action@/g) ?? []).length, 4);
-  assert.equal((workflowText.match(/uses: aquasecurity\/trivy-action@/g) ?? []).length, 4);
+  assert.doesNotMatch(workflowText, /uses: aquasecurity\/trivy-action@/);
+  assert.match(
+    workflowText,
+    /TRIVY_IMAGE: aquasec\/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222/,
+  );
+  assert.match(workflowText, /Scan release images with immutable Trivy 0\.76\.0/);
+  assert.match(workflowText, /--scanners vuln,secret/);
+  assert.match(workflowText, /--severity CRITICAL,HIGH/);
+  assert.match(workflowText, /--ignore-unfixed=false/);
+  assert.match(workflowText, /--exit-code 1/);
+  for (const image of [
+    'setservice-api',
+    'setservice-outbox',
+    'setservice-migration',
+    'setservice-malware-scanner',
+  ]) {
+    assert.match(workflowText, new RegExp(`${image}:\\$\\{\\{ github\\.sha \\}\\}`));
+  }
 }
 
 function testContainerPolicy(): void {
   const dockerfile = read('Dockerfile');
   assert.match(dockerfile, /^ARG NODE_BASE_IMAGE\r?$/m);
+  assert.match(dockerfile, /^ARG RUNTIME_BASE_IMAGE\r?$/m);
   assert.doesNotMatch(dockerfile, /^ARG NODE_BASE_IMAGE=/m);
+  assert.doesNotMatch(dockerfile, /^ARG RUNTIME_BASE_IMAGE=/m);
   assert.doesNotMatch(dockerfile, /^#\s*syntax=/m);
-  assert.equal((dockerfile.match(/FROM \$\{NODE_BASE_IMAGE\}/g) ?? []).length, 2);
+  assert.equal((dockerfile.match(/FROM \$\{NODE_BASE_IMAGE\}/g) ?? []).length, 1);
+  assert.equal((dockerfile.match(/FROM \$\{RUNTIME_BASE_IMAGE\}/g) ?? []).length, 1);
+  assert.match(dockerfile, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.21\.1/);
+  assert.match(dockerfile, /npm --version\)" = "11\.21\.1"/);
   const migrationStage = dockerfile.match(
-    /FROM runtime-base AS migration([\s\S]*?)FROM runtime-common AS outbox-worker/,
+    /FROM app-runtime-base AS migration([\s\S]*?)FROM app-runtime-base AS runtime-common/,
   )?.[1];
   assert.ok(migrationStage, 'migration stage was not found');
   assert.doesNotMatch(
     migrationStage,
     /--from=build\s+\/app\/node_modules\s+\.\/node_modules/,
   );
-  assert.match(migrationStage, /--from=production-dependencies .*node_modules/);
+  assert.match(
+    migrationStage,
+    /--from=production-dependencies \/app\/node_modules\/@prisma\/client/,
+  );
+  assert.match(
+    migrationStage,
+    /--from=production-dependencies \/app\/node_modules\/\.prisma/,
+  );
+  assert.doesNotMatch(
+    migrationStage,
+    /--from=production-dependencies \/app\/node_modules \.\/node_modules/,
+  );
   assert.match(migrationStage, /--from=build \/app\/node_modules\/prisma/);
+  assert.match(migrationStage, /scripts\/preflight-attendance-deploy\.mjs/);
+  assert.match(migrationStage, /scripts\/preflight-attendance-deploy\.sql/);
+  assert.match(migrationStage, /scripts\/run-prisma-migrate-deploy\.mjs/);
+  assert.match(
+    migrationStage,
+    /CMD \["scripts\/run-prisma-migrate-deploy\.mjs"\]/,
+  );
+  assert.doesNotMatch(
+    migrationStage,
+    /(?:apt-get|postgresql-client|dumb-init|ENTRYPOINT \["npm"|\bpsql\b)/,
+  );
   assert.match(dockerfile, /FROM runtime-common AS outbox-worker[\s\S]*HEALTHCHECK[\s\S]*\/health/);
-  assert.match(dockerfile, /CMD \["npm", "run", "start:outbox"\]/);
-  assert.match(dockerfile, /FROM runtime-base AS malware-scanner[\s\S]*USER node[\s\S]*HEALTHCHECK[\s\S]*\/health/);
-  assert.match(dockerfile, /CMD \["node", "dist\/malware-scanner\/index\.js"\]/);
-  assert.match(dockerfile, /postgresql-client/);
-  assert.match(dockerfile, /preflight-attendance-deploy\.sql/);
+  assert.match(dockerfile, /CMD \["dist\/outbox-worker\.js"\]/);
+  assert.match(dockerfile, /FROM app-runtime-base AS malware-scanner[\s\S]*USER 65532:65532[\s\S]*HEALTHCHECK[\s\S]*\/health/);
+  assert.match(dockerfile, /CMD \["dist\/malware-scanner\/index\.js"\]/);
+  assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/);
+  assert.doesNotMatch(dockerfile, /CMD \["npm", "run", "start:(?:api|outbox)"\]/);
+  assert.doesNotMatch(dockerfile, /postgresql-client/);
+  assert.match(dockerfile, /preflight-attendance-deploy\.mjs/);
 }
 
 function testRunbooks(): void {
@@ -304,8 +356,15 @@ function testRunbooks(): void {
   const containerRunbook = read('CONTAINER_DEPLOYMENT.md');
   assert.equal(
     (containerRunbook.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,
-    3,
+    4,
   );
+  assert.equal(
+    (containerRunbook.match(/--build-arg RUNTIME_BASE_IMAGE="\$RUNTIME_BASE_IMAGE"/g) ?? []).length,
+    4,
+  );
+  for (const target of ['api', 'outbox-worker', 'migration', 'malware-scanner']) {
+    assert.match(containerRunbook, new RegExp(`--target ${target} `));
+  }
   assert.match(containerRunbook, /POSTGRES_CI_IMAGE/);
   assert.match(containerRunbook, /REDIS_CI_IMAGE/);
 }

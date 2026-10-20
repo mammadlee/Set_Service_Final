@@ -128,8 +128,20 @@ check_url api_ready 'https://api.setservice.az/ready'
 check_url admin_root 'https://admin.setservice.az/'
 check_url qr_root 'https://qr.setservice.az/'
 
+api_node=''
+for candidate in /nodejs/bin/node /usr/local/bin/node node; do
+  if "${COMPOSE[@]}" exec -T api "$candidate" -e '' >/dev/null 2>&1; then
+    api_node="$candidate"
+    break
+  fi
+done
+
 set +e
-db_report="$("${COMPOSE[@]}" exec -T api node - 2>/dev/null <<'NODE'
+if [[ -z "$api_node" ]]; then
+  db_report='DB_AUDIT_ERROR|NODE_RUNTIME_UNAVAILABLE'
+  db_rc=127
+else
+db_report="$("${COMPOSE[@]}" exec -T api "$api_node" - 2>/dev/null <<'NODE'
 const { PrismaClient } = require('@prisma/client');
 
 const safe = (value) => {
@@ -408,6 +420,7 @@ main()
 NODE
 )"
 db_rc=$?
+fi
 set -e
 
 printf '\n=== DATABASE READ-ONLY REPORT ===\n'
