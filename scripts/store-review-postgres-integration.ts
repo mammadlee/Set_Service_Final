@@ -17,6 +17,7 @@ import {
   renderOutboxMetrics,
 } from '../src/lib/outbox';
 import { prisma as applicationPrisma } from '../src/lib/prisma';
+import { disconnectRedis } from '../src/lib/redis';
 import { StoreReviewAccountConfig } from '../src/lib/store-review-accounts';
 import {
   STORE_REVIEW_ACTIVE_ORDER_TITLE,
@@ -781,6 +782,7 @@ async function run(): Promise<void> {
       else process.env.PROVIDER_OUTBOX_ENCRYPTION_SECRET = previousOutboxSecret;
     }
     } finally {
+      await disconnectRedis();
       await applicationPrisma.$disconnect();
       await dropTestDatabase(adminUrl, databaseName);
     }

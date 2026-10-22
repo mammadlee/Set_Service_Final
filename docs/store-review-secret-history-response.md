@@ -20,6 +20,66 @@ Firebase, SMS, and email provider credentials. Some matches are recognizable
 examples, while others cannot be proven inactive from Git alone. Treat every
 unverified match as potentially active.
 
+## Verified synthetic findings
+
+The 33 entries below are documentation-only synthetic values. This is an audit
+record, not a scanner baseline or allowlist. It stores no value, hash, endpoint,
+credential fingerprint, or reversible encoding.
+
+The evidence rules are deliberately narrow:
+
+- `explicit marker`: the assigned value itself contains an unambiguous
+  example/test/change/your marker;
+- `synthetic Neon host`: the database hostname itself contains an unambiguous
+  synthetic marker;
+- `invalid PEM`: the short documentation fragment is not a usable private key
+  and is rejected by Node `crypto.createPrivateKey`.
+
+| Commit | Path | Line | Rule | Evidence |
+| --- | --- | ---: | --- | --- |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `.env.example` | 9 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `.env.example` | 14 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `.env.example` | 56 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 50 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 54 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 87 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 103 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 104 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 182 | `private-key` | invalid PEM |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `ENV_SETUP.md` | 182 | `literal-secret-assignment` | invalid PEM |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `PRODUCTION_READINESS.md` | 79 | `private-key` | invalid PEM |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `PRODUCTION_READINESS.md` | 79 | `literal-secret-assignment` | invalid PEM |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `README.md` | 137 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `README.md` | 138 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 22 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 23 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 46 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 47 | `literal-secret-assignment` | synthetic Neon host |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 51 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 52 | `literal-secret-assignment` | explicit marker |
+| `b65cdc7ca1ef346233b3694b77a42d4659cf1109` | `STAGING_DEPLOYMENT.md` | 53 | `literal-secret-assignment` | explicit marker |
+| `c902a5a6fb2a11a60e2854f5ab34e953130c58e0` | `.env.example` | 9 | `literal-secret-assignment` | explicit marker |
+| `c902a5a6fb2a11a60e2854f5ab34e953130c58e0` | `.env.example` | 14 | `literal-secret-assignment` | explicit marker |
+| `c902a5a6fb2a11a60e2854f5ab34e953130c58e0` | `.env.example` | 56 | `literal-secret-assignment` | explicit marker |
+| `c902a5a6fb2a11a60e2854f5ab34e953130c58e0` | `README.md` | 137 | `literal-secret-assignment` | explicit marker |
+| `c902a5a6fb2a11a60e2854f5ab34e953130c58e0` | `README.md` | 138 | `literal-secret-assignment` | explicit marker |
+| `cff3579d01897affcaa41d2542cbe1612b5af9e8` | `.env.example` | 5 | `literal-secret-assignment` | explicit marker |
+| `cff3579d01897affcaa41d2542cbe1612b5af9e8` | `.env.example` | 10 | `literal-secret-assignment` | explicit marker |
+| `cff3579d01897affcaa41d2542cbe1612b5af9e8` | `.env.example` | 29 | `literal-secret-assignment` | explicit marker |
+| `f448450d64e71ef2120752551d8ef230ebe35f57` | `.env.example` | 5 | `literal-secret-assignment` | explicit marker |
+| `f448450d64e71ef2120752551d8ef230ebe35f57` | `.env.example` | 10 | `literal-secret-assignment` | explicit marker |
+| `d5910b8975108651059f222566d234d39412fb52` | `.env.example` | 5 | `literal-secret-assignment` | explicit marker |
+| `d5910b8975108651059f222566d234d39412fb52` | `.env.example` | 10 | `literal-secret-assignment` | explicit marker |
+
+The remaining 28 findings are deliberately excluded from this verified list:
+four public database/direct URLs with embedded authentication, two R2 account
+endpoints, four R2 access-key/secret occurrences, three Redis URLs with
+embedded authentication, nine provider-field literals, and six opaque legacy
+JWT/QR values. GitHub repository metadata contains the four immutable CI image
+variables but no production provider-secret inventory. Therefore all 28 remain
+`active or status unknown` until an authorized operator completes the provider
+and production secret-manager comparison.
+
 ## Required inventory gate
 
 An operator with secret-manager access must compare the historical credential
