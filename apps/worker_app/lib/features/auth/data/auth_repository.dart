@@ -115,6 +115,21 @@ class AuthRepository {
     }
   }
 
+  Future<WorkerRegistrationVerification> createDocumentSession({
+    required String phone,
+    required String password,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/auth/worker/document-session',
+        data: {'phone': phone, 'password': password},
+      );
+      return WorkerRegistrationVerification.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<OtpStartResult> forgotWorkerPassword({
     String? phone,
     String? email,

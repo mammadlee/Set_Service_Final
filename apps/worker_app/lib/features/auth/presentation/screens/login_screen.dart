@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/router/app_routes.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
@@ -25,6 +26,14 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AuthController>().clearTransientMessages();
+    });
+  }
+
+  @override
   void dispose() {
     _phoneController.dispose();
     _passwordController.dispose();
@@ -34,26 +43,39 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final height = MediaQuery.sizeOf(context).height;
+    final compact = height < 720;
+    final logoSize = compact ? 52.0 : 58.0;
+    final topGap = compact ? 8.0 : 16.0;
+    final logoGap = compact ? 18.0 : 28.0;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              const SizedBox(height: 36),
-              const Center(child: AppLogo(size: 72)),
-              const SizedBox(height: 78),
+              SizedBox(height: topGap),
+              Center(child: AppLogo(size: logoSize)),
+              SizedBox(height: logoGap),
               Text(
                 AppStrings.loginTitle,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.displaySmall?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.08,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Text(
                 'Telefon nömrənizlə hesabınıza daxil olun.',
                 textAlign: TextAlign.center,
@@ -62,20 +84,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 28),
+              SizedBox(height: compact ? 20 : 24),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
                   kind: InlineMessageKind.error,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               if (auth.successMessage != null) ...[
                 InlineMessage(
                   message: auth.successMessage!,
                   kind: InlineMessageKind.success,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               TextFormField(
                 controller: _phoneController,
@@ -109,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -117,14 +139,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: const Text(AppStrings.forgotPassword),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               LoadingButton(
                 label: AppStrings.loginTitle,
                 icon: Icons.login_outlined,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -133,12 +155,17 @@ class _LoginScreenState extends State<LoginScreen> {
                       : () =>
                             Navigator.of(context).pushNamed(AppRoutes.register),
                   icon: const Icon(Icons.person_add_alt_1_outlined),
-                  label: const Text(AppStrings.createWorkerAccount),
+                  label: const Text(
+                    AppStrings.createWorkerAccount,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const RoleAwareBackButton(),
-              const SizedBox(height: 36),
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -186,6 +213,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return await showModalBottomSheet<_ForgotPasswordResult>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         showDragHandle: false,
         backgroundColor: BrandColors.creamBackground,
         shape: const RoundedRectangleBorder(
@@ -198,90 +226,94 @@ class _LoginScreenState extends State<LoginScreen> {
             padding: EdgeInsets.only(
               bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
             ),
-            child: SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 24),
-                        decoration: BoxDecoration(
-                          color: BrandColors.darkText,
-                          borderRadius: BorderRadius.circular(99),
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 24),
+                      decoration: BoxDecoration(
+                        color: BrandColors.darkText,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    AppStrings.forgotPassword,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      expandedInsets: EdgeInsets.zero,
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(
+                          value: 'phone',
+                          icon: Icon(Icons.phone_outlined),
+                          label: Text('Telefon'),
                         ),
-                      ),
-                    ),
-                    Text(
-                      AppStrings.forgotPassword,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: SegmentedButton<String>(
-                        expandedInsets: EdgeInsets.zero,
-                        segments: const [
-                          ButtonSegment(
-                            value: 'phone',
-                            label: Text('Telefon nömrəsi ilə'),
-                          ),
-                          ButtonSegment(
-                            value: 'email',
-                            label: Text('Email ilə'),
-                          ),
-                        ],
-                        selected: {method},
-                        onSelectionChanged: (value) =>
-                            setSheetState(() => method = value.first),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    TextField(
-                      controller: method == 'phone'
-                          ? phoneController
-                          : emailController,
-                      keyboardType: method == 'phone'
-                          ? TextInputType.phone
-                          : TextInputType.emailAddress,
-                      decoration: InputDecoration(
-                        labelText: method == 'phone'
-                            ? AppStrings.phoneNumber
-                            : AppStrings.email,
-                        hintText: method == 'phone'
-                            ? AppStrings.phoneHint
-                            : AppStrings.emailHint,
-                        prefixIcon: Icon(
-                          method == 'phone'
-                              ? Icons.phone_outlined
-                              : Icons.email_outlined,
+                        ButtonSegment(
+                          value: 'email',
+                          icon: Icon(Icons.email_outlined),
+                          label: Text('E-poçt'),
                         ),
+                      ],
+                      selected: {method},
+                      onSelectionChanged: (value) =>
+                          setSheetState(() => method = value.first),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: method == 'phone'
+                        ? phoneController
+                        : emailController,
+                    keyboardType: method == 'phone'
+                        ? TextInputType.phone
+                        : TextInputType.emailAddress,
+                    decoration: InputDecoration(
+                      labelText: method == 'phone'
+                          ? AppStrings.phoneNumber
+                          : AppStrings.email,
+                      hintText: method == 'phone'
+                          ? AppStrings.phoneHint
+                          : AppStrings.emailHint,
+                      prefixIcon: Icon(
+                        method == 'phone'
+                            ? Icons.phone_outlined
+                            : Icons.email_outlined,
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    LoadingButton(
-                      label: AppStrings.sendOtp,
-                      icon: Icons.password_outlined,
-                      loading: false,
-                      onPressed: () => Navigator.of(sheetContext).pop(
-                        _ForgotPasswordResult(
-                          method: method,
-                          value:
-                              (method == 'phone'
-                                      ? phoneController.text
-                                      : emailController.text)
-                                  .trim(),
-                        ),
+                  ),
+                  const SizedBox(height: 16),
+                  LoadingButton(
+                    label: AppStrings.sendOtp,
+                    icon: Icons.password_outlined,
+                    loading: false,
+                    onPressed: () => Navigator.of(sheetContext).pop(
+                      _ForgotPasswordResult(
+                        method: method,
+                        value:
+                            (method == 'phone'
+                                    ? phoneController.text
+                                    : emailController.text)
+                                .trim(),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -295,20 +327,15 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   String? _validatePhone(String? value) {
-    final phone = value?.trim() ?? '';
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    return null;
+    return AuthInputValidators.loginPassword(value);
   }
 
   bool _validEmail(String value) {
-    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
+    return AuthInputValidators.isValidEmail(value);
   }
 }
 

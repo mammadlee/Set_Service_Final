@@ -87,6 +87,7 @@ export function LoginPage() {
             {loading ? appStrings.auth.wait : appStrings.auth.loginButton}
           </button>
         </form>
+
       </section>
     </main>
   );

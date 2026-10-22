@@ -1,0 +1,1291 @@
+const assert = require('node:assert/strict');
+const nodeCrypto = require('node:crypto');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const sharp = require('sharp') as typeof import('sharp').default;
+const { PDFDocument } = require('pdf-lib') as typeof import('pdf-lib');
+
+process.env.NODE_ENV = 'test';
+process.env.REDIS_URL = '';
+process.env.STORAGE_PROVIDER = 'local';
+process.env.LOCAL_PRIVATE_UPLOAD_DIR = path.resolve('.tmp/worker-security-private-uploads');
+process.env.PRIVATE_DOWNLOAD_SIGNING_SECRET =
+  'worker-document-signing-regression-secret-0123456789';
+process.env.JWT_ACCESS_SECRET = 'worker-access-regression-secret-0123456789abcdef';
+
+const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/prisma');
+const {
+  createUploadService,
+  resolveLocalPrivateDownload,
+  resolveLocalPrivateDownloadToken,
+} = require('../src/lib/uploads') as typeof import('../src/lib/uploads');
+const {
+  inspectUpload,
+  sanitizePublicImageUpload,
+  scanUpload,
+} = require('../src/lib/file-security') as typeof import('../src/lib/file-security');
+const {
+  UpdateWorkerSchema,
+} = require('../src/modules/workers/workers.router') as typeof import('../src/modules/workers/workers.router');
+const WorkersService = require('../src/modules/workers/workers.service') as typeof import('../src/modules/workers/workers.service');
+const { signAccessToken } = require('../src/lib/jwt') as typeof import('../src/lib/jwt');
+
+const workerId = '10000000-0000-4000-8000-000000000001';
+const ownerUserId = '20000000-0000-4000-8000-000000000001';
+const otherWorkerUserId = '20000000-0000-4000-8000-000000000002';
+const companyUserId = '30000000-0000-4000-8000-000000000001';
+const companyId = '40000000-0000-4000-8000-000000000001';
+
+const healthCertificateKey =
+  `workers/${workerId}/documents/health_certificate/health-certificate.pdf`;
+const criminalRecordKey =
+  `workers/${workerId}/documents/criminal_record/criminal-record.pdf`;
+const cvKey = `workers/${workerId}/documents/cv/worker-cv.pdf`;
+const leakedPublicUrl = 'https://public-bucket.invalid/workers/private-document.pdf';
+
+const documents = [
+  {
+    type: 'health_certificate',
+    name: 'health-certificate.pdf',
+    key: healthCertificateKey,
+    url: leakedPublicUrl,
+    mime_type: 'application/pdf',
+    size_bytes: 512,
+    uploaded_at: '2026-07-16T00:00:00.000Z',
+    company_visible: true,
+    status: 'ready',
+    scan_status: 'clean',
+    scanner: 'regression-scanner',
+    scanned_at: '2026-07-16T00:00:00.000Z',
+    content_sha256: 'a'.repeat(64),
+  },
+  {
+    type: 'criminal_record',
+    name: 'criminal-record.pdf',
+    key: criminalRecordKey,
+    mime_type: 'application/pdf',
+    size_bytes: 256,
+    uploaded_at: '2026-07-16T00:00:00.000Z',
+    company_visible: false,
+    status: 'ready',
+    scan_status: 'clean',
+    scanner: 'regression-scanner',
+    scanned_at: '2026-07-16T00:00:00.000Z',
+    content_sha256: 'b'.repeat(64),
+  },
+  {
+    type: 'cv',
+    name: 'worker-cv.pdf',
+    key: cvKey,
+    mime_type: 'application/pdf',
+    size_bytes: 768,
+    uploaded_at: '2026-09-16T00:00:00.000Z',
+    company_visible: false,
+    status: 'ready',
+    scan_status: 'clean',
+    scanner: 'regression-scanner',
+    scanned_at: '2026-09-16T00:00:00.000Z',
+    content_sha256: 'c'.repeat(64),
+  },
+];
+
+const fullWorkerRecord = {
+  id: workerId,
+  user_id: ownerUserId,
+  user: {
+    name: 'Worker Security Regression',
+    phone: '+994501234567',
+    email: 'worker-security@example.invalid',
+    email_verified_at: null,
+    pending_email: null,
+  },
+  position: 'Waiter',
+  profile_photo_url: 'https://public-cdn.invalid/profile-photo.webp',
+  skills: [],
+  languages: [],
+  documents,
+  work_history_summary: null,
+  work_history: [],
+  gender: null,
+  whatsapp_available: false,
+  status: 'approved',
+  reject_reason: null,
+  availability: true,
+  worker_class: null,
+  is_foc_training: false,
+  foc_training_note: null,
+  foc_training_updated_at: null,
+  foc_training_updated_by_id: null,
+  rating_avg: 0,
+  rating_count: 0,
+  positions: [],
+  created_at: new Date('2026-07-16T00:00:00.000Z'),
+  updated_at: new Date('2026-07-16T00:00:00.000Z'),
+  deleted_at: null,
+};
+
+type AsyncMethod = (...args: any[]) => Promise<any>;
+
+async function expectAppError(
+  operation: () => Promise<unknown>,
+  statusCode: number,
+  code: string,
+): Promise<void> {
+  await assert.rejects(
+    operation,
+    (error: any) => error?.statusCode === statusCode && error?.code === code,
+  );
+}
+
+function assertProtectedDocumentMetadata(profile: any): void {
+  assert.ok(Array.isArray(profile.documents));
+  const serialized = JSON.stringify(profile.documents);
+  assert.equal(serialized.includes(leakedPublicUrl), false);
+  assert.equal(serialized.includes(healthCertificateKey), false);
+  assert.equal(serialized.includes(criminalRecordKey), false);
+  assert.equal(serialized.includes(cvKey), false);
+
+  const health = profile.documents.find((document: any) => document.type === 'health_certificate');
+  assert.equal(health.available, true);
+  assert.equal(health.status, 'ready');
+  assert.equal(health.scan_status, 'clean');
+  assert.equal(
+    health.download_url,
+    `/v1/workers/${workerId}/documents/health_certificate/download`,
+  );
+  assert.equal(health.url, health.download_url);
+
+  const criminal = profile.documents.find((document: any) => document.type === 'criminal_record');
+  assert.equal(criminal.available, true);
+  assert.equal(criminal.status, 'ready');
+  assert.equal(criminal.scan_status, 'clean');
+  assert.equal(
+    criminal.download_url,
+    `/v1/workers/${workerId}/documents/criminal_record/download`,
+  );
+
+  const cv = profile.documents.find((document: any) => document.type === 'cv');
+  assert.equal(cv.available, true);
+  assert.equal(cv.company_visible, false);
+  assert.equal(cv.status, 'ready');
+  assert.equal(cv.scan_status, 'clean');
+  assert.equal(cv.download_url, `/v1/workers/${workerId}/documents/cv/download`);
+}
+
+async function withPrismaMethod<T>(
+  target: Record<string, unknown>,
+  method: string,
+  replacement: AsyncMethod,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const original = target[method];
+  target[method] = replacement;
+  try {
+    return await operation();
+  } finally {
+    target[method] = original;
+  }
+}
+
+async function testStrictWorkerPatchAllowlist(): Promise<void> {
+  const valid = UpdateWorkerSchema.safeParse({
+    full_name: '  Updated Worker Name  ',
+    skills: ['Banquet service'],
+    languages: ['az', 'en'],
+    availability: true,
+    work_history_summary: 'Approved self-service profile field.',
+    work_history: [
+      {
+        company_name: 'Example Hotel',
+        position: 'Waiter',
+        note: 'Seasonal assignment',
+      },
+    ],
+    gender: 'male',
+    whatsapp_available: true,
+  });
+  assert.equal(valid.success, true);
+  assert.equal(valid.data?.full_name, 'Updated Worker Name');
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: ' ' }).success, false);
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: 'A' }).success, false);
+  assert.equal(UpdateWorkerSchema.safeParse({ full_name: 'A'.repeat(121) }).success, false);
+  assert.equal(
+    UpdateWorkerSchema.safeParse({
+      full_name: 'Allowed Name',
+      unexpected_field: 'must-not-be-accepted',
+    }).success,
+    false,
+    'PATCH must preserve strict top-level schema behavior.',
+  );
+
+  const forbiddenFields = [
+    'status',
+    'worker_class',
+    'documents',
+    'profile_photo_url',
+    'user_id',
+    'approved_at',
+    'approved_by_id',
+    'rejected_at',
+    'rejected_by_id',
+    'reject_reason',
+    'rating_avg',
+    'rating_count',
+    'is_foc_training',
+    'foc_training_note',
+    'deleted_at',
+    'role',
+    'phone',
+  ];
+
+  for (const field of forbiddenFields) {
+    const result = UpdateWorkerSchema.safeParse({ [field]: 'attacker-controlled-value' });
+    assert.equal(result.success, false, `PATCH must reject sensitive field: ${field}`);
+  }
+
+  assert.equal(
+    UpdateWorkerSchema.safeParse({
+      work_history: [{
+        company_name: 'Example Hotel',
+        position: 'Waiter',
+        status: 'approved',
+      }],
+    }).success,
+    false,
+    'Nested PATCH objects must also reject unknown fields.',
+  );
+}
+
+async function testWorkerNameUpdateIsOwnedAndPersisted(): Promise<void> {
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+  let updateQuery: any;
+  let persistedRecord = { ...fullWorkerRecord };
+
+  await withPrismaMethod(
+    workerTarget,
+    'findUnique',
+    async (query: any) => query.where.user_id === ownerUserId
+      ? persistedRecord
+      : null,
+    async () => withPrismaMethod(
+      workerTarget,
+      'update',
+      async (query: any) => {
+        updateQuery = query;
+        persistedRecord = {
+          ...persistedRecord,
+          user: {
+            ...persistedRecord.user,
+            name: query.data.user.update.name,
+          },
+        };
+        return persistedRecord;
+      },
+      async () => {
+        const updated = await WorkersService.updateMyWorker(ownerUserId, {
+          full_name: '  Persisted Worker Name  ',
+        });
+        assert.equal(updated.name, 'Persisted Worker Name');
+
+        const refreshed = await WorkersService.getMyWorker(ownerUserId);
+        assert.equal(refreshed.name, 'Persisted Worker Name');
+      },
+    ),
+  );
+
+  assert.equal(updateQuery.where.user_id, ownerUserId);
+  assert.equal(updateQuery.data.user.update.name, 'Persisted Worker Name');
+  await withPrismaMethod(
+    workerTarget,
+    'findUnique',
+    async () => null,
+    async () => expectAppError(
+      () => WorkersService.updateMyWorker(otherWorkerUserId, {
+        full_name: 'Unauthorized Name',
+      }),
+      404,
+      'WORKER_NOT_FOUND',
+    ),
+  );
+}
+
+async function testWorkerNamePatchHttpContract(): Promise<void> {
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+  const userTarget = prisma.user as unknown as Record<string, unknown>;
+  let persistedRecord = { ...fullWorkerRecord };
+  const accessToken = signAccessToken({
+    sub: ownerUserId,
+    role: 'worker',
+    session_version: 0,
+  });
+  const { default: app } = require('../src/app') as typeof import('../src/app');
+  const server = app.listen(0, '127.0.0.1');
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const address = server.address() as import('node:net').AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}/v1/workers/me`;
+  const patchName = (body: Record<string, unknown>) => fetch(baseUrl, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+  try {
+    await withPrismaMethod(
+      userTarget,
+      'findUnique',
+      async () => ({
+        role: 'worker',
+        is_active: true,
+        deleted_at: null,
+        session_version: 0,
+        worker: { status: 'approved', deleted_at: null },
+        company: null,
+      }),
+      async () => withPrismaMethod(
+        workerTarget,
+        'findUnique',
+        async (query: any) => query.select?.status && query.select?.user
+          ? {
+            status: 'approved',
+            deleted_at: null,
+            user: { is_active: true, deleted_at: null },
+          }
+          : persistedRecord,
+        async () => withPrismaMethod(
+          workerTarget,
+          'update',
+          async (query: any) => {
+            persistedRecord = {
+              ...persistedRecord,
+              user: {
+                ...persistedRecord.user,
+                name: query.data.user.update.name,
+              },
+            };
+            return persistedRecord;
+          },
+          async () => {
+            const valid = await patchName({ full_name: '  HTTP Persisted Worker  ' });
+            assert.equal(valid.status, 200);
+            assert.equal((await valid.json() as { name: string }).name, 'HTTP Persisted Worker');
+
+            for (const invalidBody of [
+              { full_name: '' },
+              { full_name: 'A' },
+              { full_name: 'A'.repeat(121) },
+              { full_name: 'Allowed Name', unexpected_field: true },
+            ]) {
+              const invalid = await patchName(invalidBody);
+              assert.equal(invalid.status, 400);
+              assert.equal((await invalid.json() as { code: string }).code, 'VALIDATION_ERROR');
+            }
+
+            const refreshed = await fetch(baseUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            assert.equal(refreshed.status, 200);
+            assert.equal((await refreshed.json() as { name: string }).name, 'HTTP Persisted Worker');
+          },
+        ),
+      ),
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+}
+
+async function testDocumentUploadStorageDatabaseAndProfileLifecycle(): Promise<void> {
+  const privateRoot = path.resolve(process.env.LOCAL_PRIVATE_UPLOAD_DIR!);
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+  const prismaTarget = prisma as unknown as Record<string, unknown>;
+  const pdf = await validPdfBuffer();
+  let storedDocuments: any[] = [];
+  let persistedRecord = {
+    ...fullWorkerRecord,
+    status: 'pending_approval',
+    documents: storedDocuments,
+  };
+  const originalHistory = JSON.stringify(persistedRecord.work_history);
+  const cleanupEvents: any[] = [];
+  let failTransaction = false;
+
+  await fs.rm(privateRoot, { recursive: true, force: true });
+  try {
+    await withPrismaMethod(
+      workerTarget,
+      'findUnique',
+      async (query: any) => query.where.user_id === ownerUserId ? persistedRecord : null,
+      async () => withPrismaMethod(
+        prismaTarget,
+        '$transaction',
+        async (operation: (tx: any) => Promise<any>) => failTransaction
+          ? Promise.reject(new Error('regression database transaction failure'))
+          : operation({
+          $queryRaw: async () => [],
+          worker: {
+            findFirst: async () => ({ id: workerId }),
+            findUniqueOrThrow: async () => ({ id: workerId, documents: storedDocuments }),
+            update: async (query: any) => {
+              storedDocuments = query.data.documents;
+              persistedRecord = {
+                ...persistedRecord,
+                documents: storedDocuments,
+                updated_at: new Date(),
+              };
+              return persistedRecord;
+            },
+          },
+          auditLog: {
+            create: async () => ({ id: 'document-upload-audit' }),
+          },
+          outboxEvent: {
+            createMany: async ({ data }: any) => {
+              cleanupEvents.push(...data);
+              return { count: data.length };
+            },
+          },
+        }),
+        async () => {
+          const mutationResponse = await WorkersService.uploadMyDocument(
+            ownerUserId,
+            'health_certificate',
+            uploadFile('health-certificate.pdf', 'application/pdf', pdf),
+          );
+
+          assert.equal(storedDocuments.length, 1, 'DB metadata must be written.');
+          const storedDocument = storedDocuments[0];
+          assert.match(
+            storedDocument.key,
+            new RegExp(`^workers/${workerId}/documents/health_certificate/[0-9a-f-]+\\.pdf$`, 'i'),
+          );
+          assert.equal(storedDocument.mime_type, 'application/pdf');
+          assert.equal(storedDocument.size_bytes, pdf.length);
+          assert.equal(storedDocument.status, 'ready');
+          assert.equal(storedDocument.scan_status, 'clean');
+
+          const storedPath = path.resolve(privateRoot, storedDocument.key);
+          assert.deepEqual(
+            await fs.readFile(storedPath),
+            pdf,
+            'The promoted private object must exist after the DB transaction.',
+          );
+
+          const mutationDocuments = mutationResponse.documents as any[];
+          assert.equal(mutationDocuments.length, 1);
+          assert.equal(mutationDocuments[0].available, true);
+          assert.equal(mutationDocuments[0].key, undefined);
+          assert.equal(mutationDocuments[0].download_url,
+            `/v1/workers/${workerId}/documents/health_certificate/download`);
+
+          const refreshed = await WorkersService.getMyEnrollmentProfile(ownerUserId);
+          const refreshedDocuments = refreshed.documents as any[];
+          assert.equal(refreshedDocuments.length, 1, 'getMe must return persisted document metadata.');
+          assert.equal(refreshedDocuments[0].name, 'health-certificate.pdf');
+          assert.equal(refreshedDocuments[0].available, true);
+          await expectAppError(() => WorkersService.getMyWorker(ownerUserId), 403, 'ACCOUNT_NOT_APPROVED');
+          await WorkersService.uploadMyDocument(ownerUserId, 'criminal_record',
+            uploadFile('criminal-record.pdf', 'application/pdf', pdf));
+          const enrollment = await WorkersService.getMyEnrollmentProfile(ownerUserId);
+          assert.equal((enrollment.documents as any[]).filter((doc) => doc.available).length, 2);
+          persistedRecord.status = 'approved';
+
+          const cvMutationResponse = await WorkersService.uploadMyDocument(
+            ownerUserId,
+            'cv',
+            uploadFile('worker-cv.pdf', 'application/pdf', pdf),
+          );
+          const storedCv = storedDocuments.find((document) => document.type === 'cv');
+          assert.ok(storedCv, 'CV metadata must be stored independently.');
+          assert.match(
+            storedCv.key,
+            new RegExp(`^workers/${workerId}/documents/cv/[0-9a-f-]+\\.pdf$`, 'i'),
+          );
+          assert.equal(storedCv.company_visible, false);
+          assert.equal(storedCv.status, 'ready');
+          assert.equal(storedCv.scan_status, 'clean');
+          assert.deepEqual(
+            await fs.readFile(path.resolve(privateRoot, storedCv.key)),
+            pdf,
+            'The CV object must exist in private storage.',
+          );
+
+          const cvMutationDocuments = cvMutationResponse.documents as any[];
+          const cvMetadata = cvMutationDocuments.find((document) => document.type === 'cv');
+          assert.equal(cvMetadata.key, undefined);
+          assert.equal(cvMetadata.company_visible, false);
+          assert.equal(cvMetadata.available, true);
+          assert.equal(
+            cvMetadata.download_url,
+            `/v1/workers/${workerId}/documents/cv/download`,
+          );
+
+          const profileAfterCvUpload = await WorkersService.getMyWorker(ownerUserId);
+          const persistedCv = (profileAfterCvUpload.documents as any[])
+            .find((document) => document.type === 'cv');
+          assert.equal(persistedCv.name, 'worker-cv.pdf');
+          assert.equal(persistedCv.available, true);
+          const beforeFailure = JSON.stringify(storedDocuments);
+          const beforeFailureEvents = cleanupEvents.length;
+          const maliciousPdf = await PDFDocument.create();
+          maliciousPdf.addPage([200, 200]);
+          maliciousPdf.addJavaScript('replacement-regression', 'app.alert(1)');
+          const maliciousBytes = Buffer.from(await maliciousPdf.save());
+          await expectAppError(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+            uploadFile('unsafe-cv.pdf', 'application/pdf', maliciousBytes)),
+          422, 'UPLOAD_PDF_ACTIVE_CONTENT');
+          assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+            'Failed validation must preserve previous successful document metadata.');
+          assert.equal(cleanupEvents.length, beforeFailureEvents,
+            'Previous version must not be queued for deletion on failed replacement.');
+          assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf,
+            'Previous successful file must remain readable after validation failure.');
+
+          const scannerEnvironment = {
+            MALWARE_SCANNER_PROVIDER: process.env.MALWARE_SCANNER_PROVIDER,
+            MALWARE_SCAN_REQUIRED: process.env.MALWARE_SCAN_REQUIRED,
+          };
+          try {
+            process.env.MALWARE_SCANNER_PROVIDER = 'disabled';
+            process.env.MALWARE_SCAN_REQUIRED = 'true';
+            await expectAppError(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+              uploadFile('scanner-unavailable.pdf', 'application/pdf', pdf)),
+            503, 'MALWARE_SCANNER_UNAVAILABLE');
+            assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+              'Scanner failure must preserve previous metadata and status.');
+            assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf);
+            assert.equal(cleanupEvents.length, beforeFailureEvents);
+          } finally {
+            for (const [name, value] of Object.entries(scannerEnvironment)) {
+              if (value === undefined) delete process.env[name];
+              else process.env[name] = value;
+            }
+          }
+          failTransaction = true;
+          try {
+            await assert.rejects(() => WorkersService.uploadMyDocument(ownerUserId, 'cv',
+              uploadFile('transaction-failure.pdf', 'application/pdf', pdf)),
+            /regression database transaction failure/);
+            assert.equal(JSON.stringify(storedDocuments), beforeFailure,
+              'Failed DB update must not replace the stored document.');
+            assert.equal(cleanupEvents.length, beforeFailureEvents);
+            assert.deepEqual(await fs.readFile(path.resolve(privateRoot, storedCv.key)), pdf);
+            const remainingCvFiles = await fs.readdir(path.dirname(path.resolve(privateRoot, storedCv.key)));
+            assert.deepEqual(remainingCvFiles, [path.basename(storedCv.key)],
+              'Failed new object must be rolled back without deleting old object.');
+          } finally { failTransaction = false; }
+          await WorkersService.uploadMyDocument(ownerUserId, 'cv',
+            uploadFile('updated-cv.pdf', 'application/pdf', pdf));
+          const replacement = storedDocuments.find((doc) => doc.type === 'cv');
+          assert.notEqual(replacement.key, storedCv.key);
+          assert.equal(replacement.name, 'updated-cv.pdf');
+          assert.equal(storedDocuments.filter((doc) => doc.type === 'cv').length, 1);
+          assert.equal(cleanupEvents.length, 1, 'Replaced CV cleanup must be scheduled transactionally.');
+          await WorkersService.deleteMyDocument(ownerUserId, 'cv');
+          const afterDelete = await WorkersService.getMyWorker(ownerUserId);
+          const deletedCv = (afterDelete.documents as any[]).find((doc) => doc.type === 'cv');
+          assert.ok(!deletedCv || !deletedCv.available);
+          assert.equal(cleanupEvents.length, 2, 'Deleted CV cleanup must be scheduled.');
+          assert.equal(JSON.stringify(persistedRecord.work_history), originalHistory);
+          assert.equal((afterDelete.documents as any[]).filter((doc) => doc.available).length, 2,
+            'Deleting optional CV must preserve both required documents.');
+
+          const freshStorageService = createUploadService();
+          const signedUrl = await freshStorageService.createSignedDownloadUrl(
+            storedDocument.key,
+            300,
+            storedDocument.name,
+          );
+          const token = signedUrl.split('/').pop();
+          assert.ok(token);
+          const restartedProcessPath = resolveLocalPrivateDownloadToken(token!);
+          assert.equal(restartedProcessPath, storedPath);
+          assert.deepEqual(
+            await fs.readFile(restartedProcessPath!),
+            pdf,
+            'The private object must remain readable from a fresh storage service instance.',
+          );
+        },
+      ),
+    );
+  } finally {
+    await fs.rm(privateRoot, { recursive: true, force: true });
+  }
+}
+
+async function testMetadataDoesNotLeakPublicDocumentUrls(): Promise<void> {
+  await withPrismaMethod(
+    prisma.worker as unknown as Record<string, unknown>,
+    'findUnique',
+    async () => fullWorkerRecord,
+    async () => {
+      const profile = await WorkersService.getMyWorker(ownerUserId);
+      assertProtectedDocumentMetadata(profile);
+    },
+  );
+
+  await withPrismaMethod(
+    prisma.worker as unknown as Record<string, unknown>,
+    'findUnique',
+    async () => ({
+      ...fullWorkerRecord,
+      documents: [{
+        type: 'health_certificate',
+        name: 'legacy-public-document.pdf',
+        url: leakedPublicUrl,
+        company_visible: true,
+      }],
+    }),
+    async () => {
+      const legacyProfile = await WorkersService.getMyWorker(ownerUserId);
+      const legacyDocuments = legacyProfile.documents as any[];
+      const serialized = JSON.stringify(legacyDocuments);
+      assert.equal(serialized.includes(leakedPublicUrl), false);
+      assert.equal(legacyDocuments[0].available, false);
+      assert.equal(Object.prototype.hasOwnProperty.call(legacyDocuments[0], 'url'), false);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(legacyDocuments[0], 'download_url'),
+        false,
+      );
+    },
+  );
+}
+
+async function testDocumentAuthorization(): Promise<void> {
+  const selectedWorker = {
+    id: workerId,
+    user_id: ownerUserId,
+    status: 'approved',
+    documents,
+  };
+
+  const auditEvents: any[] = [];
+  await withPrismaMethod(
+    prisma.auditLog as unknown as Record<string, unknown>,
+    'create',
+    async (query: any) => {
+      auditEvents.push(query.data);
+      return { id: `audit-${auditEvents.length}` };
+    },
+    async () => withPrismaMethod(
+      prisma.worker as unknown as Record<string, unknown>,
+      'findFirst',
+      async () => selectedWorker,
+      async () => {
+      const ownerDownload = await WorkersService.getWorkerDocumentDownload(
+        { sub: ownerUserId, role: 'worker' },
+        workerId,
+        'criminal_record',
+      );
+      assert.equal(ownerDownload.expires_in_seconds, 300);
+      assert.match(ownerDownload.url, /^\/v1\/private-worker-documents\//);
+
+      const ownerCvDownload = await WorkersService.getWorkerDocumentDownload(
+        { sub: ownerUserId, role: 'worker' },
+        workerId,
+        'cv',
+      );
+      assert.match(ownerCvDownload.url, /^\/v1\/private-worker-documents\//);
+
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: otherWorkerUserId, role: 'worker' },
+          workerId,
+          'health_certificate',
+        ),
+        403,
+        'WORKER_DOCUMENT_ACCESS_DENIED',
+      );
+
+      const adminDownload = await WorkersService.getWorkerDocumentDownload(
+        { sub: '50000000-0000-4000-8000-000000000001', role: 'admin' },
+        workerId,
+        'criminal_record',
+      );
+      assert.match(adminDownload.url, /^\/v1\/private-worker-documents\//);
+
+      const superAdminDownload = await WorkersService.getWorkerDocumentDownload(
+        { sub: '50000000-0000-4000-8000-000000000002', role: 'super_admin' },
+        workerId,
+        'criminal_record',
+      );
+      assert.match(superAdminDownload.url, /^\/v1\/private-worker-documents\//);
+
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: '60000000-0000-4000-8000-000000000001', role: 'unsupported' },
+          workerId,
+          'health_certificate',
+        ),
+        403,
+        'WORKER_DOCUMENT_ACCESS_DENIED',
+      );
+
+      await withPrismaMethod(
+        prisma.company as unknown as Record<string, unknown>,
+        'findFirst',
+        async () => ({ id: companyId }),
+        async () => {
+          let assignmentQuery: any;
+          await withPrismaMethod(
+            prisma.assignment as unknown as Record<string, unknown>,
+            'findFirst',
+            async (query: any) => {
+              assignmentQuery = query;
+              return { id: '70000000-0000-4000-8000-000000000001' };
+            },
+            async () => {
+              await expectAppError(
+                () => WorkersService.getWorkerDocumentDownload(
+                  { sub: companyUserId, role: 'company' },
+                  workerId,
+                  'criminal_record',
+                ),
+                403,
+                'WORKER_DOCUMENT_ACCESS_DENIED',
+              );
+
+              await expectAppError(
+                () => WorkersService.getWorkerDocumentDownload(
+                  { sub: companyUserId, role: 'company' },
+                  workerId,
+                  'cv',
+                ),
+                403,
+                'WORKER_DOCUMENT_ACCESS_DENIED',
+              );
+
+              const companyDownload = await WorkersService.getWorkerDocumentDownload(
+                { sub: companyUserId, role: 'company' },
+                workerId,
+                'health_certificate',
+              );
+              assert.match(companyDownload.url, /^\/v1\/private-worker-documents\//);
+            },
+          );
+
+          assert.deepEqual(
+            assignmentQuery.where.status.in,
+            ['assigned', 'accepted', 'completed'],
+          );
+          assert.equal(assignmentQuery.where.order.company_id, companyId);
+
+          await withPrismaMethod(
+            prisma.assignment as unknown as Record<string, unknown>,
+            'findFirst',
+            async () => null,
+            async () => {
+              await expectAppError(
+                () => WorkersService.getWorkerDocumentDownload(
+                  { sub: companyUserId, role: 'company' },
+                  workerId,
+                  'health_certificate',
+                ),
+                403,
+                'WORKER_DOCUMENT_ACCESS_DENIED',
+              );
+            },
+          );
+        },
+      );
+      },
+    ),
+  );
+
+  assert.equal(auditEvents.length, 5);
+  assert.deepEqual(
+    auditEvents.map((event) => event.metadata.event),
+    Array(5).fill('document_download_authorized'),
+  );
+  assert.deepEqual(
+    auditEvents.map((event) => event.actor_role),
+    ['worker', 'worker', 'admin', 'super_admin', 'company'],
+  );
+  for (const event of auditEvents) {
+    assert.equal(event.entity_type, 'worker_document');
+    assert.equal(event.entity_id, workerId);
+    assert.equal(typeof event.metadata.object_key_hash, 'string');
+    assert.equal(event.metadata.object_key_hash.length, 64);
+  }
+}
+
+async function testSignedUrlExpiryAndTamperResistance(): Promise<void> {
+  const originalNow = Date.now;
+  const issuedAt = Date.parse('2026-07-16T00:00:00.000Z');
+  Date.now = () => issuedAt;
+
+  try {
+    const signedUrl = await createUploadService().createSignedDownloadUrl(
+      healthCertificateKey,
+      1,
+      '../health-certificate.pdf',
+    );
+    const token = signedUrl.split('/').pop();
+    assert.ok(token);
+    assert.equal(
+      resolveLocalPrivateDownloadToken(token!),
+      path.resolve(process.env.LOCAL_PRIVATE_UPLOAD_DIR!, healthCertificateKey),
+    );
+    const resolved = resolveLocalPrivateDownload(token!);
+    assert.equal(resolved?.downloadName, 'health-certificate.pdf');
+    assert.equal(resolved?.downloadName.includes('/'), false);
+    assert.equal(resolved?.downloadName.includes('\\'), false);
+
+    const lastCharacter = token!.slice(-1);
+    const tamperedToken = `${token!.slice(0, -1)}${lastCharacter === 'a' ? 'b' : 'a'}`;
+    assert.equal(resolveLocalPrivateDownloadToken(tamperedToken), null);
+
+    Date.now = () => issuedAt + 2_000;
+    assert.equal(resolveLocalPrivateDownloadToken(token!), null);
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
+async function testCvIsPrivateEvenWithIncorrectStoredVisibility(): Promise<void> {
+  const unsafeRecord = {
+    ...fullWorkerRecord,
+    documents: documents.map((doc) => ({ ...doc, company_visible: true })),
+  };
+  await withPrismaMethod(prisma.company as any, 'findUnique', async () => ({
+    id: companyId, status: 'approved', deleted_at: null,
+  }), async () => withPrismaMethod(prisma.worker as any, 'findFirst', async () => unsafeRecord, async () => {
+    const profile = await WorkersService.getCompanyVisibleWorkerProfile(companyUserId, workerId);
+    const exposed = profile.documents as any[];
+    assert.deepEqual(exposed.map((doc) => doc.type), ['health_certificate']);
+    assert.equal(JSON.stringify(exposed).includes('worker-cv.pdf'), false);
+    await expectAppError(() => WorkersService.getWorkerDocumentDownload(
+      { sub: companyUserId, role: 'company' }, workerId, 'cv',
+    ), 403, 'WORKER_DOCUMENT_ACCESS_DENIED');
+  }));
+}
+
+async function testPendingWorkerDocumentSessionCannotOpenApp(): Promise<void> {
+  const auth = require('../src/modules/auth/auth.service') as typeof import('../src/modules/auth/auth.service');
+  const { hashPassword } = require('../src/lib/password') as typeof import('../src/lib/password');
+  const { verifyRegistrationToken, verifyAccessToken } = require('../src/lib/jwt') as typeof import('../src/lib/jwt');
+  const pendingWorker = { ...fullWorkerRecord, status: 'pending_approval' };
+  const pendingUser = {
+    id: ownerUserId, role: 'worker', phone: fullWorkerRecord.user.phone,
+    password_hash: await hashPassword('WorkerDocument123!'), password_set_at: new Date(),
+    is_active: true, deleted_at: null, session_version: 0, worker: pendingWorker,
+  };
+  await withPrismaMethod(prisma.user as any, 'findUnique', async () => pendingUser, async () => {
+    const result = await auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WorkerDocument123!' });
+    assert.equal(verifyRegistrationToken(result.registration_access_token).sub, ownerUserId);
+    assert.throws(() => verifyAccessToken(result.registration_access_token));
+    assert.equal('access_token' in result, false);
+    assert.equal('refresh_token' in result, false);
+    await expectAppError(() => auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WrongPassword!' }), 401, 'INVALID_CREDENTIALS');
+
+    const { default: app } = require('../src/app') as typeof import('../src/app');
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
+    const headers = { authorization: `Bearer ${result.registration_access_token}` };
+    try {
+      await withPrismaMethod(prisma.worker as any, 'findUnique', async () => pendingWorker, async () => {
+        const ownProfile = await fetch(`${base}/workers/me/enrollment`, { headers });
+        assert.equal(ownProfile.status, 200);
+        assert.equal((await ownProfile.json() as any).id, workerId);
+        for (const endpoint of ['/workers/me', '/orders', '/assignments', '/admin/workers', '/attendance/venue-kiosks']) {
+          const protectedResponse = await fetch(`${base}${endpoint}`, { headers });
+          assert.equal(protectedResponse.status, 401, `registration token must not access ${endpoint}`);
+        }
+      });
+      pendingWorker.status = 'rejected';
+      const rejected = await fetch(`${base}/workers/me/enrollment`, { headers });
+      assert.equal(rejected.status, 403);
+      await expectAppError(() => auth.createWorkerDocumentSession({ phone: pendingUser.phone, password: 'WorkerDocument123!' }), 403, 'WORKER_ENROLLMENT_CLOSED');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+}
+
+async function testLegacyAndForeignObjectKeysAreNotDownloadable(): Promise<void> {
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+
+  await withPrismaMethod(
+    workerTarget,
+    'findFirst',
+    async () => ({
+      id: workerId,
+      user_id: ownerUserId,
+      status: 'approved',
+      documents: [{
+        type: 'health_certificate',
+        url: leakedPublicUrl,
+        company_visible: true,
+      }],
+    }),
+    async () => {
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: ownerUserId, role: 'worker' },
+          workerId,
+          'health_certificate',
+        ),
+        410,
+        'WORKER_DOCUMENT_REUPLOAD_REQUIRED',
+      );
+    },
+  );
+
+  await withPrismaMethod(
+    workerTarget,
+    'findFirst',
+    async () => ({
+      id: workerId,
+      user_id: ownerUserId,
+      status: 'approved',
+      documents: [{
+        type: 'health_certificate',
+        key: `workers/${otherWorkerUserId}/documents/health_certificate/foreign.pdf`,
+        company_visible: true,
+      }],
+    }),
+    async () => {
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: ownerUserId, role: 'worker' },
+          workerId,
+          'health_certificate',
+        ),
+        410,
+        'WORKER_DOCUMENT_REUPLOAD_REQUIRED',
+      );
+    },
+  );
+}
+
+async function testRejectedAndUnscannedDocumentsAreNotDownloadable(): Promise<void> {
+  const workerTarget = prisma.worker as unknown as Record<string, unknown>;
+
+  await withPrismaMethod(
+    workerTarget,
+    'findFirst',
+    async () => ({
+      id: workerId,
+      user_id: ownerUserId,
+      status: 'rejected',
+      documents,
+    }),
+    async () => {
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: ownerUserId, role: 'worker' },
+          workerId,
+          'health_certificate',
+        ),
+        410,
+        'WORKER_DOCUMENT_REJECTED',
+      );
+    },
+  );
+
+  await withPrismaMethod(
+    workerTarget,
+    'findFirst',
+    async () => ({
+      id: workerId,
+      user_id: ownerUserId,
+      status: 'approved',
+      documents: [{
+        ...documents[0],
+        status: 'quarantine',
+        scan_status: 'pending',
+      }],
+    }),
+    async () => {
+      await expectAppError(
+        () => WorkersService.getWorkerDocumentDownload(
+          { sub: ownerUserId, role: 'worker' },
+          workerId,
+          'health_certificate',
+        ),
+        410,
+        'WORKER_DOCUMENT_SCAN_REQUIRED',
+      );
+    },
+  );
+}
+
+function uploadFile(
+  originalname: string,
+  mimetype: string,
+  buffer: Buffer,
+): Express.Multer.File {
+  return {
+    fieldname: 'file',
+    originalname,
+    encoding: '7bit',
+    mimetype,
+    size: buffer.length,
+    destination: '',
+    filename: originalname,
+    path: '',
+    buffer,
+    stream: undefined as never,
+  };
+}
+
+async function validPdfBuffer(): Promise<Buffer> {
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  return Buffer.from(await document.save());
+}
+
+async function expectUploadError(
+  file: Express.Multer.File,
+  allowed: ReadonlySet<string>,
+  statusCode: number,
+  code: string,
+): Promise<void> {
+  await expectAppError(() => inspectUpload(file, allowed), statusCode, code);
+}
+
+async function testUploadContentValidation(): Promise<void> {
+  const images = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  const documentsOnly = new Set(['application/pdf']);
+  const png = await sharp({
+    create: {
+      width: 8,
+      height: 8,
+      channels: 4,
+      background: { r: 180, g: 0, b: 0, alpha: 1 },
+    },
+  }).png().toBuffer();
+  const inspectedPng = await inspectUpload(uploadFile('../profile.PNG', 'image/png', png), images);
+  assert.equal(inspectedPng.detectedMimeType, 'image/png');
+  assert.equal(inspectedPng.safeOriginalName, 'profile.png');
+  assert.equal(inspectedPng.sha256.length, 64);
+
+  const pdf = await validPdfBuffer();
+  const inspectedPdf = await inspectUpload(
+    uploadFile('health-certificate.pdf', 'application/pdf', pdf),
+    documentsOnly,
+  );
+  assert.equal(inspectedPdf.detectedMimeType, 'application/pdf');
+
+  await expectUploadError(
+    uploadFile('fake.png', 'image/png', Buffer.from('<svg><script>alert(1)</script></svg>')),
+    images,
+    415,
+    'UPLOAD_ACTIVE_CONTENT_BLOCKED',
+  );
+  await expectUploadError(
+    uploadFile('malware.png', 'image/png', Buffer.from([0x4d, 0x5a, 0x90, 0x00])),
+    images,
+    415,
+    'UPLOAD_EXECUTABLE_BLOCKED',
+  );
+  await expectUploadError(
+    uploadFile('archive.png', 'image/png', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])),
+    images,
+    415,
+    'UPLOAD_EXECUTABLE_BLOCKED',
+  );
+  await expectUploadError(
+    uploadFile('profile.jpg', 'image/jpeg', png),
+    images,
+    415,
+    'UPLOAD_MIME_MISMATCH',
+  );
+  await expectUploadError(
+    uploadFile('profile.jpg', 'image/png', png),
+    images,
+    415,
+    'UPLOAD_EXTENSION_MISMATCH',
+  );
+  await expectUploadError(
+    uploadFile('polyglot.png', 'image/png', Buffer.concat([png, Buffer.from('trailing-payload')])),
+    images,
+    422,
+    'UPLOAD_POLYGLOT_BLOCKED',
+  );
+  const activePdf = await PDFDocument.create();
+  activePdf.addPage([200, 200]);
+  activePdf.addJavaScript('regression', 'app.alert(1)');
+  await expectUploadError(
+    uploadFile(
+      'active.pdf',
+      'application/pdf',
+      Buffer.from(await activePdf.save()),
+    ),
+    documentsOnly,
+    422,
+    'UPLOAD_PDF_ACTIVE_CONTENT',
+  );
+  await expectUploadError(
+    uploadFile('corrupt.pdf', 'application/pdf', Buffer.from('%PDF-1.7\n1 0 obj\nbroken\n%%EOF')),
+    documentsOnly,
+    422,
+    'UPLOAD_PDF_INVALID',
+  );
+  await expectUploadError(
+    { ...uploadFile('profile.png', 'image/png', png), size: png.length + 1 },
+    images,
+    400,
+    'UPLOAD_SIZE_MISMATCH',
+  );
+}
+
+async function testPublicImageMetadataIsStrippedBeforeStorage(): Promise<void> {
+  const jpegWithExif = await sharp({
+    create: {
+      width: 16,
+      height: 8,
+      channels: 3,
+      background: { r: 30, g: 80, b: 120 },
+    },
+  })
+    .jpeg()
+    .withMetadata({ orientation: 6, density: 300 })
+    .toBuffer();
+
+  const originalMetadata = await sharp(jpegWithExif).metadata();
+  assert.ok(originalMetadata.exif, 'The fixture must contain EXIF metadata.');
+  assert.equal(originalMetadata.orientation, 6);
+
+  const originalInspection = await inspectUpload(
+    uploadFile('profile.jpg', 'image/jpeg', jpegWithExif),
+    new Set(['image/jpeg']),
+  );
+  const sanitized = await sanitizePublicImageUpload(jpegWithExif, originalInspection);
+  const sanitizedMetadata = await sharp(sanitized.body).metadata();
+
+  assert.equal(sanitizedMetadata.exif, undefined);
+  assert.equal(sanitizedMetadata.orientation, undefined);
+  assert.equal(sanitized.inspection.sizeBytes, sanitized.body.length);
+  assert.equal(
+    sanitized.inspection.sha256,
+    nodeCrypto.createHash('sha256').update(sanitized.body).digest('hex'),
+  );
+  assert.notEqual(sanitized.inspection.sha256, originalInspection.sha256);
+}
+
+async function testSensitiveScannerFailClosedAndMalwareRejection(): Promise<void> {
+  const png = await sharp({
+    create: {
+      width: 2,
+      height: 2,
+      channels: 3,
+      background: { r: 1, g: 2, b: 3 },
+    },
+  }).png().toBuffer();
+  const inspection = await inspectUpload(
+    uploadFile('document.png', 'image/png', png),
+    new Set(['image/png']),
+  );
+  const originalEnvironment = {
+    NODE_ENV: process.env.NODE_ENV,
+    MALWARE_SCANNER_PROVIDER: process.env.MALWARE_SCANNER_PROVIDER,
+    MALWARE_SCAN_REQUIRED: process.env.MALWARE_SCAN_REQUIRED,
+    MALWARE_SCANNER_URL: process.env.MALWARE_SCANNER_URL,
+    MALWARE_SCANNER_MAX_ATTEMPTS: process.env.MALWARE_SCANNER_MAX_ATTEMPTS,
+  };
+  const originalFetch = global.fetch;
+
+  try {
+    process.env.NODE_ENV = 'production';
+    process.env.MALWARE_SCANNER_PROVIDER = 'disabled';
+    delete process.env.MALWARE_SCAN_REQUIRED;
+    await expectAppError(
+      () => scanUpload(png, inspection, { sensitive: true }),
+      503,
+      'MALWARE_SCANNER_UNAVAILABLE',
+    );
+
+    process.env.NODE_ENV = 'test';
+    process.env.MALWARE_SCANNER_PROVIDER = 'http';
+    process.env.MALWARE_SCANNER_URL = 'https://scanner.example.invalid/scan';
+    process.env.MALWARE_SCANNER_MAX_ATTEMPTS = '1';
+    let scannerRequest: RequestInit | undefined;
+    global.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      scannerRequest = init;
+      return new Response(
+        JSON.stringify({ status: 'infected', scanner: 'regression-scanner' }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+    await expectAppError(
+      () => scanUpload(png, inspection, { sensitive: true }),
+      422,
+      'UPLOAD_MALWARE_DETECTED',
+    );
+    assert.equal(scannerRequest?.redirect, 'error');
+  } finally {
+    global.fetch = originalFetch;
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function testLocalQuarantinePromotionAndCleanup(): Promise<void> {
+  const root = path.resolve(process.env.LOCAL_PRIVATE_UPLOAD_DIR!);
+  const service = createUploadService();
+  const sourceKey = `workers/${workerId}/quarantine/regression-source.pdf`;
+  const targetKey = `workers/${workerId}/documents/health_certificate/regression-final.pdf`;
+  const sourcePath = path.resolve(root, sourceKey);
+  const targetPath = path.resolve(root, targetKey);
+  await fs.rm(root, { recursive: true, force: true });
+
+  try {
+    await service.putPrivateObject({
+      key: sourceKey,
+      contentType: 'application/pdf',
+      body: Buffer.from('quarantine-regression'),
+      downloadName: 'health-certificate.pdf',
+    });
+    await service.promotePrivateObject(sourceKey, targetKey);
+    assert.equal(await fs.readFile(targetPath, 'utf8'), 'quarantine-regression');
+    await assert.rejects(() => fs.access(sourcePath), (error: any) => error?.code === 'ENOENT');
+
+    await service.deleteObject(targetKey, 'private');
+    await assert.rejects(() => fs.access(targetPath), (error: any) => error?.code === 'ENOENT');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+}
+
+async function main(): Promise<void> {
+  await testStrictWorkerPatchAllowlist();
+  await testWorkerNameUpdateIsOwnedAndPersisted();
+  await testWorkerNamePatchHttpContract();
+  await testDocumentUploadStorageDatabaseAndProfileLifecycle();
+  await testMetadataDoesNotLeakPublicDocumentUrls();
+  await testDocumentAuthorization();
+  await testCvIsPrivateEvenWithIncorrectStoredVisibility();
+  await testPendingWorkerDocumentSessionCannotOpenApp();
+  await testSignedUrlExpiryAndTamperResistance();
+  await testLegacyAndForeignObjectKeysAreNotDownloadable();
+  await testRejectedAndUnscannedDocumentsAreNotDownloadable();
+  await testUploadContentValidation();
+  await testPublicImageMetadataIsStrippedBeforeStorage();
+  await testSensitiveScannerFailClosedAndMalwareRejection();
+  await testLocalQuarantinePromotionAndCleanup();
+  console.log('worker-security-regression: OK');
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

@@ -11,6 +11,8 @@ export const ADMIN_PERMISSIONS: AdminPermission[] = [
   'manage_assignments',
   'view_attendance',
   'view_reports',
+  'view_moderation',
+  'manage_moderation',
   'manage_kiosks',
   'view_notifications',
   'manage_admins',
@@ -21,6 +23,7 @@ export const ADMIN_PERMISSION_DEPENDENCIES: Partial<Record<AdminPermission, Admi
   manage_companies: ['view_companies'],
   manage_assignments: ['view_assignments', 'view_orders', 'view_workers'],
   manage_kiosks: ['view_orders', 'view_assignments'],
+  manage_moderation: ['view_moderation'],
 };
 
 const ADMIN_LANDING_PATHS: Array<{ permission: AdminPermission; path: string }> = [
@@ -32,6 +35,7 @@ const ADMIN_LANDING_PATHS: Array<{ permission: AdminPermission; path: string }> 
   { permission: 'view_attendance', path: '/attendance' },
   { permission: 'manage_kiosks', path: '/attendance/qr-display' },
   { permission: 'view_reports', path: '/reports' },
+  { permission: 'view_moderation', path: '/moderation' },
   { permission: 'view_notifications', path: '/notifications' },
   { permission: 'manage_admins', path: '/admins' },
 ];

@@ -1,3 +1,5 @@
+import '../../../../core/config/kiosk_url_policy.dart';
+
 class KioskSessionResult {
   const KioskSessionResult({
     required this.id,
@@ -20,6 +22,11 @@ class KioskSessionResult {
   final int refreshIntervalSeconds;
 
   factory KioskSessionResult.fromJson(Map<String, dynamic> json) {
+    final kioskUrl = KioskUrlPolicy.resolve(json['kiosk_url'] as String? ?? '');
+    if (kioskUrl == null) {
+      throw const FormatException('Etibarsız QR linkinin açılması bloklandı.');
+    }
+
     return KioskSessionResult(
       id: json['id'] as String? ?? '',
       assignmentId: json['assignment_id'] as String? ?? '',
@@ -27,8 +34,12 @@ class KioskSessionResult {
       orderTitle: json['order_title'] as String? ?? '',
       companyName: json['company_name'] as String? ?? '',
       kioskToken: json['kiosk_token'] as String? ?? '',
-      kioskUrl: json['kiosk_url'] as String? ?? '',
+      kioskUrl: kioskUrl,
       refreshIntervalSeconds: json['refresh_interval_seconds'] as int? ?? 30,
     );
+  }
+
+  static bool isSecureKioskUrl(String value) {
+    return KioskUrlPolicy.isAllowed(value);
   }
 }

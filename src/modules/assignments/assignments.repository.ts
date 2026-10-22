@@ -1,6 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { AssignmentStatus, Role } from '../../types/prisma';
+import {
+  orderLifecycleWhere,
+  reconcileOrderStaffingStatus,
+} from '../orders/orders.lifecycle';
+import {
+  AssignmentWarning,
+  buildPositionMismatchWarnings,
+  SCHEDULE_CONFLICT_STATUSES,
+} from './assignments.rules';
 
 const departmentSummarySelect = {
   id: true,
@@ -76,7 +85,7 @@ const assignmentInclude = {
           id: true,
           name: true,
           status: true,
-          user: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true, phone: true, is_review_account: true } },
         },
       },
     },
@@ -87,14 +96,27 @@ const assignmentInclude = {
       status: true,
       availability: true,
       position: true,
+      profile_photo_url: true,
       positions: {
         select: {
           position_id: true,
           position: { select: positionSummarySelect },
         },
       },
-      user: { select: { id: true, name: true, phone: true } },
+      user: { select: { id: true, name: true, phone: true, is_review_account: true } },
     },
+  },
+  attendance_logs: {
+    where: { deleted_at: null },
+    select: {
+      id: true,
+      checkin_time: true,
+      checkout_time: true,
+      created_at: true,
+      updated_at: true,
+    },
+    orderBy: { created_at: 'desc' },
+    take: 1,
   },
 } satisfies Prisma.AssignmentInclude;
 
@@ -110,18 +132,26 @@ type DuplicateAssignmentSummary = {
 };
 
 export type CreateAssignmentsResult =
-  | { kind: 'created'; assignments: AssignmentWithRelations[] }
+  | { kind: 'created'; assignments: AssignmentWithRelations[]; warnings: AssignmentWarning[] }
   | { kind: 'order_not_active' }
   | { kind: 'category_required' }
   | { kind: 'invalid_category'; category?: string; orderCategoryItemId?: string }
   | { kind: 'invalid_workers'; missingWorkerIds: string[] }
+  | { kind: 'cohort_mismatch'; workerIds: string[] }
   | {
       kind: 'unavailable_workers';
       workers: Array<{ id: string; status: string; availability: boolean }>;
     }
   | {
-      kind: 'position_mismatch';
-      workers: Array<{ id: string; position_id: string; category?: string }>;
+      kind: 'schedule_conflicts';
+      conflicts: Array<{
+        worker_id: string;
+        assignment_id: string;
+        order_id: string;
+        order_title: string;
+        shift_start: Date;
+        shift_end: Date;
+      }>;
     }
   | { kind: 'duplicate_assignments'; assignments: DuplicateAssignmentSummary[] }
   | {
@@ -135,14 +165,24 @@ export type CreateAssignmentsResult =
 export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_review_account: true } },
+    },
   });
 }
 
 export function findWorkerByUserId(userId: string) {
   return prisma.worker.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_review_account: true } },
+    },
   });
 }
 
@@ -153,16 +193,62 @@ export function findAssignmentById(id: string) {
   });
 }
 
-export function findAssignmentByIdForCompany(id: string, companyId: string) {
+export function findReviewAssignmentById(id: string) {
   return prisma.assignment.findFirst({
-    where: { id, deleted_at: null, order: { company_id: companyId, deleted_at: null } },
+    where: {
+      id,
+      deleted_at: null,
+      worker: { user: { is_review_account: true } },
+      order: { company: { user: { is_review_account: true } } },
+    },
     include: assignmentInclude,
   });
 }
 
-export function findAssignmentByIdForWorker(id: string, workerId: string) {
+export function findAssignmentByIdForReviewScope(id: string, isReviewAccount: boolean) {
   return prisma.assignment.findFirst({
-    where: { id, worker_id: workerId, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      worker: { user: { is_review_account: isReviewAccount } },
+      order: { company: { user: { is_review_account: isReviewAccount } } },
+    },
+    include: assignmentInclude,
+  });
+}
+
+export function findAssignmentByIdForCompany(
+  id: string,
+  companyId: string,
+  isReviewAccount?: boolean,
+) {
+  return prisma.assignment.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { worker: { user: { is_review_account: isReviewAccount } } }),
+      order: { company_id: companyId, deleted_at: null },
+    },
+    include: assignmentInclude,
+  });
+}
+
+export function findAssignmentByIdForWorker(
+  id: string,
+  workerId: string,
+  isReviewAccount?: boolean,
+) {
+  return prisma.assignment.findFirst({
+    where: {
+      id,
+      worker_id: workerId,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { order: { company: { user: { is_review_account: isReviewAccount } } } }),
+    },
     include: assignmentInclude,
   });
 }
@@ -178,7 +264,7 @@ export async function listAssignments(input: {
     prisma.assignment.findMany({
       where: input.where,
       include: assignmentInclude,
-      orderBy: { assigned_at: input.sort },
+      orderBy: [{ assigned_at: input.sort }, { id: input.sort }],
       skip: (input.page - 1) * input.limit,
       take: input.limit,
     }),
@@ -187,9 +273,28 @@ export async function listAssignments(input: {
   return { total, data };
 }
 
+export async function findAssignmentCreators(assignmentIds: string[], isReviewAccount = false) {
+  if (assignmentIds.length === 0) return [];
+  return prisma.auditLog.findMany({
+    where: {
+      entity_type: 'assignment',
+      entity_id: { in: assignmentIds },
+      action: 'assignment_created',
+      actor: { is_review_account: isReviewAccount },
+    },
+    select: {
+      entity_id: true,
+      created_at: true,
+      actor: { select: { id: true, name: true } },
+    },
+    orderBy: { created_at: 'asc' },
+  });
+}
+
 export function createAssignmentsWithSideEffects(input: {
   actorId: string;
   actorRole: Role;
+  actorIsReviewAccount?: boolean;
   orderId: string;
   assignments: Array<{
     workerId: string;
@@ -203,13 +308,20 @@ export function createAssignmentsWithSideEffects(input: {
     await tx.$queryRaw`SELECT id FROM "order_category_items" WHERE order_id = ${input.orderId} AND deleted_at IS NULL FOR UPDATE`;
 
     const order = await tx.order.findFirst({
-      where: { id: input.orderId, status: 'active', deleted_at: null },
+      where: { id: input.orderId, ...orderLifecycleWhere('staffing') },
       select: {
         id: true,
         title: true,
         category: true,
         required_count: true,
         company_id: true,
+        shift_start: true,
+        shift_end: true,
+        company: {
+          select: {
+            user: { select: { is_review_account: true } },
+          },
+        },
         category_items: {
           where: { deleted_at: null },
           select: {
@@ -226,6 +338,13 @@ export function createAssignmentsWithSideEffects(input: {
     });
 
     if (!order) return { kind: 'order_not_active' as const };
+    const orderIsReviewAccount = order.company?.user?.is_review_account === true;
+    if (orderIsReviewAccount !== (input.actorIsReviewAccount === true)) {
+      return {
+        kind: 'cohort_mismatch' as const,
+        workerIds: input.assignments.map((assignment) => assignment.workerId),
+      };
+    }
     const resolvedAssignments = input.assignments.map((assignment) => {
       const category = resolveAssignmentCategory(order, assignment);
       return { ...assignment, ...category };
@@ -244,6 +363,19 @@ export function createAssignmentsWithSideEffects(input: {
 
     const workerIds = resolvedAssignments.map((assignment) => assignment.workerId);
 
+    // Serialize assignment decisions for the same workers across different
+    // orders. This makes the overlap check safe under concurrent admin calls.
+    const sortedWorkerIds = [...workerIds].sort();
+    if (sortedWorkerIds.length > 0) {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT id
+        FROM "workers"
+        WHERE id IN (${Prisma.join(sortedWorkerIds)})
+        ORDER BY id
+        FOR UPDATE
+      `);
+    }
+
     const workers = await tx.worker.findMany({
       where: { id: { in: workerIds }, deleted_at: null },
       select: {
@@ -251,7 +383,16 @@ export function createAssignmentsWithSideEffects(input: {
         user_id: true,
         status: true,
         availability: true,
-        user: { select: { name: true } },
+        // Preserve the production account-state guard: a worker profile alone
+        // is not assignable when the owning user was disabled or deleted.
+        user: {
+          select: {
+            name: true,
+            is_active: true,
+            deleted_at: true,
+            is_review_account: true,
+          },
+        },
         positions: { select: { position_id: true } },
       },
     });
@@ -262,7 +403,19 @@ export function createAssignmentsWithSideEffects(input: {
       return { kind: 'invalid_workers' as const, missingWorkerIds };
     }
 
-    const unavailableWorkers = workers.filter((worker) => worker.status !== 'approved' || !worker.availability);
+    const cohortMismatchWorkerIds = workers
+      .filter((worker) => (worker.user.is_review_account === true) !== orderIsReviewAccount)
+      .map((worker) => worker.id);
+    if (cohortMismatchWorkerIds.length > 0) {
+      return { kind: 'cohort_mismatch' as const, workerIds: cohortMismatchWorkerIds };
+    }
+
+    const unavailableWorkers = workers.filter((worker) =>
+      worker.status !== 'approved'
+      || !worker.availability
+      || !worker.user.is_active
+      || worker.user.deleted_at !== null
+    );
     if (unavailableWorkers.length > 0) {
       return {
         kind: 'unavailable_workers' as const,
@@ -274,22 +427,47 @@ export function createAssignmentsWithSideEffects(input: {
       };
     }
 
-    const workersById = new Map(workers.map((worker) => [worker.id, worker]));
-    const positionMismatches = resolvedAssignments.filter((assignment) => {
-      if (!assignment.positionId) return false;
-      const worker = workersById.get(assignment.workerId);
-      return !worker?.positions.some((position) => position.position_id === assignment.positionId);
+    const scheduleConflicts = await tx.assignment.findMany({
+      where: {
+        worker_id: { in: workerIds },
+        order_id: { not: input.orderId },
+        status: { in: SCHEDULE_CONFLICT_STATUSES },
+        deleted_at: null,
+        order: {
+          deleted_at: null,
+          shift_start: { lt: order.shift_end },
+          shift_end: { gt: order.shift_start },
+        },
+      },
+      select: {
+        id: true,
+        worker_id: true,
+        order_id: true,
+        order: {
+          select: {
+            title: true,
+            shift_start: true,
+            shift_end: true,
+          },
+        },
+      },
+      orderBy: { assigned_at: 'asc' },
     });
-    if (positionMismatches.length > 0) {
+    if (scheduleConflicts.length > 0) {
       return {
-        kind: 'position_mismatch' as const,
-        workers: positionMismatches.map((assignment) => ({
-          id: assignment.workerId,
-          position_id: assignment.positionId!,
-          category: assignment.assignedCategory,
+        kind: 'schedule_conflicts' as const,
+        conflicts: scheduleConflicts.map((assignment) => ({
+          worker_id: assignment.worker_id,
+          assignment_id: assignment.id,
+          order_id: assignment.order_id,
+          order_title: assignment.order.title,
+          shift_start: assignment.order.shift_start,
+          shift_end: assignment.order.shift_end,
         })),
       };
     }
+
+    const warnings = buildPositionMismatchWarnings(resolvedAssignments, workers);
 
     const duplicateAssignments = await tx.assignment.findMany({
       where: { order_id: input.orderId, worker_id: { in: workerIds } },
@@ -391,7 +569,18 @@ export function createAssignmentsWithSideEffects(input: {
       });
     }
 
-    return { kind: 'created' as const, assignments: created };
+    await reconcileOrderStaffingStatus(tx, input.orderId, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'assignment_created',
+    });
+
+    const refreshed = await tx.assignment.findMany({
+      where: { id: { in: created.map((assignment) => assignment.id) }, deleted_at: null },
+      include: assignmentInclude,
+      orderBy: { assigned_at: 'asc' },
+    });
+    return { kind: 'created' as const, assignments: refreshed, warnings };
   });
 }
 
@@ -465,21 +654,64 @@ export function changeWorkerAssignmentStatus(input: {
   nextStatus: Extract<AssignmentStatus, 'accepted' | 'rejected'>;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        deleted_at: null,
+      },
+      select: {
+        order_id: true,
+        worker: { select: { user: { select: { is_review_account: true } } } },
+        order: {
+          select: {
+            company: { select: { user: { select: { is_review_account: true } } } },
+          },
+        },
+      },
+    });
+    if (!candidate) return null;
+    if (
+      (candidate.worker.user.is_review_account === true)
+      !== (candidate.order.company.user.is_review_account === true)
+    ) return null;
+
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
+
+    const changedAt = new Date();
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
         worker_id: input.workerId,
         deleted_at: null,
         status: 'assigned',
-        order: {
-          status: 'active',
-          deleted_at: null,
-        },
+        order: orderLifecycleWhere('staffing'),
       },
-      data: { status: input.nextStatus },
+      data: {
+        status: input.nextStatus,
+        attendance_activity_at: changedAt,
+      },
     });
 
     if (result.count !== 1) return null;
+
+    if (input.nextStatus === 'rejected') {
+      await tx.attendanceQrToken.updateMany({
+        where: {
+          assignment_id: input.assignmentId,
+          deleted_at: null,
+          revoked_at: null,
+        },
+        data: { revoked_at: changedAt },
+      });
+    }
+
+    await reconcileOrderStaffingStatus(tx, candidate.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: `assignment_${input.nextStatus}`,
+    });
 
     const assignment = await tx.assignment.findFirst({
       where: { id: input.assignmentId, worker_id: input.workerId, deleted_at: null },
@@ -529,26 +761,97 @@ export function cancelAssignmentWithAudit(input: {
   assignmentId: string;
   actorId: string;
   actorRole: Role;
-  previousStatus: AssignmentStatus;
+  actorIsReviewAccount?: boolean;
   reason?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, deleted_at: null },
+      select: { order_id: true },
+    });
+    if (!candidate) return { kind: 'not_found' as const };
+
+    // Match check-in and whole-order cancellation: parent order is always locked
+    // before its assignment so concurrent lifecycle mutations cannot deadlock.
+    await tx.$queryRaw`
+      SELECT id
+      FROM "orders"
+      WHERE id = ${candidate.order_id}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id
+      FROM "assignments"
+      WHERE id = ${input.assignmentId}
+      FOR UPDATE
+    `;
+
+    const current = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, deleted_at: null },
+      include: assignmentInclude,
+    });
+    if (!current) return { kind: 'not_found' as const };
+    if (
+      (current.worker.user.is_review_account === true)
+      !== (current.order.company.user.is_review_account === true)
+      || (current.order.company.user.is_review_account === true)
+        !== (input.actorIsReviewAccount === true)
+    ) return { kind: 'cohort_mismatch' as const };
+    if (current.status === 'cancelled') return { kind: 'already_cancelled' as const };
+    if (current.status === 'completed') return { kind: 'already_completed' as const };
+
+    if (current.status === 'accepted') {
+      const openAttendance = await tx.attendanceLog.findFirst({
+        where: {
+          assignment_id: input.assignmentId,
+          checkout_time: null,
+          deleted_at: null,
+        },
+        select: { id: true },
+      });
+      if (openAttendance) {
+        return {
+          kind: 'open_attendance' as const,
+          attendanceId: openAttendance.id,
+        };
+      }
+    }
+
+    const changedAt = new Date();
     const result = await tx.assignment.updateMany({
       where: {
         id: input.assignmentId,
         deleted_at: null,
-        status: { notIn: ['cancelled', 'completed'] },
+        status: current.status,
       },
-      data: { status: 'cancelled' },
+      data: {
+        status: 'cancelled',
+        attendance_activity_at: changedAt,
+      },
     });
 
-    if (result.count !== 1) return null;
+    if (result.count !== 1) return { kind: 'state_changed' as const };
+
+    await tx.attendanceQrToken.updateMany({
+      where: {
+        assignment_id: input.assignmentId,
+        deleted_at: null,
+        revoked_at: null,
+      },
+      data: { revoked_at: changedAt },
+    });
+
+    await reconcileOrderStaffingStatus(tx, current.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'assignment_cancelled',
+    });
 
     const assignment = await tx.assignment.findFirst({
       where: { id: input.assignmentId, deleted_at: null },
       include: assignmentInclude,
     });
-    if (!assignment) return null;
+    if (!assignment) return { kind: 'state_changed' as const };
 
     await tx.auditLog.create({
       data: {
@@ -558,7 +861,7 @@ export function cancelAssignmentWithAudit(input: {
         entity_type: 'assignment',
         entity_id: input.assignmentId,
         metadata: {
-          previous_status: input.previousStatus,
+          previous_status: current.status,
           new_status: 'cancelled',
           order_id: assignment.order_id,
           worker_id: assignment.worker_id,
@@ -582,6 +885,6 @@ export function cancelAssignmentWithAudit(input: {
       },
     });
 
-    return assignment;
+    return { kind: 'cancelled' as const, assignment };
   });
 }

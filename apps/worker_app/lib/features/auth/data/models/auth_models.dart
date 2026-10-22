@@ -94,12 +94,14 @@ class OtpStartResult {
     required this.otpSent,
     this.status,
     this.workerId,
+    this.enrollmentToken,
     this.retryAfterSeconds,
   });
 
   final bool otpSent;
   final String? status;
   final String? workerId;
+  final String? enrollmentToken;
   final int? retryAfterSeconds;
 
   factory OtpStartResult.fromJson(Map<String, dynamic> json) {
@@ -107,6 +109,7 @@ class OtpStartResult {
       otpSent: json['otp_sent'] == true,
       status: json['status'] as String?,
       workerId: json['worker_id'] as String?,
+      enrollmentToken: json['enrollment_token'] as String?,
       retryAfterSeconds: json['retry_after_seconds'] is int
           ? json['retry_after_seconds'] as int
           : null,
@@ -143,17 +146,20 @@ class WorkerRegistrationVerification {
     required this.workerId,
     required this.status,
     required this.message,
+    this.registrationAccessToken,
   });
 
   final String workerId;
   final String status;
   final String message;
+  final String? registrationAccessToken;
 
   factory WorkerRegistrationVerification.fromJson(Map<String, dynamic> json) {
     return WorkerRegistrationVerification(
       workerId: json['worker_id'] as String? ?? '',
       status: json['status'] as String? ?? '',
       message: json['message'] as String? ?? '',
+      registrationAccessToken: json['registration_access_token'] as String?,
     );
   }
 }
@@ -166,6 +172,8 @@ class WorkerMe {
     required this.position,
     required this.positionIds,
     required this.positions,
+    this.departments = const [],
+    this.subdepartments = const [],
     required this.email,
     required this.emailVerified,
     required this.emailVerifiedAt,
@@ -191,6 +199,8 @@ class WorkerMe {
   final String? position;
   final List<String> positionIds;
   final List<String> positions;
+  final List<String> departments;
+  final List<String> subdepartments;
   final String? email;
   final bool emailVerified;
   final String? emailVerifiedAt;
@@ -217,6 +227,8 @@ class WorkerMe {
       position: json['position'] as String?,
       positionIds: _stringList(json['position_ids']),
       positions: _positionNames(json['positions']),
+      departments: _taxonomyNames(json['positions'], 'department'),
+      subdepartments: _taxonomyNames(json['positions'], 'subdepartment'),
       email: json['email'] as String?,
       emailVerified: json['email_verified'] == true,
       emailVerifiedAt: json['email_verified_at'] as String?,
@@ -236,6 +248,63 @@ class WorkerMe {
       ratingCount: json['rating_count'] is int
           ? json['rating_count'] as int
           : 0,
+    );
+  }
+
+  WorkerMe withPhone(String canonicalPhone) => WorkerMe(
+    id: id,
+    name: name,
+    phone: canonicalPhone,
+    position: position,
+    positionIds: positionIds,
+    positions: positions,
+    departments: departments,
+    subdepartments: subdepartments,
+    email: email,
+    emailVerified: emailVerified,
+    emailVerifiedAt: emailVerifiedAt,
+    pendingEmail: pendingEmail,
+    profilePhotoUrl: profilePhotoUrl,
+    skills: skills,
+    languages: languages,
+    documents: documents,
+    workHistorySummary: workHistorySummary,
+    workHistory: workHistory,
+    gender: gender,
+    whatsappAvailable: whatsappAvailable,
+    status: status,
+    availability: availability,
+    workerClass: workerClass,
+    ratingAverage: ratingAverage,
+    ratingCount: ratingCount,
+  );
+}
+
+class WorkerPhoneChangeResult {
+  const WorkerPhoneChangeResult({
+    required this.phone,
+    required this.phoneChanged,
+    required this.alreadyApplied,
+    required this.sessionPreserved,
+  });
+
+  final String phone;
+  final bool phoneChanged;
+  final bool alreadyApplied;
+  final bool sessionPreserved;
+
+  factory WorkerPhoneChangeResult.fromJson(Map<String, dynamic> json) {
+    final phone = json['phone'];
+    if (phone is! String || phone.trim().isEmpty) {
+      throw const FormatException(
+        'Phone-change response does not contain a canonical phone number.',
+      );
+    }
+    return WorkerPhoneChangeResult(
+      phone: phone,
+      phoneChanged: json['phone_changed'] == true,
+      alreadyApplied: json['already_applied'] == true,
+      sessionPreserved: json['session_preserved'] != false,
     );
   }
 }
@@ -269,28 +338,78 @@ class WorkerExperience {
 class WorkerDocument {
   const WorkerDocument({
     required this.type,
-    required this.url,
+    this.url = '',
+    this.downloadUrl,
     this.name,
     this.mimeType,
+    this.sizeBytes,
     this.uploadedAt,
     this.companyVisible = false,
+    this.status = 'legacy',
+    this.scanStatus = 'unscanned',
+    this.available = false,
   });
 
   final String type;
   final String url;
+  final String? downloadUrl;
   final String? name;
   final String? mimeType;
+  final int? sizeBytes;
   final String? uploadedAt;
   final bool companyVisible;
+  final String status;
+  final String scanStatus;
+  final bool available;
+
+  // The backend may safely recover legacy documents at download time. A
+  // metadata URL is neither necessary nor sufficient to authorize access.
+  bool get canRequestDownload =>
+      available &&
+      const {'cv', 'health_certificate', 'criminal_record'}.contains(type) &&
+      !const {'deleted', 'rejected', 'quarantined'}.contains(status) &&
+      scanStatus != 'infected';
+
+  String get displayStatus {
+    if (status == 'deleted') return 'Silinib';
+    if (status == 'rejected' || scanStatus == 'infected') {
+      return 'Təhlükəsizlik yoxlamasından keçmədi';
+    }
+    if (status == 'quarantined') return 'Yoxlanılır';
+    if (status == 'legacy') {
+      return canRequestDownload ? 'Açılarkən yoxlanılacaq' : 'Yenidən yükləyin';
+    }
+    if (canRequestDownload && status == 'ready' && scanStatus == 'clean') {
+      return 'Yüklənib';
+    }
+    if (scanStatus == 'unscanned' || scanStatus == 'pending') {
+      return 'Yoxlanılır';
+    }
+    return 'Sənəd hazır deyil';
+  }
+
+  String? get effectiveDownloadPath {
+    final candidate = downloadUrl?.trim().isNotEmpty == true
+        ? downloadUrl!.trim()
+        : url.trim();
+    return candidate.isEmpty ? null : candidate;
+  }
 
   factory WorkerDocument.fromJson(Map<String, dynamic> json) {
     return WorkerDocument(
       type: json['type'] as String? ?? '',
       url: json['url'] as String? ?? '',
+      downloadUrl: json['download_url'] as String?,
       name: json['name'] as String?,
       mimeType: json['mime_type'] as String?,
+      sizeBytes: json['size_bytes'] is num
+          ? (json['size_bytes'] as num).toInt()
+          : null,
       uploadedAt: json['uploaded_at'] as String?,
       companyVisible: json['company_visible'] == true,
+      status: json['status'] as String? ?? 'legacy',
+      scanStatus: json['scan_status'] as String? ?? 'unscanned',
+      available: json['available'] == true,
     );
   }
 }
@@ -316,12 +435,24 @@ List<String> _positionNames(Object? value) {
       .toList(growable: false);
 }
 
+List<String> _taxonomyNames(Object? value, String key) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map<String, dynamic>>()
+      .map((item) => item[key])
+      .whereType<Map<String, dynamic>>()
+      .map((item) => item['name_az'] as String? ?? '')
+      .where((item) => item.trim().isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+}
+
 List<WorkerDocument> _documentList(Object? value) {
   if (value is! List) return const [];
   return value
       .whereType<Map<String, dynamic>>()
       .map(WorkerDocument.fromJson)
-      .where((document) => document.type.isNotEmpty && document.url.isNotEmpty)
+      .where((document) => document.type.isNotEmpty)
       .toList(growable: false);
 }
 

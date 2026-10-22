@@ -1,3 +1,5 @@
+// ignore_for_file: undefined_shown_name, unused_import
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 class BrandColors {
@@ -8,15 +10,15 @@ class BrandColors {
   static const deepBurgundy = Color(0xFF8A1818);
   static const accentGold = Color(0xFFE3C189);
   static const urbanGraphite = Color(0xFF585858);
-  static const creamBackground = Color(0xFFF7F2E9);
-  static const cardCream = Color(0xFFF7F2E9);
+  static const creamBackground = Color(0xFFF7F1EA);
+  static const cardCream = Color(0xFFF7F1EA);
   static const softBeige = Color(0xFFE3C189);
   static const darkText = Color(0xFF585858);
   static const mutedBrown = Color(0xFF585858);
   static const success = Color(0xFFE3C189);
   static const warning = Color(0xFF585858);
   static const error = Color(0xFF8A1818);
-  static const white = Color(0xFFF7F2E9);
+  static const white = Color(0xFFF7F1EA);
   static const transparent = Color(0x00000000);
 }
 
@@ -139,6 +141,8 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: BrandColors.white,
+        errorMaxLines: 3,
+        helperMaxLines: 3,
         labelStyle: const TextStyle(color: BrandColors.mutedBrown),
         hintStyle: const TextStyle(color: BrandColors.mutedBrown),
         border: OutlineInputBorder(
