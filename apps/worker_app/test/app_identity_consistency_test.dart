@@ -56,9 +56,19 @@ void main() {
 
     expect(adaptiveIcon, contains('@drawable/ic_launcher_foreground'));
     expect(adaptiveRoundIcon, contains('@drawable/ic_launcher_foreground'));
+    expect(adaptiveIcon, contains('@color/launcher_background'));
+    expect(adaptiveRoundIcon, contains('@color/launcher_background'));
+
+    final androidColors = File(
+      'android/app/src/main/res/values/colors.xml',
+    ).readAsStringSync();
+    expect(
+      androidColors,
+      contains('<color name="launcher_background">#000000</color>'),
+    );
 
     const expectedSizes = <String, Size>{
-      'assets/brand/set_launcher_icon.png': Size(1254, 1254),
+      'assets/brand/set_launcher_icon.png': Size(512, 512),
       'android/app/src/main/res/mipmap-mdpi/ic_launcher.png': Size(48, 48),
       'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png': Size(192, 192),
       'android/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png':
