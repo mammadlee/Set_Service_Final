@@ -218,7 +218,18 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /npm run test:release-security/);
   assert.match(workflowText, /npm run test:malware-scanner/);
   assert.match(workflowText, /npm run test:production-env/);
-  assert.match(workflowText, /name: Secret scan[\s\S]*fetch-depth: 0|fetch-depth: 0[\s\S]*name: Secret scan/);
+  assert.match(
+    workflowText,
+    /historical-secret-report:[\s\S]*name: Historical secret report \(blocking\)[\s\S]*fetch-depth: 0[\s\S]*name: Scan full Git history[\s\S]*npm run secrets:check/,
+  );
+  assert.match(
+    workflowText,
+    /name: Current-tree secret regression scan[\s\S]*npm run secrets:check -- --current-only/,
+  );
+  assert.doesNotMatch(
+    workflowText.match(/historical-secret-report:[\s\S]*?\n  release-inputs:/)?.[0] ?? '',
+    /continue-on-error:\s*true/,
+  );
   assert.match(workflowText, /vars\.PRODUCTION_API_BASE_URL/);
   assert.match(workflowText, /vars\.PRODUCTION_KIOSK_BASE_URL/);
   assert.match(workflowText, /Verify Android release signing fails closed without credentials/);
@@ -256,7 +267,7 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /needs: \[release-inputs, backend\]/);
   assert.doesNotMatch(workflowText, /image:\s+postgres:16(?:\s|$)/);
   assert.doesNotMatch(workflowText, /image:\s+redis:7-alpine(?:\s|$)/);
-  assert.equal((workflowText.match(/node-version: 24\.22\.0/g) ?? []).length, 6);
+  assert.equal((workflowText.match(/node-version: 24\.22\.0/g) ?? []).length, 7);
   assert.doesNotMatch(workflowText, /node-version:\s+(?:20|22|24)\s*$/m);
   assert.equal(
     (workflowText.match(/--build-arg NODE_BASE_IMAGE="\$NODE_BASE_IMAGE"/g) ?? []).length,

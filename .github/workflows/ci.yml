@@ -10,6 +10,25 @@ permissions:
   contents: read
 
 jobs:
+  historical-secret-report:
+    name: Historical secret report (blocking)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+
+      - name: Scan full Git history
+        run: npm run secrets:check
+
   release-inputs:
     name: Immutable release inputs
     runs-on: ubuntu-latest
@@ -128,8 +147,8 @@ jobs:
           node-version: 24.22.0
           cache: npm
 
-      - name: Secret scan
-        run: npm run secrets:check
+      - name: Current-tree secret regression scan
+        run: npm run secrets:check -- --current-only
 
       - name: Install dependencies
         run: npm ci
@@ -841,7 +860,7 @@ jobs:
 
   worker-ios:
     name: Worker iOS unsigned release gate
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 30
     env:
       STAGING_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || secrets.STAGING_API_BASE_URL }}
@@ -851,6 +870,17 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+
+      - name: Select and verify Xcode 26.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly xcode_developer_dir="/Applications/Xcode_26.6.app/Contents/Developer"
+          test -d "$xcode_developer_dir"
+          sudo xcode-select --switch "$xcode_developer_dir"
+          test "$(xcode-select --print-path)" = "$xcode_developer_dir"
+          xcodebuild -version
+          xcodebuild -version | grep -Fx "Xcode 26.6"
 
       - name: Setup Node.js for release configuration validation
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
