@@ -37,6 +37,7 @@ import {
 } from './lib/outbox';
 import { configureTrustProxy, requestContextMiddleware } from './middleware/request-context';
 import {
+  authRateLimitMax,
   authTarget,
   createRateLimitMiddleware,
   kioskTarget,
@@ -77,7 +78,7 @@ const globalLimiter = createRateLimitMiddleware({
 const authLimiter = createRateLimitMiddleware({
   scope: 'auth',
   windowMs: 5 * 60 * 1000,
-  max: 10,
+  max: authRateLimitMax(),
   dimensions: ['ip', 'target'],
   target: authTarget,
 });

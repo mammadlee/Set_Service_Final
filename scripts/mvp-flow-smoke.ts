@@ -1,4 +1,5 @@
 const { randomBytes } = require('node:crypto');
+const { PDFDocument } = require('pdf-lib') as typeof import('pdf-lib');
 
 type Json = Record<string, any>;
 
@@ -439,19 +440,20 @@ function firstIdFrom(collection: any[], label: string): string {
 
 function makeProfileImageForm(): FormData {
   const form = new FormData();
-  const png = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde,
-  ]);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
 
   form.append('file', new Blob([png], { type: 'image/png' }), `set-service-profil-${RUN_ID}.png`);
   return form;
 }
 
-function makeDocumentForm(type: string): FormData {
+async function makeDocumentForm(type: string): Promise<FormData> {
   const form = new FormData();
-  const pdf = Buffer.from('%PDF-1.4\n% SET Service worker document\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  const pdf = Buffer.from(await document.save({ useObjectStreams: false }));
 
   form.append('type', type);
   form.append('file', new Blob([pdf], { type: 'application/pdf' }), `set-service-sened-${RUN_ID}.pdf`);
@@ -589,6 +591,7 @@ async function main() {
   let companyTokens!: Tokens;
   let companyId!: string;
   let orderId!: string;
+  let orderStartAt!: Date;
   let assignmentId!: string;
   let attendanceId!: string;
   let venueKioskId!: string;
@@ -639,7 +642,12 @@ async function main() {
     adminTokens = await loginAdminWithPassword();
     const approval = await patch(`/admin/workers/${workerId}/approve`, {}, adminTokens.accessToken);
     expectStatus(approval.response, approval.json, 409);
-    expectErrorCode(approval.json, 'REGISTRATION_INCOMPLETE');
+    expectErrorCode(approval.json, 'WORKER_APPROVAL_NOT_PENDING');
+    expectEqual(
+      approval.json?.details?.status,
+      'pending_otp',
+      'worker status rejected by admin approval',
+    );
   });
 
   await step('Worker registration OTP verify and password creation', async () => {
@@ -696,7 +704,7 @@ async function main() {
 
     const staleTokenDenied = await get('/assignments', restrictedTokens.accessToken);
     expectStatus(staleTokenDenied.response, staleTokenDenied.json, 403);
-    expectErrorCode(staleTokenDenied.json, 'ADMIN_ACCOUNT_INACTIVE');
+    expectErrorCode(staleTokenDenied.json, 'ACCOUNT_INACTIVE');
   });
 
   await step('Seeded reports admin can access reports but not attendance', async () => {
@@ -842,7 +850,8 @@ async function main() {
   });
 
   await step('Company creates single-category order', async () => {
-    const dates = futureWindow(24, 8);
+    const dates = futureWindow(10 / 3600, 8);
+    orderStartAt = new Date(dates.start_date);
     const { response, json } = await post(
       '/orders',
       {
@@ -890,6 +899,9 @@ async function main() {
   let qrToken!: string;
 
   await step('Company generates attendance QR token with display context', async () => {
+    const waitForShiftMs = Math.max(0, orderStartAt.getTime() - Date.now() + 100);
+    if (waitForShiftMs > 0) await sleep(waitForShiftMs);
+
     const { response, json } = await post(
       '/attendance/qr-token',
       {
@@ -931,7 +943,7 @@ async function main() {
     expectEqual(kiosk.refresh_interval_seconds, 30, 'kiosk refresh interval');
   });
 
-  await step('Inactive venue kiosk waits until admin/company activation', async () => {
+  await step('Venue kiosk automatically selects the only current shift', async () => {
     const context = await getWithKioskCapability(
       '/attendance/venue-kiosks/context',
       venueKioskToken,
@@ -939,19 +951,21 @@ async function main() {
     expectStatus(context.response, context.json, 200);
     const kioskContext = expectObject(unwrapData(context.json), 'public kiosk context');
     expectEqual(kioskContext.company_id, companyId, 'public kiosk company id');
-    expectEqual(kioskContext.active_session ?? null, null, 'public kiosk active session');
+    expectEqual(kioskContext.active_session?.order_id, orderId, 'automatically selected kiosk order id');
     expectNoKey(kioskContext, 'kiosk_token', 'public kiosk context');
     expectNoKey(kioskContext, 'kiosk_url', 'public kiosk context');
 
-    const qrBeforeActivation = await postWithKioskCapability(
+    const automaticQr = await postWithKioskCapability(
       '/attendance/venue-kiosks/qr-token',
       venueKioskToken,
     );
-    expectStatus(qrBeforeActivation.response, qrBeforeActivation.json, 409);
-    expectErrorCode(qrBeforeActivation.json, 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+    expectStatus(automaticQr.response, automaticQr.json, 200);
+    const qr = expectObject(unwrapData(automaticQr.json), 'automatically selected kiosk QR token');
+    expectEqual(qr.order_id, orderId, 'automatic kiosk QR order id');
+    expectString(qr.token, 'automatic kiosk QR token');
   });
 
-  await step('Company activates order on persistent venue kiosk', async () => {
+  await step('Company can explicitly keep the order active on persistent venue kiosk', async () => {
     const activate = await post(
       `/attendance/venue-kiosks/${venueKioskId}/activate`,
       { order_id: orderId },
@@ -1031,7 +1045,7 @@ async function main() {
     expectString(attendance.checkout_time, 'attendance checkout_time');
   });
 
-  await step('Re-check-in after checkout returns expected 409', async () => {
+  await step('Re-check-in after checkout is rejected for the completed assignment', async () => {
     const { response, json } = await post(
       '/attendance/check-in',
       {
@@ -1040,8 +1054,8 @@ async function main() {
       workerTokens.accessToken,
     );
 
-    expectStatus(response, json, 409);
-    expectErrorCode(json, 'ATTENDANCE_ALREADY_COMPLETED');
+    expectStatus(response, json, 404);
+    expectErrorCode(json, 'KIOSK_ASSIGNMENT_NOT_FOUND');
   });
 
   await step('Worker/company/admin attendance list visibility checks', async () => {
@@ -1093,7 +1107,7 @@ async function main() {
 
     const document = await requestMultipart(
       '/workers/me/documents',
-      makeDocumentForm('health_certificate'),
+      await makeDocumentForm('health_certificate'),
       workerTokens.accessToken,
     );
     expectStatus(document.response, document.json, 201);
@@ -1120,7 +1134,7 @@ async function main() {
   });
 
   await step('Worker changes phone with OTP verification', async () => {
-    const newPhone = createPhone(4);
+    const newPhone = createPhone(5);
 
     const request = await post(
       '/auth/worker/phone-change/v2/request',
@@ -1259,10 +1273,17 @@ async function main() {
     const categoryItems = expectArray(order.category_items, 'multi-category order.category_items');
     expectEqual(categoryItems.length, 2, 'multi-category item count');
     expectEqual(order.required_count, 2, 'multi-category required_count sum');
-    firstCategoryItemId = expectString(categoryItems[0].id, 'first category item id');
-    firstCategoryName = expectString(categoryItems[0].category, 'first category name');
-    expectEqual(categoryItems[0].position_id, waiterPosition.id, 'first category item position id');
-    expectEqual(categoryItems[1].position_id, bartenderPosition.id, 'second category item position id');
+    const waiterItem = expectObject(
+      categoryItems.find((item) => item?.position_id === waiterPosition.id),
+      'waiter category item',
+    );
+    const bartenderItem = expectObject(
+      categoryItems.find((item) => item?.position_id === bartenderPosition.id),
+      'bartender category item',
+    );
+    firstCategoryItemId = expectString(waiterItem.id, 'waiter category item id');
+    firstCategoryName = expectString(waiterItem.category, 'waiter category name');
+    expectEqual(bartenderItem.position_id, bartenderPosition.id, 'bartender category item position id');
   });
 
   await step('Super admin assigns worker to selected category item', async () => {

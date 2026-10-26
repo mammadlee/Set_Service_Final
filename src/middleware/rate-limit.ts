@@ -75,6 +75,14 @@ export function createRateLimitMiddleware(config: RateLimitConfig): RequestHandl
   };
 }
 
+export function authRateLimitMax(env: NodeJS.ProcessEnv = process.env): number {
+  const productionDefault = 10;
+  if (env.NODE_ENV !== 'test') return productionDefault;
+
+  const parsed = Number(env.TEST_AUTH_RATE_LIMIT_MAX);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : productionDefault;
+}
+
 export async function enforceActorRateLimit(req: Request, res: Response): Promise<void> {
   await enforceRateLimit(req, res, {
     scope: 'authenticated_actor',

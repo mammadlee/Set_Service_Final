@@ -49,12 +49,13 @@ assert.deepEqual(
 
 const auditedRuntimeVersions = new Map([
   ['express', '4.22.3'],
-  ['multer', '2.4.0'],
+  ['multer', '2.5.0'],
+  ['zod', '4.6.7'],
   ['sharp', '0.35.5'],
   ['js-yaml', '5.4.3'],
   ['@fastify/busboy', '3.2.3'],
   ['@grpc/grpc-js', '1.14.6'],
-  ['body-parser', '1.20.8'],
+  ['body-parser', '1.20.9'],
   ['brace-expansion', '5.0.12'],
   ['proxy-addr', '2.0.8'],
   ['qs', '6.16.1'],
@@ -89,7 +90,7 @@ for (const router of [
   assert.match(
     source(router),
     /fieldNameSize:\s*100/,
-    `${router} must retain a finite multipart field-name limit with Multer 2.4`
+    `${router} must retain a finite multipart field-name limit with Multer 2.5`
   );
 }
 

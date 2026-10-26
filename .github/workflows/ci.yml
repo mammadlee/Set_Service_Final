@@ -322,7 +322,7 @@ jobs:
           set -euo pipefail
           node dist/outbox-worker.js > outbox.log 2>&1 &
           OUTBOX_PID=$!
-          node dist/index.js > api.log 2>&1 &
+          TEST_AUTH_RATE_LIMIT_MAX=50 node dist/index.js > api.log 2>&1 &
           API_PID=$!
           trap 'kill "$API_PID" "$OUTBOX_PID" 2>/dev/null || true' EXIT
           for i in {1..30}; do

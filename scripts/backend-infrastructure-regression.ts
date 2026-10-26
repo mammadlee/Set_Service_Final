@@ -6,6 +6,7 @@ import { AppError } from '../src/lib/errors';
 import { logger } from '../src/lib/logger';
 import {
   MemoryRateLimitStore,
+  authRateLimitMax,
   authTarget,
   buildDimensionKeys,
   enforceRateLimit,
@@ -116,6 +117,14 @@ async function testProductionFailClosed(): Promise<void> {
   }
 }
 
+function testAuthRateLimitOverrideIsTestOnly(): void {
+  assert.equal(authRateLimitMax({ NODE_ENV: 'production', TEST_AUTH_RATE_LIMIT_MAX: '50' }), 10);
+  assert.equal(authRateLimitMax({ NODE_ENV: 'development', TEST_AUTH_RATE_LIMIT_MAX: '50' }), 10);
+  assert.equal(authRateLimitMax({ NODE_ENV: 'test', TEST_AUTH_RATE_LIMIT_MAX: '50' }), 50);
+  assert.equal(authRateLimitMax({ NODE_ENV: 'test', TEST_AUTH_RATE_LIMIT_MAX: '0' }), 10);
+  assert.equal(authRateLimitMax({ NODE_ENV: 'test', TEST_AUTH_RATE_LIMIT_MAX: 'invalid' }), 10);
+}
+
 function testRequestMetadataSafety(): void {
   assert.equal(safeHeaderId('request-1234'), 'request-1234');
   assert.equal(safeHeaderId('short'), undefined);
@@ -196,6 +205,7 @@ async function main(): Promise<void> {
   await testMemoryStoreWindow();
   await testRateLimitDimensionsAndEnforcement();
   await testProductionFailClosed();
+  testAuthRateLimitOverrideIsTestOnly();
   testRequestMetadataSafety();
   testStructuredLogRedaction();
   testSmokeFlowDoesNotLogOtpValue();
