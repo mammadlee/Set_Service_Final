@@ -1,0 +1,679 @@
+name: Publish immutable release images
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full 40-character release commit SHA (must equal the selected ref HEAD)
+        required: true
+        type: string
+      confirmation:
+        description: Type PUBLISH_SIGN_RELEASE_IMAGES
+        required: true
+        type: string
+
+run-name: Publish and sign images for ${{ inputs.release_sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-release-images-${{ inputs.release_sha }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  NODE_BASE_IMAGE: ${{ vars.NODE_BASE_IMAGE }}
+  RUNTIME_BASE_IMAGE: ${{ vars.RUNTIME_BASE_IMAGE }}
+  POSTGRES_CI_IMAGE: ${{ vars.POSTGRES_CI_IMAGE }}
+  REDIS_CI_IMAGE: ${{ vars.REDIS_CI_IMAGE }}
+  TRIVY_IMAGE: aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+
+jobs:
+  validate-release:
+    name: Validate exact release source and security gate
+    runs-on: ubuntu-24.04
+    outputs:
+      git_tree_sha: ${{ steps.source.outputs.git_tree_sha }}
+      package_lock_sha256: ${{ steps.source.outputs.package_lock_sha256 }}
+      registry_owner: ${{ steps.source.outputs.registry_owner }}
+    steps:
+      - name: Checkout exact release with full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+
+      - name: Require an exact immutable release ref
+        id: source
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REPOSITORY" != 'mammadlee/Set_Service_Final' ]]; then
+            echo '::error::This workflow may only publish the SET Service repository.'
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" != 'refs/heads/codex/final-store-release-preparation' ]]; then
+            echo '::error::Publication must be dispatched from the approved release branch.'
+            exit 1
+          fi
+          if [[ "$CONFIRMATION" != 'PUBLISH_SIGN_RELEASE_IMAGES' ]]; then
+            echo '::error::Publication confirmation phrase is invalid.'
+            exit 1
+          fi
+          if [[ ! "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo '::error::release_sha must be a lowercase full 40-character Git SHA.'
+            exit 1
+          fi
+          if [[ "$RELEASE_SHA" != "$GITHUB_SHA" ]]; then
+            echo '::error::release_sha must equal the selected workflow ref HEAD.'
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]]; then
+            echo '::error::Checkout did not resolve to release_sha.'
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo '::error::Release checkout is not clean.'
+            exit 1
+          fi
+          if [[ "$NODE_BASE_IMAGE" != 'node:24.22.0-trixie-slim@sha256:7f486cabe892bff8fef04c0f7da8dba84a560be3e4e2740b7a86afc57ebec315' ]]; then
+            echo '::error::NODE_BASE_IMAGE is missing or is not the approved immutable Node image.'
+            exit 1
+          fi
+          if [[ "$RUNTIME_BASE_IMAGE" != 'gcr.io/distroless/nodejs24-debian13:nonroot@sha256:59c479c9b8c123e66047315c968aa2d35e31ae5149c856e4110a79c8b3563f0b' ]]; then
+            echo '::error::RUNTIME_BASE_IMAGE is missing or is not the approved immutable runtime image.'
+            exit 1
+          fi
+          if [[ "$POSTGRES_CI_IMAGE" != 'postgres:16.15-bookworm@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4' ]]; then
+            echo '::error::POSTGRES_CI_IMAGE is missing or is not the approved immutable PostgreSQL 16 image.'
+            exit 1
+          fi
+          if [[ "$REDIS_CI_IMAGE" != 'redis:7.4.10-alpine3.21@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2' ]]; then
+            echo '::error::REDIS_CI_IMAGE is missing or is not the approved immutable Redis 7 image.'
+            exit 1
+          fi
+
+          registry_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          if [[ ! "$registry_owner" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo '::error::Repository owner cannot be mapped safely to GHCR.'
+            exit 1
+          fi
+
+          echo "git_tree_sha=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+          echo "package_lock_sha256=$(sha256sum package-lock.json | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "registry_owner=$registry_owner" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce full-history credential evidence gate
+        run: npm run secrets:check
+
+      - name: Verify publication workflow policy
+        run: node scripts/release-publication-workflow-regression.mjs
+
+  build-publish-sign:
+    name: Build, scan, publish and sign ${{ matrix.repository }}
+    needs: validate-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: api
+            repository: setservice-api
+          - target: outbox-worker
+            repository: setservice-outbox
+          - target: migration
+            repository: setservice-migration
+          - target: malware-scanner
+            repository: setservice-malware-scanner
+          - target: reviewer-provisioner
+            repository: setservice-reviewer-provisioner
+    steps:
+      - name: Checkout exact release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Install immutable Cosign 3.1.4
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: Login to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" |
+            docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and publish isolated candidate image
+        id: image
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          REGISTRY_OWNER: ${{ needs.validate-release.outputs.registry_owner }}
+          TARGET: ${{ matrix.target }}
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          image_name="${REGISTRY}/${REGISTRY_OWNER}/${REPOSITORY}"
+          candidate_tagged_ref="${image_name}:${RELEASE_SHA}-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          metadata_file="${REPOSITORY}.build-metadata.json"
+
+          docker buildx build --pull \
+            --platform linux/amd64 \
+            --target "$TARGET" \
+            --build-arg "NODE_BASE_IMAGE=${NODE_BASE_IMAGE}" \
+            --build-arg "RUNTIME_BASE_IMAGE=${RUNTIME_BASE_IMAGE}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${RELEASE_SHA}" \
+            --tag "$candidate_tagged_ref" \
+            --provenance=mode=max \
+            --sbom=true \
+            --metadata-file "$metadata_file" \
+            --push .
+
+          digest="$(jq -er '."containerimage.digest"' "$metadata_file")"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo '::error::Buildx did not return a valid immutable image digest.'
+            exit 1
+          fi
+          immutable_ref="${image_name}@${digest}"
+          docker buildx imagetools inspect "$immutable_ref" >/dev/null
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "immutable_ref=$immutable_ref" >> "$GITHUB_OUTPUT"
+          echo "candidate_tagged_ref=$candidate_tagged_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Capture and validate BuildKit provenance
+        shell: bash
+        env:
+          IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMMUTABLE_REF" \
+            --format '{{ json .Provenance.SLSA }}' \
+            > "${REPOSITORY}.provenance.json"
+          jq -e '
+            type == "object" and
+            (.predicateType | test("^https://slsa.dev/provenance/v(0\\.2|1)$")) and
+            ((.subject // []) | length > 0)
+          ' "${REPOSITORY}.provenance.json" >/dev/null
+
+      - name: Scan immutable image with Trivy
+        shell: bash
+        env:
+          IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/trivy"
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$HOME/.docker/config.json:/root/.docker/config.json:ro" \
+            --volume "$HOME/.cache/trivy:/root/.cache/" \
+            --volume "$GITHUB_WORKSPACE:/work" \
+            "$TRIVY_IMAGE" image \
+            --scanners vuln,secret \
+            --format json \
+            --output "/work/${REPOSITORY}.trivy.json" \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed=false \
+            --exit-code 1 \
+            "$IMMUTABLE_REF"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: ${{ steps.image.outputs.immutable_ref }}
+          format: spdx-json
+          output-file: ${{ matrix.repository }}.spdx.json
+          syft-version: v1.55.0
+          upload-artifact: false
+          upload-release-assets: false
+          dependency-snapshot: false
+
+      - name: Verify immutable runtime metadata
+        id: runtime
+        shell: bash
+        env:
+          IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          REPOSITORY: ${{ matrix.repository }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMMUTABLE_REF" >/dev/null
+          user="$(docker image inspect --format '{{.Config.User}}' "$IMMUTABLE_REF")"
+          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMMUTABLE_REF")"
+          entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$IMMUTABLE_REF")"
+          command="$(docker image inspect --format '{{json .Config.Cmd}}' "$IMMUTABLE_REF")"
+          test "$user" = '65532:65532'
+          test "$revision" = "$RELEASE_SHA"
+
+          case "$TARGET" in
+            api)
+              expected_entrypoint='["/nodejs/bin/node"]'
+              expected_command='["dist/index.js"]'
+              ;;
+            outbox-worker)
+              expected_entrypoint='["/nodejs/bin/node"]'
+              expected_command='["dist/outbox-worker.js"]'
+              ;;
+            migration)
+              expected_entrypoint='["/nodejs/bin/node"]'
+              expected_command='["scripts/run-prisma-migrate-deploy.mjs"]'
+              ;;
+            malware-scanner)
+              expected_entrypoint='["/nodejs/bin/node"]'
+              expected_command='["dist/malware-scanner/index.js"]'
+              ;;
+            reviewer-provisioner)
+              expected_entrypoint='["/nodejs/bin/node","provisioner-dist/scripts/run-store-review-provisioner.js"]'
+              expected_command='["plan"]'
+              ;;
+            *)
+              echo "::error::Unrecognized release target: ${TARGET}."
+              exit 1
+              ;;
+          esac
+          test "$(jq -c . <<<"$entrypoint")" = "$expected_entrypoint"
+          test "$(jq -c . <<<"$command")" = "$expected_command"
+
+          docker run --rm --entrypoint /nodejs/bin/node "$IMMUTABLE_REF" -e "
+            const fs = require('node:fs');
+            for (const path of ['/bin/sh', '/usr/local/bin/npm', '/usr/local/bin/npx', '/usr/bin/psql']) {
+              if (fs.existsSync(path)) throw new Error(path + ' must not be present');
+            }
+            if (process.getuid() !== 65532 || process.getgid() !== 65532) {
+              throw new Error('runtime must use uid/gid 65532');
+            }
+          "
+
+          jq -n \
+            --arg user "$user" \
+            --arg revision "$revision" \
+            --argjson entrypoint "$entrypoint" \
+            --argjson command "$command" \
+            '{user:$user,revision:$revision,entrypoint:$entrypoint,command:$command}' \
+            > "${REPOSITORY}.runtime.json"
+
+      - name: Sign and verify immutable image with GitHub OIDC
+        shell: bash
+        env:
+          IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          EXPECTED_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          REPOSITORY: ${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMMUTABLE_REF"
+          cosign verify \
+            --certificate-identity "$EXPECTED_IDENTITY" \
+            --certificate-oidc-issuer "$EXPECTED_ISSUER" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "$GITHUB_REF" \
+            --certificate-github-workflow-sha "$RELEASE_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch \
+            "$IMMUTABLE_REF" > "${REPOSITORY}.cosign-verification.json"
+
+      - name: Create redacted image manifest fragment
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          REPOSITORY: ${{ matrix.repository }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          CANDIDATE_TAGGED_REF: ${{ steps.image.outputs.candidate_tagged_ref }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          EXPECTED_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          sbom_sha="$(sha256sum "${REPOSITORY}.spdx.json" | awk '{print $1}')"
+          scan_sha="$(sha256sum "${REPOSITORY}.trivy.json" | awk '{print $1}')"
+          runtime_sha="$(sha256sum "${REPOSITORY}.runtime.json" | awk '{print $1}')"
+          build_metadata_sha="$(sha256sum "${REPOSITORY}.build-metadata.json" | awk '{print $1}')"
+          signature_verification_sha="$(sha256sum "${REPOSITORY}.cosign-verification.json" | awk '{print $1}')"
+          provenance_sha="$(sha256sum "${REPOSITORY}.provenance.json" | awk '{print $1}')"
+          provenance_type="$(jq -er '.predicateType' "${REPOSITORY}.provenance.json")"
+          high_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "${REPOSITORY}.trivy.json")"
+          critical_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "${REPOSITORY}.trivy.json")"
+          secret_count="$(jq '[.Results[]?.Secrets[]?] | length' "${REPOSITORY}.trivy.json")"
+          test "$high_count" = '0'
+          test "$critical_count" = '0'
+          test "$secret_count" = '0'
+
+          jq -n \
+            --arg target "$TARGET" \
+            --arg repository "$REPOSITORY" \
+            --arg release_sha "$RELEASE_SHA" \
+            --arg candidate_tag "$CANDIDATE_TAGGED_REF" \
+            --arg digest "$DIGEST" \
+            --arg immutable_ref "$IMMUTABLE_REF" \
+            --arg sbom_sha256 "$sbom_sha" \
+            --arg scan_sha256 "$scan_sha" \
+            --arg runtime_sha256 "$runtime_sha" \
+            --arg build_metadata_sha256 "$build_metadata_sha" \
+            --arg provenance_sha256 "$provenance_sha" \
+            --arg provenance_type "$provenance_type" \
+            --arg signature_verification_sha256 "$signature_verification_sha" \
+            --arg scanner_image "$TRIVY_IMAGE" \
+            --arg issuer "$EXPECTED_ISSUER" \
+            --arg identity "$EXPECTED_IDENTITY" \
+            --arg workflow_repository "$GITHUB_REPOSITORY" \
+            --arg workflow_ref "$GITHUB_REF" \
+            --arg workflow_sha "$RELEASE_SHA" \
+            --argjson runtime "$(cat "${REPOSITORY}.runtime.json")" \
+            '{
+              target:$target,
+              repository:$repository,
+              release_sha:$release_sha,
+              candidate_tag:$candidate_tag,
+              tag:null,
+              digest:$digest,
+              immutable_ref:$immutable_ref,
+              runtime:$runtime,
+              sbom:{format:"spdx-json",generator:"anchore-syft-v1.55.0",sha256:$sbom_sha256},
+              provenance:{
+                mode:"max",
+                predicate_type:$provenance_type,
+                sha256:$provenance_sha256,
+                build_metadata_sha256:$build_metadata_sha256
+              },
+              scan:{scanner_image:$scanner_image,trivy_report_sha256:$scan_sha256,high:0,critical:0,secrets:0},
+              signature:{
+                mode:"keyless",
+                issuer:$issuer,
+                certificate_identity:$identity,
+                workflow_repository:$workflow_repository,
+                workflow_ref:$workflow_ref,
+                workflow_sha:$workflow_sha,
+                workflow_trigger:"workflow_dispatch",
+                verified:true,
+                verification_sha256:$signature_verification_sha256
+              },
+              runtime_metadata_sha256:$runtime_sha256
+            }' > "${REPOSITORY}.fragment.json"
+
+      - name: Upload signed image evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image-${{ matrix.repository }}-${{ inputs.release_sha }}
+          path: |
+            ${{ matrix.repository }}.build-metadata.json
+            ${{ matrix.repository }}.cosign-verification.json
+            ${{ matrix.repository }}.fragment.json
+            ${{ matrix.repository }}.provenance.json
+            ${{ matrix.repository }}.runtime.json
+            ${{ matrix.repository }}.spdx.json
+            ${{ matrix.repository }}.trivy.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release-manifest:
+    name: Assemble and sign immutable release manifest
+    needs: [validate-release, build-publish-sign]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout exact release
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.release_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+
+      - name: Install immutable Cosign 3.1.4
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" |
+            docker login "$REGISTRY" --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Download image evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-image-*-${{ inputs.release_sha }}
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Verify provisioner and migration images on PostgreSQL 16
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t fragments < <(find release-artifacts -maxdepth 1 -name '*.fragment.json' -type f | sort)
+          provisioner_ref="$(jq -er 'select(.target == "reviewer-provisioner") | .immutable_ref' "${fragments[@]}")"
+          migration_ref="$(jq -er 'select(.target == "migration") | .immutable_ref' "${fragments[@]}")"
+          node scripts/reviewer-provisioner-container-regression.mjs \
+            "$provisioner_ref" \
+            "$migration_ref" \
+            "$POSTGRES_CI_IMAGE"
+
+      - name: Promote verified digests to immutable release tags
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          REGISTRY_OWNER: ${{ needs.validate-release.outputs.registry_owner }}
+        run: |
+          set -euo pipefail
+          mapfile -t fragments < <(find release-artifacts -maxdepth 1 -name '*.fragment.json' -type f | sort)
+          if (( ${#fragments[@]} != 5 )); then
+            echo "::error::Expected 5 verified image fragments, found ${#fragments[@]}."
+            exit 1
+          fi
+
+          actual_pairs="$(jq -sr 'map(.target + ":" + .repository) | sort | join("\n")' "${fragments[@]}")"
+          expected_pairs="$(printf '%s\n' \
+            'api:setservice-api' \
+            'malware-scanner:setservice-malware-scanner' \
+            'migration:setservice-migration' \
+            'outbox-worker:setservice-outbox' \
+            'reviewer-provisioner:setservice-reviewer-provisioner')"
+          if [[ "$actual_pairs" != "$expected_pairs" ]]; then
+            echo '::error::Image fragments do not contain the exact five approved target/repository pairs.'
+            exit 1
+          fi
+
+          for fragment in "${fragments[@]}"; do
+            fragment_release_sha="$(jq -er '.release_sha' "$fragment")"
+            repository="$(jq -er '.repository' "$fragment")"
+            immutable_ref="$(jq -er '.immutable_ref' "$fragment")"
+            expected_digest="$(jq -er '.digest' "$fragment")"
+            final_tag="${REGISTRY}/${REGISTRY_OWNER}/${repository}:${RELEASE_SHA}"
+            if [[ "$fragment_release_sha" != "$RELEASE_SHA" || ! "$expected_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              echo "::error::Image fragment is not bound to the exact release SHA and digest: ${fragment}."
+              exit 1
+            fi
+            if [[ "$immutable_ref" != "${REGISTRY}/${REGISTRY_OWNER}/${repository}@${expected_digest}" ]]; then
+              echo "::error::Image fragment contains an unexpected immutable reference: ${fragment}."
+              exit 1
+            fi
+
+            existing_raw="$(mktemp)"
+            if docker buildx imagetools inspect --raw "$final_tag" > "$existing_raw" 2>/dev/null; then
+              existing_digest="sha256:$(sha256sum "$existing_raw" | awk '{print $1}')"
+              if [[ "$existing_digest" != "$expected_digest" ]]; then
+                echo "::error::Immutable release tag already exists with a different digest: ${final_tag}."
+                exit 1
+              fi
+            else
+              docker buildx imagetools create --tag "$final_tag" "$immutable_ref"
+            fi
+
+            final_raw="$(mktemp)"
+            docker buildx imagetools inspect --raw "$final_tag" > "$final_raw"
+            final_digest="sha256:$(sha256sum "$final_raw" | awk '{print $1}')"
+            rm -f "$existing_raw" "$final_raw"
+            if [[ "$final_digest" != "$expected_digest" ]]; then
+              echo "::error::Final tag did not resolve to the verified digest: ${final_tag}."
+              exit 1
+            fi
+
+            updated="${fragment}.updated"
+            jq --arg tag "$final_tag" '.tag = $tag' "$fragment" > "$updated"
+            mv "$updated" "$fragment"
+          done
+
+      - name: Assemble exact digest manifest
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          GIT_TREE_SHA: ${{ needs.validate-release.outputs.git_tree_sha }}
+          PACKAGE_LOCK_SHA256: ${{ needs.validate-release.outputs.package_lock_sha256 }}
+          EXPECTED_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          mapfile -t fragments < <(find release-artifacts -maxdepth 1 -name '*.fragment.json' -type f | sort)
+          if (( ${#fragments[@]} != 5 )); then
+            echo "::error::Expected 5 image fragments, found ${#fragments[@]}."
+            exit 1
+          fi
+
+          migration_one="$(sha256sum prisma/migrations/20261014120000_assignment_attendance_activity/migration.sql | awk '{print $1}')"
+          migration_two="$(sha256sum prisma/migrations/20261017120000_store_review_account_scope/migration.sql | awk '{print $1}')"
+          migration_three="$(sha256sum prisma/migrations/20261017121000_store_review_account_index/migration.sql | awk '{print $1}')"
+          test "$migration_one" = '271388994cd48d568359bcf640b25238c07c07949d70261cafe90140d0383237'
+          test "$migration_two" = '2c810220369f282d676bde5f5fd849de3d1e3f8f04e75103781bc6551970a1bb'
+          test "$migration_three" = '5d88990d8d891153ae8213eaaa5fbbfd8b5be5af1fe8557577cff39162ffc6b0'
+
+          images="$(jq -s 'sort_by(.target)' "${fragments[@]}")"
+          created_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          workflow_run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          jq -n \
+            --arg source_repository "$GITHUB_REPOSITORY" \
+            --arg source_ref "$GITHUB_REF" \
+            --arg commit_sha "$RELEASE_SHA" \
+            --arg git_tree_sha "$GIT_TREE_SHA" \
+            --arg package_lock_sha256 "$PACKAGE_LOCK_SHA256" \
+            --arg workflow_run_url "$workflow_run_url" \
+            --arg workflow_run_id "$GITHUB_RUN_ID" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg builder_identity "$EXPECTED_IDENTITY" \
+            --arg issuer "$EXPECTED_ISSUER" \
+            --arg created_utc "$created_utc" \
+            --arg node_base_image "$NODE_BASE_IMAGE" \
+            --arg runtime_base_image "$RUNTIME_BASE_IMAGE" \
+            --arg postgres_ci_image "$POSTGRES_CI_IMAGE" \
+            --arg redis_ci_image "$REDIS_CI_IMAGE" \
+            --arg migration_one "$migration_one" \
+            --arg migration_two "$migration_two" \
+            --arg migration_three "$migration_three" \
+            --argjson images "$images" \
+            '{
+              schema_version:1,
+              release:{
+                source_repository:$source_repository,
+                source_ref:$source_ref,
+                commit_sha:$commit_sha,
+                git_tree_sha:$git_tree_sha,
+                package_lock_sha256:$package_lock_sha256,
+                workflow_run_url:$workflow_run_url,
+                workflow_run_id:$workflow_run_id,
+                workflow_ref:$workflow_ref,
+                builder_identity:$builder_identity,
+                build_platform:"linux/amd64",
+                created_utc:$created_utc,
+                historical_secret_gate:"passed"
+              },
+              base_images:{node:$node_base_image,runtime:$runtime_base_image},
+              ci_images:{postgres:$postgres_ci_image,redis:$redis_ci_image},
+              migrations:[
+                {name:"20261014120000_assignment_attendance_activity",sha256:$migration_one},
+                {name:"20261017120000_store_review_account_scope",sha256:$migration_two},
+                {name:"20261017121000_store_review_account_index",sha256:$migration_three}
+              ],
+              images:$images,
+              signature_policy:{
+                mode:"keyless",
+                issuer:$issuer,
+                certificate_identity:$builder_identity,
+                workflow_repository:$source_repository,
+                workflow_ref:$source_ref,
+                workflow_sha:$commit_sha,
+                workflow_trigger:"workflow_dispatch"
+              }
+            }' > release-artifacts/release-manifest.json
+
+          sha256sum release-artifacts/release-manifest.json \
+            > release-artifacts/release-manifest.json.sha256
+
+      - name: Sign and verify immutable release manifest
+        shell: bash
+        env:
+          EXPECTED_IDENTITY: https://github.com/${{ github.workflow_ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle release-artifacts/release-manifest.sigstore.json \
+            release-artifacts/release-manifest.json
+          cosign verify-blob \
+            --bundle release-artifacts/release-manifest.sigstore.json \
+            --certificate-identity "$EXPECTED_IDENTITY" \
+            --certificate-oidc-issuer "$EXPECTED_ISSUER" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "$GITHUB_REF" \
+            --certificate-github-workflow-sha "${{ inputs.release_sha }}" \
+            --certificate-github-workflow-trigger workflow_dispatch \
+            release-artifacts/release-manifest.json
+
+      - name: Upload final immutable release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setservice-immutable-release-${{ inputs.release_sha }}
+          path: release-artifacts
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish redacted release summary
+        shell: bash
+        run: |
+          {
+            echo '## Immutable SET Service release images'
+            echo
+            echo "Release SHA: \`${{ inputs.release_sha }}\`"
+            echo
+            jq -r '.images[] | "- `\(.target)`: `\(.immutable_ref)`"' \
+              release-artifacts/release-manifest.json
+          } >> "$GITHUB_STEP_SUMMARY"
