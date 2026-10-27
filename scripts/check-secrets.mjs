@@ -1,6 +1,25 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+const historicalEvidencePath = 'config/historical-secret-evidence.json';
+const resolvedHistoricalClassifications = new Set(['synthetic', 'revoked', 'never-issued']);
+const allowedHistoricalClassifications = new Set([
+  ...resolvedHistoricalClassifications,
+  'active',
+  'unknown',
+]);
+const allowedEvidenceRecordFields = new Set([
+  'identity',
+  'provider',
+  'classification',
+  'verifiedAt',
+  'operatorReference',
+  'changeRecord',
+  'evidenceReference',
+  'findings',
+]);
+const allowedEvidenceFindingFields = new Set(['commit', 'path', 'line', 'rule']);
+
 const forbiddenFilePatterns = [
   /(^|\/)\.env($|\.)/i,
   /(^|\/)key\.properties$/i,
@@ -81,12 +100,24 @@ function scanRepository() {
   }
 
   const historyCommitCount = currentOnly ? 0 : scanGitHistory(findings);
+  let reportFindings = findings;
 
-  if (findings.length > 0) {
+  if (!currentOnly) {
+    const reconciliation = reconcileHistoricalEvidence(findings, loadHistoricalEvidence());
+    reportFindings = reconciliation.unresolved;
+    console.log(
+      `Historical credential evidence: ${reconciliation.resolvedCount} exact finding(s) resolved; ` +
+        `${reconciliation.unresolvedHistoricalCount} unresolved finding(s) across ` +
+        `${reconciliation.unresolvedIdentities.size} credential identity/identities.`,
+    );
+  }
+
+  if (reportFindings.length > 0) {
     console.error('Potential secret material detected:');
-    for (const finding of findings) {
-      const prefix = finding.commit ? `${finding.commit}:` : '';
-      console.error(`- ${prefix}${finding.file}:${finding.line} (${finding.rule})`);
+    for (const finding of reportFindings) {
+      const prefix = finding.commit ? `${finding.commit.slice(0, 12)}:` : '';
+      const identity = finding.identity ? ` [${finding.identity}]` : '';
+      console.error(`-${identity} ${prefix}${finding.file}:${finding.line} (${finding.rule})`);
     }
     process.exit(1);
   }
@@ -182,6 +213,7 @@ function runSelfTest() {
   if (forbiddenFiles.some((file) => !forbiddenFilePatterns.some((pattern) => pattern.test(file)))) {
     throw new Error('secret scanner self-test failed to block a forbidden credential or dump file');
   }
+  runEvidencePolicySelfTest();
   console.log('check-secrets self-test: OK');
 }
 
@@ -217,7 +249,7 @@ function scanGitHistory(findings) {
       const normalized = file.replaceAll('\\', '/');
       if (!isSafeEnvTemplate(normalized) && forbiddenFilePatterns.some((pattern) => pattern.test(normalized))) {
         findings.push({
-          commit: shortCommit,
+          commit,
           file: normalized,
           line: 1,
           rule: 'forbidden-secret-file',
@@ -246,7 +278,7 @@ function scanGitHistory(findings) {
       for (const rule of contentRules) {
         if (rule.pattern.test(line)) {
           findings.push({
-            commit: shortCommit,
+            commit,
             file: normalized,
             line: Number(lineNumber),
             rule: rule.name,
@@ -255,7 +287,7 @@ function scanGitHistory(findings) {
       }
       if (literalSecretAssignment(line, normalized)) {
         findings.push({
-          commit: shortCommit,
+          commit,
           file: normalized,
           line: Number(lineNumber),
           rule: 'literal-secret-assignment',
@@ -265,6 +297,223 @@ function scanGitHistory(findings) {
   }
 
   return commits.length;
+}
+
+function loadHistoricalEvidence() {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(historicalEvidencePath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to read ${historicalEvidencePath}: ${error.message}`);
+  }
+  if (parsed?.schemaVersion !== 1 || !Array.isArray(parsed.records)) {
+    throw new Error(`${historicalEvidencePath} must contain schemaVersion 1 and a records array`);
+  }
+  return parsed.records;
+}
+
+function reconcileHistoricalEvidence(findings, records) {
+  const currentKeys = new Set(
+    findings.filter((finding) => finding.commit).map((finding) => historicalFindingKey(finding)),
+  );
+  const evidenceByKey = new Map();
+
+  for (const record of records) {
+    validateEvidenceRecord(record);
+    for (const finding of record.findings) {
+      validateEvidenceFinding(finding, record.identity);
+      const key = historicalFindingKey(finding);
+      if (evidenceByKey.has(key)) {
+        throw new Error(
+          `${historicalEvidencePath} maps one finding to both ${evidenceByKey.get(key).identity} and ${record.identity}`,
+        );
+      }
+      if (!currentKeys.has(key)) {
+        throw new Error(
+          `${historicalEvidencePath} contains a stale coordinate for ${record.identity}: ` +
+            `${finding.commit.slice(0, 12)}:${finding.path}:${finding.line} (${finding.rule})`,
+        );
+      }
+      evidenceByKey.set(key, record);
+    }
+  }
+
+  let resolvedCount = 0;
+  let unresolvedHistoricalCount = 0;
+  const unresolvedIdentities = new Set();
+  const unresolved = [];
+
+  for (const finding of findings) {
+    // A current-tree finding has no commit and can never be reconciled by history evidence.
+    if (!finding.commit) {
+      unresolved.push(finding);
+      continue;
+    }
+    const record = evidenceByKey.get(historicalFindingKey(finding));
+    if (record && resolvedHistoricalClassifications.has(record.classification)) {
+      resolvedCount += 1;
+      continue;
+    }
+    const identity = record?.identity ?? 'UNCLASSIFIED';
+    unresolvedHistoricalCount += 1;
+    unresolvedIdentities.add(identity);
+    unresolved.push({ ...finding, identity });
+  }
+
+  return {
+    resolvedCount,
+    unresolved,
+    unresolvedHistoricalCount,
+    unresolvedIdentities,
+  };
+}
+
+function validateEvidenceRecord(record) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    throw new Error(`${historicalEvidencePath} contains an invalid record`);
+  }
+  if (!/^[A-Z0-9][A-Z0-9-]*$/.test(record.identity ?? '')) {
+    throw new Error(`${historicalEvidencePath} contains an invalid credential identity`);
+  }
+  const unexpectedFields = Object.keys(record).filter(
+    (field) => !allowedEvidenceRecordFields.has(field),
+  );
+  if (unexpectedFields.length > 0) {
+    throw new Error(
+      `${historicalEvidencePath} contains unsupported fields for ${record.identity}: ` +
+        unexpectedFields.sort().join(', '),
+    );
+  }
+  if (!allowedHistoricalClassifications.has(record.classification)) {
+    throw new Error(`${historicalEvidencePath} has an invalid classification for ${record.identity}`);
+  }
+  if (!Array.isArray(record.findings) || record.findings.length === 0) {
+    throw new Error(`${historicalEvidencePath} must list exact findings for ${record.identity}`);
+  }
+
+  if (resolvedHistoricalClassifications.has(record.classification)) {
+    for (const field of [
+      'provider',
+      'verifiedAt',
+      'operatorReference',
+      'changeRecord',
+      'evidenceReference',
+    ]) {
+      if (typeof record[field] !== 'string' || record[field].trim() === '') {
+        throw new Error(
+          `${historicalEvidencePath} requires ${field} before ${record.identity} may be resolved`,
+        );
+      }
+    }
+    if (
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(record.verifiedAt) ||
+      Number.isNaN(Date.parse(record.verifiedAt))
+    ) {
+      throw new Error(`${historicalEvidencePath} has an invalid verifiedAt for ${record.identity}`);
+    }
+    if (
+      ['revoked', 'never-issued'].includes(record.classification) &&
+      /^(?:unknown|unverified|n\/a)$/i.test(record.provider.trim())
+    ) {
+      throw new Error(
+        `${historicalEvidencePath} requires a verified provider for ${record.identity}`,
+      );
+    }
+  }
+}
+
+function validateEvidenceFinding(finding, identity) {
+  if (!finding || typeof finding !== 'object' || Array.isArray(finding)) {
+    throw new Error(`${historicalEvidencePath} has an invalid finding for ${identity}`);
+  }
+  if (!/^[a-f0-9]{40}$/.test(finding.commit ?? '')) {
+    throw new Error(`${historicalEvidencePath} requires a full commit SHA for ${identity}`);
+  }
+  const unexpectedFields = Object.keys(finding).filter(
+    (field) => !allowedEvidenceFindingFields.has(field),
+  );
+  if (unexpectedFields.length > 0) {
+    throw new Error(
+      `${historicalEvidencePath} contains unsupported finding fields for ${identity}: ` +
+        unexpectedFields.sort().join(', '),
+    );
+  }
+  if (typeof finding.path !== 'string' || finding.path === '' || finding.path.includes('\\')) {
+    throw new Error(`${historicalEvidencePath} has an invalid path for ${identity}`);
+  }
+  if (!Number.isSafeInteger(finding.line) || finding.line < 1) {
+    throw new Error(`${historicalEvidencePath} has an invalid line for ${identity}`);
+  }
+  if (typeof finding.rule !== 'string' || finding.rule === '') {
+    throw new Error(`${historicalEvidencePath} has an invalid rule for ${identity}`);
+  }
+}
+
+function historicalFindingKey(finding) {
+  return `${finding.commit}\u0000${finding.path ?? finding.file}\u0000${finding.line}\u0000${finding.rule}`;
+}
+
+function runEvidencePolicySelfTest() {
+  const commit = 'a'.repeat(40);
+  const finding = { commit, file: 'history.md', line: 7, rule: 'literal-secret-assignment' };
+  const metadata = {
+    provider: 'repository-documentation',
+    verifiedAt: '2026-10-22T12:38:54Z',
+    operatorReference: 'security-review',
+    changeRecord: 'audit-record',
+    evidenceReference: 'docs/security.md',
+  };
+  const exactFinding = { commit, path: 'history.md', line: 7, rule: 'literal-secret-assignment' };
+
+  const synthetic = reconcileHistoricalEvidence(
+    [finding],
+    [{ identity: 'TEST-SYNTHETIC', classification: 'synthetic', ...metadata, findings: [exactFinding] }],
+  );
+  if (synthetic.resolvedCount !== 1 || synthetic.unresolved.length !== 0) {
+    throw new Error('secret scanner evidence self-test did not resolve exact synthetic evidence');
+  }
+
+  for (const classification of ['unknown', 'active']) {
+    const result = reconcileHistoricalEvidence(
+      [finding],
+      [{ identity: 'TEST-UNKNOWN', classification, findings: [exactFinding] }],
+    );
+    if (result.resolvedCount !== 0 || result.unresolved.length !== 1) {
+      throw new Error(`secret scanner evidence self-test suppressed ${classification} evidence`);
+    }
+  }
+
+  const current = reconcileHistoricalEvidence(
+    [{ file: 'current.env', line: 1, rule: 'literal-secret-assignment' }],
+    [],
+  );
+  if (current.unresolved.length !== 1) {
+    throw new Error('secret scanner evidence self-test suppressed a current-tree finding');
+  }
+
+  assertPolicyThrows(
+    () =>
+      reconcileHistoricalEvidence(
+        [finding],
+        [{
+          identity: 'TEST-UNSAFE-FIELD',
+          classification: 'revoked',
+          ...metadata,
+          credentialValue: 'must-never-be-stored',
+          findings: [exactFinding],
+        }],
+      ),
+    'secret scanner evidence self-test allowed an unsupported value field',
+  );
+}
+
+function assertPolicyThrows(operation, message) {
+  try {
+    operation();
+  } catch {
+    return;
+  }
+  throw new Error(message);
 }
 
 function isLocalCredentialUrl(key, value) {

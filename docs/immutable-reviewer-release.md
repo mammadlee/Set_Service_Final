@@ -11,29 +11,21 @@ migration, service restart, reviewer-account creation, push, or store build.
 2. In a fresh checkout, require `git status --porcelain` to be empty and
    `git rev-parse HEAD` to equal the approved full SHA. Verify signatures or
    protected-branch provenance according to repository policy.
-3. On a trusted Linux builder, build `api`, `outbox-worker`,
-   `malware-scanner`, `migration`, and `reviewer-provisioner` from that SHA for
-   `linux/amd64`. Pass the
-   base image by digest, add `org.opencontainers.image.revision=<full SHA>`,
-   create SBOM/provenance, and tag each artifact with the full SHA. Never use
-   `latest` or a moving branch as the release identity.
+3. After explicit registry-publication approval, use only the manual
+   `.github/workflows/publish-release-images.yml` workflow. It builds `api`,
+   `outbox-worker`, `malware-scanner`, `migration`, and
+   `reviewer-provisioner` from the exact selected SHA for `linux/amd64` using
+   the approved base digests and revision label. It first pushes unique
+   candidate tags, validates runtime metadata, performs the PostgreSQL
+   provisioner rehearsal, generates SBOM/provenance, scans by digest, and signs
+   by digest. The full-SHA tags are created only after all five image jobs pass;
+   an existing full-SHA tag with a different digest is a hard failure. Never
+   use `latest` or a moving branch as the release identity.
 
-Example form, to be filled only after approval:
-
-```bash
-docker buildx build --pull --platform linux/amd64 --target api \
-  --build-arg NODE_BASE_IMAGE="$NODE_BASE_IMAGE" \
-  --build-arg RUNTIME_BASE_IMAGE="$RUNTIME_BASE_IMAGE" \
-  --label "org.opencontainers.image.revision=$RELEASE_SHA" \
-  --tag "$REGISTRY/setservice-api:$RELEASE_SHA" \
-  --provenance=mode=max --sbom=true --push .
-```
-
-Repeat for the other four Dockerfile targets with their distinct repository
-names. Resolve and record each registry digest. Scan and sign by digest, verify
-SBOM/provenance and revision labels, then create a reviewed deployment manifest
-that references only `repository@sha256:<digest>` values. Validate Compose with
-`config -q`; do not print the resolved environment.
+The workflow signs and verifies the final manifest with the exact GitHub OIDC
+workflow identity, repository, ref, source SHA, and manual trigger claims. The
+deployment manifest references only `repository@sha256:<digest>` values.
+Validate Compose with `config -q`; do not print the resolved environment.
 
 The reviewer-provisioner must retain its numeric uid/gid 65532 distroless
 runtime and direct Node entrypoint. It contains no shell, npm, npx, ts-node, or

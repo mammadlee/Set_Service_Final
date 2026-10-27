@@ -47,11 +47,15 @@ the final reviewed immutable value.
 
 ## 3. Build and publish five immutable images
 
-- [ ] From a clean checkout at `<RELEASE_SHA>`, build `api`, `outbox-worker`,
-  `migration`, `malware-scanner`, and `reviewer-provisioner` for
-  `linux/amd64`, using the pinned base images and revision label.
-- [ ] Generate SBOM/provenance, scan vulnerabilities and secrets, sign, publish,
-  and record each registry digest. Deploy only `repository@sha256:<digest>`.
+- [ ] After the full-history gate and release CI pass, manually dispatch
+  `publish-release-images.yml` for the exact full `<RELEASE_SHA>` and required
+  confirmation phrase. The workflow has no push, pull-request, deployment, or
+  store-upload trigger.
+- [ ] Require candidate-first publication for `api`, `outbox-worker`,
+  `migration`, `malware-scanner`, and `reviewer-provisioner`. Generate and
+  validate SBOM/provenance, scan vulnerabilities and secrets, sign by digest,
+  and create full-SHA tags only after all five pass. Download and verify the
+  signed digest manifest. Deploy only `repository@sha256:<digest>`.
 - [ ] Verify uid/gid 65532, direct Node entrypoints, no shell/package manager,
   and the provisioner's exact `plan|apply|check` interface with default `plan`.
   Adoption and password rotation remain separate tooling.

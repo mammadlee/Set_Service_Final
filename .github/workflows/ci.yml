@@ -195,6 +195,7 @@ jobs:
           npm run test:release-runbooks
           npm run test:dependency-policy
           npm run test:release-security
+          npm run test:release-publication
           npm run test:malware-scanner
           npm run test:production-deployment
           npm run test:production-env
