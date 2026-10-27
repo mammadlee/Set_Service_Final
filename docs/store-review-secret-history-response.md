@@ -14,6 +14,10 @@ across historical configuration and deployment documents:
 - 2 private-key markers;
 - 2 R2 account-endpoint markers.
 
+The evidence ledger resolves 33 exact synthetic matches and the 2 exact R2
+account-endpoint metadata matches. The remaining 26 matches across 11
+credential identities continue to block the full-history gate.
+
 The affected categories are authentication material (legacy JWT, OTP and QR),
 database and Redis connection credentials, object-storage credentials, and
 Firebase, SMS, and email provider credentials. Some matches are recognizable
@@ -79,20 +83,31 @@ The evidence rules are deliberately narrow:
 | `d5910b8975108651059f222566d234d39412fb52` | `.env.example` | 5 | `literal-secret-assignment` | explicit marker |
 | `d5910b8975108651059f222566d234d39412fb52` | `.env.example` | 10 | `literal-secret-assignment` | explicit marker |
 
-The remaining 28 findings are deliberately excluded from the resolved set:
-four public database/direct URLs with embedded authentication, two R2 account
-endpoints, four R2 access-key/secret occurrences, three Redis URLs with
-embedded authentication, nine provider-field literals, and six opaque legacy
+## Verified non-secret provider metadata
+
+The two `R2-ACCOUNT-1` occurrences are standard Cloudflare R2 S3 endpoint
+metadata containing an account identifier. Cloudflare documents this endpoint
+separately from the Access Key ID and Secret Access Key required for
+authentication. These exact two coordinates are therefore classified as
+`non-secret-metadata`; no credential value or reusable fingerprint is stored.
+
+Provider evidence:
+<https://developers.cloudflare.com/r2/get-started/s3/#2-generate-api-credentials>
+
+The remaining 26 findings are deliberately excluded from the resolved set:
+four public database/direct URLs with embedded authentication, ten R2 access
+key ID/secret access key occurrences, three Redis URLs with embedded
+authentication, two SMS API keys, one email API key, and six opaque legacy
 JWT/QR values. GitHub repository metadata contains the four immutable CI image
-variables but no production provider-secret inventory. Therefore all 28 remain
+variables but no production provider-secret inventory. Therefore all 26 remain
 `active or status unknown` until an authorized operator completes the provider
 and production secret-manager comparison.
 
-They are recorded under 12 non-sensitive aliases (`DB-1`, `R2-ACCOUNT-1`,
-`R2-PAIR-1` through `R2-PAIR-3`, `REDIS-1`, `REDIS-2`, `SMS-1`, `SMS-2`,
-`EMAIL-1`, `JWT-LEGACY-1`, and `QR-HMAC-1`). These aliases group duplicate
-historical occurrences without recording the underlying credential value or a
-reusable fingerprint.
+They are recorded under 11 non-sensitive aliases (`DB-1`, `R2-PAIR-1` through
+`R2-PAIR-3`, `REDIS-1`, `REDIS-2`, `SMS-1`, `SMS-2`, `EMAIL-1`,
+`JWT-LEGACY-1`, and `QR-HMAC-1`). These aliases group duplicate historical
+occurrences without recording the underlying credential value or a reusable
+fingerprint.
 
 ## Required inventory gate
 
@@ -103,6 +118,27 @@ value. Record only one of these outcomes for each category:
 - confirmed example and never accepted by a real service;
 - previously active and already revoked, with the revocation date;
 - active or status unknown, requiring rotation before release.
+
+### Redacted evidence checklist
+
+| Identity | Findings | Classification | Required non-secret confirmation |
+| --- | ---: | --- | --- |
+| `DB-1` | 4 | authentication credential in Neon database/direct URLs | Privately map project and role, then provide `never-issued` evidence or the credential rotation/revocation timestamp and change record. |
+| `R2-ACCOUNT-1` | 2 | non-secret Cloudflare R2 account endpoint metadata | **Verified** from the provider documentation linked above; no credential-status action. |
+| `R2-PAIR-1` | 4 | Cloudflare R2 Access Key ID/Secret Access Key pair | Privately map the provider token, then provide `never-issued` evidence or revocation timestamp and change record. |
+| `R2-PAIR-2` | 4 | Cloudflare R2 Access Key ID/Secret Access Key pair | Same Cloudflare token-inventory confirmation; it may share a change record only if the provider inventory proves the same identity. |
+| `R2-PAIR-3` | 2 | Cloudflare R2 Access Key ID/Secret Access Key pair | Same Cloudflare token-inventory confirmation; do not infer identity from naming or documentation location. |
+| `REDIS-1` | 2 | authentication credential in Redis URLs | Privately identify provider, instance, and user; provide `never-issued` evidence or credential rotation/revocation timestamp and change record. |
+| `REDIS-2` | 1 | authentication credential in a Redis URL | Perform an independent Redis inventory match; do not assume it is the same credential as `REDIS-1`. |
+| `SMS-1` | 1 | SMS provider API key | Identify provider/account privately and provide key status plus `never-issued` or revocation evidence. |
+| `SMS-2` | 1 | SMS provider API key | Perform an independent provider inventory match; do not assume it is the same key as `SMS-1`. |
+| `EMAIL-1` | 1 | email provider API key | Identify provider/account privately and provide key status plus `never-issued` or revocation evidence. |
+| `JWT-LEGACY-1` | 3 | internal JWT signing secret | Equality-check only inside the secret manager against every accepted key; if previously active, provide replacement rollout, session invalidation/expiry, timestamp, and change record. |
+| `QR-HMAC-1` | 3 | internal QR signing secret | Equality-check only against every accepted QR key; if previously active, provide replacement rollout and proof the maximum QR lifetime elapsed. |
+
+For every manual closure, record only `provider`, UTC `verifiedAt`,
+`operatorReference`, `changeRecord`, and `evidenceReference`. Do not record a
+secret, URL, token, private key, endpoint credential, or reusable fingerprint.
 
 The store-review release is blocked while any category remains `active or
 status unknown`.

@@ -2,7 +2,12 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const historicalEvidencePath = 'config/historical-secret-evidence.json';
-const resolvedHistoricalClassifications = new Set(['synthetic', 'revoked', 'never-issued']);
+const resolvedHistoricalClassifications = new Set([
+  'synthetic',
+  'non-secret-metadata',
+  'revoked',
+  'never-issued',
+]);
 const allowedHistoricalClassifications = new Set([
   ...resolvedHistoricalClassifications,
   'active',
@@ -456,7 +461,7 @@ function historicalFindingKey(finding) {
 function runEvidencePolicySelfTest() {
   const commit = 'a'.repeat(40);
   const finding = { commit, file: 'history.md', line: 7, rule: 'literal-secret-assignment' };
-  const metadata = {
+  const evidenceMetadata = {
     provider: 'repository-documentation',
     verifiedAt: '2026-10-22T12:38:54Z',
     operatorReference: 'security-review',
@@ -467,10 +472,23 @@ function runEvidencePolicySelfTest() {
 
   const synthetic = reconcileHistoricalEvidence(
     [finding],
-    [{ identity: 'TEST-SYNTHETIC', classification: 'synthetic', ...metadata, findings: [exactFinding] }],
+    [{ identity: 'TEST-SYNTHETIC', classification: 'synthetic', ...evidenceMetadata, findings: [exactFinding] }],
   );
   if (synthetic.resolvedCount !== 1 || synthetic.unresolved.length !== 0) {
     throw new Error('secret scanner evidence self-test did not resolve exact synthetic evidence');
+  }
+
+  const metadataResult = reconcileHistoricalEvidence(
+    [finding],
+    [{
+      identity: 'TEST-METADATA',
+      classification: 'non-secret-metadata',
+      ...evidenceMetadata,
+      findings: [exactFinding],
+    }],
+  );
+  if (metadataResult.resolvedCount !== 1 || metadataResult.unresolved.length !== 0) {
+    throw new Error('secret scanner evidence self-test did not resolve exact non-secret metadata');
   }
 
   for (const classification of ['unknown', 'active']) {
@@ -498,7 +516,7 @@ function runEvidencePolicySelfTest() {
         [{
           identity: 'TEST-UNSAFE-FIELD',
           classification: 'revoked',
-          ...metadata,
+          ...evidenceMetadata,
           credentialValue: 'must-never-be-stored',
           findings: [exactFinding],
         }],
