@@ -1,7 +1,8 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ImageOff, Maximize2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ConfirmModal } from '../../shared/components/ConfirmModal';
+import { ImagePreviewModal } from '../../shared/components/ImagePreviewModal';
 import { PageHeader } from '../../shared/components/PageHeader';
 import { StatusBadge } from '../../shared/components/StatusBadge';
 import { ErrorState, LoadingState } from '../../shared/components/StateBlock';
@@ -10,7 +11,8 @@ import { hasPermission } from '../../shared/auth/permissions';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { useAuth } from '../../app/auth/AuthProvider';
 import { useAsync } from '../../shared/hooks/useAsync';
-import { normalizeDocuments, resolveAssetUrl } from '../../shared/utils/documents';
+import { usePolling } from '../../shared/hooks/usePolling';
+import { documentLabel, documentStatusLabel, normalizeDocuments, openPrivateDocument, resolveAssetUrl, type DisplayDocument } from '../../shared/utils/documents';
 import { formatDateTime } from '../../shared/utils/format';
 import type { WorkerClass } from '../../shared/api/types';
 import { workersService } from './workers.service';
@@ -19,9 +21,17 @@ export function WorkerDetailPage() {
   const { id = '' } = useParams();
   const { user } = useAuth();
   const canManageWorkers = hasPermission(user, 'manage_workers');
-  const worker = useAsync(() => workersService.get(id), [id]);
+  const worker = usePolling(() => workersService.get(id), [id], 10_000);
   const ratings = useAsync(() => workersService.ratings(id), [id]);
   const documents = normalizeDocuments(worker.data?.documents);
+  const documentSlots = (['health_certificate', 'criminal_record', 'cv'] as const).map((type) => (
+    documents.find((document) => document.type === type) ?? {
+      type,
+      status: 'missing',
+      available: false,
+      canDownload: false,
+    }
+  ));
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -30,6 +40,7 @@ export function WorkerDetailPage() {
   const [focAction, setFocAction] = useState<'add' | 'remove' | null>(null);
   const [focSaving, setFocSaving] = useState(false);
   const [focError, setFocError] = useState<string | null>(null);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
 
   async function confirm(reason?: string) {
     setWorking(true);
@@ -82,8 +93,9 @@ export function WorkerDetailPage() {
         actions={<Link className="btn secondary compact" to="/workers"><ArrowLeft size={16} />{appStrings.back}</Link>}
       />
 
-      {worker.loading ? <LoadingState /> : null}
-      {worker.error ? <ErrorState message={worker.error} onRetry={worker.reload} /> : null}
+      {worker.loading && !worker.data ? <LoadingState /> : null}
+      {worker.error && !worker.data ? <ErrorState message={worker.error} onRetry={worker.reload} /> : null}
+      {worker.error && worker.data ? <div className="form-warning" role="status">Profilin avtomatik yenilənməsi müvəqqəti alınmadı. Son məlumat göstərilir.</div> : null}
 
       {worker.data ? (
         <section className="detail-grid">
@@ -91,7 +103,7 @@ export function WorkerDetailPage() {
             <div className="detail-title">
               <div>
                 <h2>{worker.data.name}</h2>
-                {worker.data.is_foc_training ? <span className="foc-badge">F.O.C. Təlim</span> : null}
+                {worker.data.is_foc_training ? <span className="foc-badge">F.O.C. təlim</span> : null}
               </div>
               <StatusBadge status={worker.data.status} />
             </div>
@@ -123,7 +135,15 @@ export function WorkerDetailPage() {
                 {worker.data.foc_training_note ? <span className="table-subtext">{worker.data.foc_training_note}</span> : null}
                 {worker.data.foc_training_updated_at ? <span className="table-subtext">Yenilənib: {formatDateTime(worker.data.foc_training_updated_at)}</span> : null}
               </dd>
-              <dt>{appStrings.workers.profilePhoto}</dt><dd>{worker.data.profile_photo_url ? <a href={resolveAssetUrl(worker.data.profile_photo_url)} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : appStrings.notAvailable}</dd>
+              <dt>{appStrings.workers.profilePhoto}</dt>
+              <dd>
+                {worker.data.profile_photo_url ? (
+                  <button className="profile-photo-trigger" type="button" onClick={() => setImagePreviewOpen(true)} aria-label={`${worker.data.name} profil şəklini tam ölçüdə aç`}>
+                    <img src={resolveAssetUrl(worker.data.profile_photo_url)} alt={`${worker.data.name} profil şəkli`} />
+                    <span><Maximize2 size={15} />Tam ölçüdə bax</span>
+                  </button>
+                ) : <span className="profile-photo-placeholder"><ImageOff size={22} />Profil şəkli yoxdur</span>}
+              </dd>
               <dt>{appStrings.workers.skills}</dt><dd>{formatList(worker.data.skills)}</dd>
               <dt>{appStrings.workers.languages}</dt><dd>{formatList(worker.data.languages)}</dd>
               <dt>{appStrings.workers.workHistory}</dt><dd>{worker.data.work_history_summary || appStrings.workers.noData}</dd>
@@ -132,7 +152,7 @@ export function WorkerDetailPage() {
               <dt>{appStrings.workers.rejectReason}</dt><dd>{worker.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
             {canManageWorkers ? (
-              <div className="action-row">
+              <div className="action-row detail-actions">
                 <button className="btn primary" type="button" onClick={() => setAction('approve')} disabled={worker.data.status === 'approved'}>
                   {appStrings.workers.approve}
                 </button>
@@ -150,18 +170,14 @@ export function WorkerDetailPage() {
 
           <div className="panel">
             <h2>{appStrings.workers.documents}</h2>
-            {documents.length > 0 ? (
-              <ul className="document-list">
-                {documents.map((doc, index) => (
-                  <li key={`${doc.url}-${index}`}>
-                    <span>{doc.name || doc.type || appStrings.workers.document}</span>
-                    {doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="muted">{appStrings.workers.noDocuments}</p>
-            )}
+            <p className="muted">Təsdiq üçün sağlamlıq və məhkumluq arayışları yoxlamadan keçməlidir.</p>
+            <ul className="document-list">
+              {documentSlots.filter((document) => document.type !== 'cv').map((doc) => <WorkerDocumentItem key={doc.type} workerId={id} document={doc} />)}
+            </ul>
+            <h3>CV <span className="muted">(istəyə bağlı)</span></h3>
+            <ul className="document-list">
+              {documentSlots.filter((document) => document.type === 'cv').map((doc) => <WorkerDocumentItem key={doc.type} workerId={id} document={doc} />)}
+            </ul>
           </div>
 
           <div className="panel">
@@ -171,7 +187,7 @@ export function WorkerDetailPage() {
             {ratings.data && ratings.data.data.length === 0 ? <p className="muted">{appStrings.workers.noRatings}</p> : null}
             {ratings.data && ratings.data.data.length > 0 ? (
               <div className="table-wrap">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>{appStrings.workers.ratingScore}</th>
@@ -183,10 +199,10 @@ export function WorkerDetailPage() {
                   <tbody>
                     {ratings.data.data.map((rating) => (
                       <tr key={rating.id}>
-                        <td>{rating.score}/5</td>
-                        <td>{rating.order?.title || rating.order_id}</td>
-                        <td>{rating.feedback || rating.comment || appStrings.notAvailable}</td>
-                        <td>{formatDateTime(rating.created_at)}</td>
+                        <td data-label={appStrings.workers.ratingScore}>{rating.score}/5</td>
+                        <td data-label={appStrings.workers.ratingOrder}>{rating.order?.title || rating.order_id}</td>
+                        <td data-label={appStrings.workers.ratingFeedback}>{rating.feedback || rating.comment || appStrings.notAvailable}</td>
+                        <td data-label={appStrings.workers.ratingDate}>{formatDateTime(rating.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -230,8 +246,67 @@ export function WorkerDetailPage() {
         onCancel={() => setFocAction(null)}
         onConfirm={() => void confirmFocTraining()}
       />
+      <ImagePreviewModal
+        open={imagePreviewOpen}
+        src={resolveAssetUrl(worker.data?.profile_photo_url)}
+        alt={worker.data ? `${worker.data.name} profil şəkli` : 'Profil şəkli'}
+        onClose={() => setImagePreviewOpen(false)}
+      />
     </>
   );
+}
+
+function WorkerDocumentItem({ workerId, document }: { workerId: string; document: DisplayDocument }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function openDocument() {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await openPrivateDocument(() => workersService.documentUrl(workerId, document.type));
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <li>
+      <div className="document-description">
+        <strong>{documentLabel(document.type)}</strong>
+        {document.name ? <span className="table-subtext">{document.name}</span> : null}
+        <dl className="document-metadata">
+          <dt>Mövcudluq</dt><dd>{document.available ? 'Mövcuddur' : 'Mövcud deyil'}</dd>
+          <dt>Yüklənmə tarixi</dt><dd>{document.uploadedAt ? formatDateTime(document.uploadedAt) : 'Qeyd edilməyib'}</dd>
+          <dt>Fayl vəziyyəti</dt><dd>{documentStatusLabel(document)}</dd>
+          {document.scanStatus ? <><dt>Təhlükəsizlik yoxlaması</dt><dd>{scanStatusLabel(document.scanStatus)}</dd></> : null}
+          {document.sizeBytes !== undefined ? <><dt>Ölçü</dt><dd>{formatBytes(document.sizeBytes)}</dd></> : null}
+        </dl>
+        {error ? <div className="form-error" role="alert">{error}</div> : null}
+      </div>
+      {document.canDownload ? (
+        <div className="document-actions">
+          <button className="btn secondary compact" type="button" disabled={loading} onClick={() => void openDocument()}>
+            {loading ? 'Açılır…' : 'Təhlükəsiz baxış'}
+          </button>
+        </div>
+      ) : <span className="document-unavailable">Baxış mümkün deyil</span>}
+    </li>
+  );
+}
+
+function scanStatusLabel(status: string): string {
+  return ({ clean: 'Təmiz', pending: 'Gözlənilir', infected: 'Risk aşkarlandı', failed: 'Yoxlama alınmadı', unscanned: 'Yoxlanılmayıb' } as Record<string, string>)[status] ?? status;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return appStrings.notAvailable;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function formatList(value: unknown): string {

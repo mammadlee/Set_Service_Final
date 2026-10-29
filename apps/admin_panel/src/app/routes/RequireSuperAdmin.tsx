@@ -8,7 +8,7 @@ export function RequireSuperAdmin({ children }: { children: ReactNode }) {
     return (
       <section className="panel restricted-panel">
         <h2>Giriş icazəsi yoxdur</h2>
-        <p className="muted">Bu bölmə yalnız Super Admin üçün nəzərdə tutulub.</p>
+        <p className="muted">Bu bölmə yalnız super admin üçün nəzərdə tutulub.</p>
       </section>
     );
   }

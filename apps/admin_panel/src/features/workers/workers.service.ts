@@ -1,9 +1,38 @@
 import { apiRequest } from '../../shared/api/http';
 import type { Paginated, RatingSummary, WorkerClass, WorkerProfile, WorkerStatus } from '../../shared/api/types';
+import { isWorkerDocumentType, resolveSignedDocumentUrl, type DisplayDocument } from '../../shared/utils/documents';
 
 export type FocTrainingFilter = '' | 'foc' | 'non_foc';
 
+interface AssignmentWorkerListParams {
+  status?: WorkerStatus | '';
+  available?: boolean;
+}
+
+async function listAllAssignmentWorkers(params: AssignmentWorkerListParams): Promise<WorkerProfile[]> {
+  const workers = new Map<string, WorkerProfile>();
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const result = await apiRequest<Paginated<WorkerProfile>>('/admin/workers', {
+      query: { page, limit: 100, ...params, sort: 'asc' },
+    });
+    result.data.forEach((worker) => workers.set(worker.id, worker));
+    totalPages = result.meta.total_pages;
+    page += 1;
+  } while (page <= totalPages);
+  return [...workers.values()];
+}
+
 export const workersService = {
+  async listAvailableForAssignments(): Promise<WorkerProfile[]> {
+    return listAllAssignmentWorkers({ status: 'approved', available: true });
+  },
+
+  listForAssignments(params: AssignmentWorkerListParams): Promise<WorkerProfile[]> {
+    return listAllAssignmentWorkers(params);
+  },
+
   list(params: {
     page?: number;
     limit?: number;
@@ -12,6 +41,7 @@ export const workersService = {
     worker_class?: WorkerClass | '';
     foc_training?: FocTrainingFilter;
     available?: boolean;
+    position_id?: string;
     sort?: 'asc' | 'desc';
   }) {
     return apiRequest<Paginated<WorkerProfile>>('/admin/workers', { query: params });
@@ -19,6 +49,14 @@ export const workersService = {
 
   get(id: string) {
     return apiRequest<WorkerProfile>(`/admin/workers/${id}`);
+  },
+
+  async documentUrl(id: string, type: DisplayDocument['type']) {
+    if (!isWorkerDocumentType(type)) throw new Error('Sənəd növü dəstəklənmir.');
+    const response = await apiRequest<{ url: string }>(
+      `/workers/${encodeURIComponent(id)}/documents/${type}/download`,
+    );
+    return resolveSignedDocumentUrl(response.url);
   },
 
   approve(id: string) {

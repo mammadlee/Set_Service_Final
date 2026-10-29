@@ -21,30 +21,63 @@ class AssignmentCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('dd.MM, HH:mm');
     final statusHelp = AppStrings.assignmentStatusHelp(assignment.status);
+    final orderTitle = assignment.order.title.trim().isEmpty
+        ? 'Sifariş'
+        : assignment.order.title;
+    final role = assignment.category.trim().isNotEmpty
+        ? assignment.category
+        : assignment.order.category;
 
     return Premium3DCard(
       onTap: onTap,
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 380 ? 18 : 24),
       radius: 28,
       depth: 0.95,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  assignment.order.company.name,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: BrandColors.darkText,
-                    fontWeight: FontWeight.w800,
-                  ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 360;
+              final title = Text(
+                orderTitle,
+                key: ValueKey('assignment-card-title-${assignment.id}'),
+                softWrap: true,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: BrandColors.darkText,
+                  fontWeight: FontWeight.w800,
+                  height: 1.15,
                 ),
-              ),
-              const SizedBox(width: 12),
-              StatusPill(status: assignment.status),
-            ],
+              );
+
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    title,
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: StatusPill(status: assignment.status),
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: title),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.topRight,
+                      child: StatusPill(status: assignment.status),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 10),
           if (statusHelp != null) ...[
@@ -57,9 +90,16 @@ class AssignmentCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
           ],
+          _MetaRow(icon: Icons.room_service_outlined, text: role),
+          const SizedBox(height: 8),
+          _MetaRow(
+            icon: Icons.business_outlined,
+            text: assignment.order.company.name,
+          ),
+          const SizedBox(height: 8),
           _MetaRow(icon: Icons.place_outlined, text: assignment.order.location),
           if (assignment.order.startDatetime != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             _MetaRow(
               icon: Icons.schedule_outlined,
               text:
@@ -82,12 +122,17 @@ class _MetaRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 20, color: BrandColors.primaryBurgundy),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 20, color: BrandColors.primaryBurgundy),
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             text.isEmpty ? '-' : text,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               color: BrandColors.primaryBurgundy,
               fontWeight: FontWeight.w600,

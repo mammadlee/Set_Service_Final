@@ -35,10 +35,18 @@ class LoadingButton extends StatelessWidget {
                 Icon(icon, size: 18),
                 const SizedBox(width: 8),
               ],
-              Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+              Flexible(
+                child: Text(label, softWrap: true, textAlign: TextAlign.center),
+              ),
             ],
           );
 
-    return ElevatedButton(onPressed: loading ? null : onPressed, child: child);
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: loading ? null : onPressed,
+        child: child,
+      ),
+    );
   }
 }

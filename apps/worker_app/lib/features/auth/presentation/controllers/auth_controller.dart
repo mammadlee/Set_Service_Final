@@ -1,19 +1,35 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../../core/network/api_exception.dart';
 import '../../../../core/push/push_registration_service.dart';
+import '../../../../core/session/session_coordinator.dart';
 import '../../../../shared/app_strings.dart';
 import '../../data/auth_repository.dart';
 import '../../data/models/auth_models.dart';
 
 class AuthController extends ChangeNotifier {
-  AuthController(this._repository, this._pushRegistrationService);
+  AuthController(
+    this._repository,
+    this._pushRegistrationService,
+    this._sessionCoordinator,
+  ) {
+    _sessionInvalidationSubscription = _sessionCoordinator.invalidations
+        .where((event) => event.sessionKey == 'worker')
+        .listen(_handleSessionInvalidation);
+  }
 
   final AuthRepository _repository;
   final PushRegistrationService _pushRegistrationService;
+  final SessionCoordinator _sessionCoordinator;
+  late final StreamSubscription<SessionInvalidation>
+  _sessionInvalidationSubscription;
 
   AuthViewState state = AuthViewState.splash;
   WorkerMe? worker;
+  String? documentSessionToken;
+  int workerPhotoRevision = 0;
   String? pendingPhone;
   String? pendingEmail;
   String? pendingOtpCode;
@@ -33,6 +49,8 @@ class AuthController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_sessionInvalidationSubscription.cancel());
+    unawaited(_pushRegistrationService.dispose());
     super.dispose();
   }
 
@@ -43,6 +61,7 @@ class AuthController extends ChangeNotifier {
     final hasTokens = await _repository.hasStoredTokens();
     if (!hasTokens) {
       state = AuthViewState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
       return;
     }
@@ -50,17 +69,51 @@ class AuthController extends ChangeNotifier {
     try {
       worker = await _repository.getWorkerProfile();
       state = _stateForWorkerStatus(worker?.status);
+      _notifySessionState(
+        state == AuthViewState.authenticated
+            ? SessionState.authenticated
+            : SessionState.blocked,
+      );
     } on ApiException catch (error) {
       if (_applyAccountApprovalError(error)) {
         await _repository.clearLocalSession();
-      } else {
+        _notifySessionState(SessionState.blocked, code: error.code);
+      } else if (isTerminalSessionErrorCode(error.code)) {
         await _repository.clearLocalSession();
         state = AuthViewState.unauthenticated;
+      } else {
+        state = AuthViewState.authenticated;
+        errorMessage = error.message;
+        _notifySessionState(SessionState.offlineAuthenticated);
       }
     } catch (_) {
-      await _repository.clearLocalSession();
-      state = AuthViewState.unauthenticated;
+      state = AuthViewState.authenticated;
+      errorMessage = AppStrings.unknownError;
+      _notifySessionState(SessionState.offlineAuthenticated);
     }
+    notifyListeners();
+  }
+
+  void _handleSessionInvalidation(SessionInvalidation event) {
+    documentSessionToken = null;
+    worker = null;
+    workerPhotoRevision = 0;
+    pendingPhone = null;
+    pendingEmail = null;
+    pendingOtpCode = null;
+    pendingOtpChallenge = null;
+    pendingPurpose = null;
+    blockedStatus = null;
+    successMessage = null;
+    errorMessage = AppStrings.backendError(code: event.code);
+    state = AuthViewState.unauthenticated;
+    notifyListeners();
+  }
+
+  void clearTransientMessages() {
+    if (errorMessage == null && successMessage == null) return;
+    errorMessage = null;
+    successMessage = null;
     notifyListeners();
   }
 
@@ -83,6 +136,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingPhone = phone;
       pendingPurpose = OtpPurpose.workerRegistration;
+      errorMessage = null;
       state = AuthViewState.otpRequired;
     });
   }
@@ -92,9 +146,30 @@ class AuthController extends ChangeNotifier {
     required String password,
   }) async {
     await _submit(() async {
-      await _repository.loginWorker(phone: phone, password: password);
+      try {
+        await _repository.loginWorker(phone: phone, password: password);
+      } on ApiException catch (error) {
+        if (_applyAccountApprovalError(error) &&
+            blockedStatus == 'pending_approval') {
+          final session = await _repository.createDocumentSession(
+            phone: phone,
+            password: password,
+          );
+          documentSessionToken = session.registrationAccessToken;
+          _notifySessionState(SessionState.blocked, code: error.code);
+          return;
+        }
+        rethrow;
+      }
+      documentSessionToken = null;
       worker = await _repository.getWorkerProfile();
+      errorMessage = null;
       state = _stateForWorkerStatus(worker?.status);
+      _notifySessionState(
+        state == AuthViewState.authenticated
+            ? SessionState.authenticated
+            : SessionState.blocked,
+      );
     });
   }
 
@@ -121,6 +196,8 @@ class AuthController extends ChangeNotifier {
       );
       pendingOtpCode = null;
       pendingOtpChallenge = null;
+      documentSessionToken = result.registrationAccessToken;
+      errorMessage = null;
       state = _stateForWorkerStatus(result.status);
     });
   }
@@ -204,6 +281,7 @@ class AuthController extends ChangeNotifier {
       );
       pendingOtpCode = otpCode.trim();
       pendingOtpChallenge = result.otpChallenge;
+      errorMessage = null;
       state = AuthViewState.passwordRequired;
     });
   }
@@ -214,7 +292,34 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  Future<WorkerMe> refreshWorkerProfile() async {
+    final refreshed = await _repository.getWorkerProfile();
+    worker = refreshed;
+    errorMessage = null;
+    notifyListeners();
+    return refreshed;
+  }
+
+  void updateWorkerProfile(
+    WorkerMe updatedWorker, {
+    bool profilePhotoChanged = false,
+  }) {
+    worker = updatedWorker;
+    if (profilePhotoChanged) workerPhotoRevision += 1;
+    errorMessage = null;
+    notifyListeners();
+  }
+
+  WorkerMe? updateWorkerPhone(String canonicalPhone) {
+    final current = worker;
+    if (current == null) return null;
+    final updated = current.withPhone(canonicalPhone);
+    updateWorkerProfile(updated);
+    return updated;
+  }
+
   Future<void> logout() async {
+    documentSessionToken = null;
     isSubmitting = true;
     notifyListeners();
     try {
@@ -222,6 +327,7 @@ class AuthController extends ChangeNotifier {
       await _repository.logout();
     } finally {
       worker = null;
+      workerPhotoRevision = 0;
       pendingPhone = null;
       pendingEmail = null;
       pendingOtpCode = null;
@@ -232,11 +338,13 @@ class AuthController extends ChangeNotifier {
       successMessage = null;
       isSubmitting = false;
       state = AuthViewState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
     }
   }
 
   void backToLogin() {
+    documentSessionToken = null;
     pendingPhone = null;
     pendingEmail = null;
     pendingOtpCode = null;
@@ -246,6 +354,7 @@ class AuthController extends ChangeNotifier {
     errorMessage = null;
     successMessage = null;
     state = AuthViewState.unauthenticated;
+    _notifySessionState(SessionState.unauthenticated);
     notifyListeners();
   }
 
@@ -286,7 +395,7 @@ class AuthController extends ChangeNotifier {
 
     state = _stateForWorkerStatus(status);
     errorMessage = state == AuthViewState.pendingApproval
-        ? AppStrings.pendingApprovalMessage
+        ? null
         : AppStrings.accountMessageForStatus(status);
     return true;
   }
@@ -302,6 +411,14 @@ class AuthController extends ChangeNotifier {
       return AuthViewState.accountBlocked;
     }
     return AuthViewState.pendingApproval;
+  }
+
+  void _notifySessionState(SessionState sessionState, {String? code}) {
+    _sessionCoordinator.notifyState(
+      sessionKey: 'worker',
+      state: sessionState,
+      code: code,
+    );
   }
 }
 

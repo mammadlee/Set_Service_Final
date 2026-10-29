@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { validate } from '../../middleware/validate';
-import { requireAuth } from '../../middleware/auth';
+import { requireAuth, requireEnrollmentAuth } from '../../middleware/auth';
+import { Errors } from '../../lib/errors';
 import {
   AdminLoginSchema,
   AdminForgotPasswordSchema,
@@ -22,13 +23,34 @@ import {
   WorkerLoginSchema,
   WorkerPhoneChangeConfirmSchema,
   WorkerPhoneChangeRequestSchema,
+  WorkerPhoneChangeV2RequestSchema,
   WorkerRegisterSchema,
   WorkerRequestOtpSchema,
   WorkerResetPasswordSchema,
 } from './auth.schema';
 import * as AuthService from './auth.service';
+import {
+  clearWebRefreshCookie,
+  readWebRefreshCookie,
+  requireTrustedWebOrigin,
+  setWebRefreshCookie,
+  webTokenResponse,
+  type WebSessionRole,
+} from './web-session';
+import { authTarget, createRateLimitMiddleware } from '../../middleware/rate-limit';
 
 const router = Router();
+
+// Build 14 cannot perform password step-up. Keep this compatibility route
+// tightly bounded by authenticated actor and target in addition to the global
+// auth IP/target limiter. Build 15 and later use the v2 route below.
+const legacyWorkerPhoneChangeLimiter = createRateLimitMiddleware({
+  scope: 'legacy_worker_phone_change',
+  windowMs: 5 * 60 * 1000,
+  max: 5,
+  dimensions: ['actor', 'target'],
+  target: authTarget,
+});
 
 const clientIp = (req: Request) =>
   req.ip || req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim();
@@ -58,6 +80,13 @@ router.post('/worker/login', validate(WorkerLoginSchema), async (req: Request, r
   } catch (e) { next(e); }
 });
 
+router.post('/worker/document-session', validate(WorkerLoginSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.set('Cache-Control', 'private, no-store');
+    res.json(await AuthService.createWorkerDocumentSession(req.body));
+  } catch (e) { next(e); }
+});
+
 router.post('/worker/forgot-password', validate(WorkerForgotPasswordSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.forgotWorkerPassword(req.body, clientIp(req)));
@@ -70,7 +99,13 @@ router.post('/worker/reset-password', validate(WorkerResetPasswordSchema), async
   } catch (e) { next(e); }
 });
 
-router.post('/worker/phone-change/request', requireAuth, validate(WorkerPhoneChangeRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/worker/phone-change/request', requireAuth, legacyWorkerPhoneChangeLimiter, validate(WorkerPhoneChangeRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await AuthService.requestWorkerPhoneChangeLegacy(req.user!.sub, req.body, clientIp(req)));
+  } catch (e) { next(e); }
+});
+
+router.post('/worker/phone-change/v2/request', requireAuth, validate(WorkerPhoneChangeV2RequestSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.requestWorkerPhoneChange(req.user!.sub, req.body, clientIp(req)));
   } catch (e) { next(e); }
@@ -78,17 +113,18 @@ router.post('/worker/phone-change/request', requireAuth, validate(WorkerPhoneCha
 
 router.post('/worker/phone-change/confirm', requireAuth, validate(WorkerPhoneChangeConfirmSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
+    res.set('Cache-Control', 'private, no-store');
     res.json(await AuthService.confirmWorkerPhoneChange(req.user!.sub, req.body));
   } catch (e) { next(e); }
 });
 
-router.post('/email-verification/request', requireAuth, validate(EmailVerificationRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/email-verification/request', requireEnrollmentAuth, validate(EmailVerificationRequestSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.requestEmailVerification(req.user!.sub, req.body));
   } catch (e) { next(e); }
 });
 
-router.post('/email-verification/confirm', requireAuth, validate(EmailVerificationConfirmSchema), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/email-verification/confirm', requireEnrollmentAuth, validate(EmailVerificationConfirmSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.json(await AuthService.confirmEmailVerification(req.user!.sub, req.body));
   } catch (e) { next(e); }
@@ -103,7 +139,7 @@ router.post('/company/register', validate(CompanyRegisterSchema), async (req: Re
 
 router.post('/company/complete-registration', validate(CompanyCompleteRegistrationSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json(await AuthService.completeCompanyRegistration(req.body));
+    res.status(201).json(await AuthService.completeCompanyRegistration(req.body));
   } catch (e) { next(e); }
 });
 
@@ -112,6 +148,54 @@ router.post('/company/login', validate(CompanyLoginSchema), async (req: Request,
     res.json(await AuthService.loginCompany(req.body, clientIp(req)));
   } catch (e) { next(e); }
 });
+
+router.post(
+  '/company/web-login',
+  requireTrustedWebOrigin,
+  validate(CompanyLoginSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await AuthService.loginCompany(req.body, clientIp(req));
+      await assertWebRole(result, 'company');
+      setWebRefreshCookie(res, 'company', result.refresh_token);
+      res.json(webTokenResponse(result));
+    } catch (e) {
+      clearWebRefreshCookie(res, 'company');
+      next(e);
+    }
+  },
+);
+
+router.post(
+  '/company/web-refresh',
+  requireTrustedWebOrigin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await AuthService.refresh(readWebRefreshCookie(req, 'company'), clientIp(req));
+      await assertWebRole(result, 'company');
+      setWebRefreshCookie(res, 'company', result.refresh_token);
+      res.json(webTokenResponse(result));
+    } catch (e) {
+      clearWebRefreshCookie(res, 'company');
+      next(e);
+    }
+  },
+);
+
+router.post(
+  '/company/web-logout',
+  requireTrustedWebOrigin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await AuthService.logoutByRefreshToken(readWebRefreshCookie(req, 'company'));
+      clearWebRefreshCookie(res, 'company');
+      res.sendStatus(204);
+    } catch (e) {
+      clearWebRefreshCookie(res, 'company');
+      next(e);
+    }
+  },
+);
 
 router.post('/company/forgot-password', validate(CompanyForgotPasswordSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -130,6 +214,54 @@ router.post('/admin/login', validate(AdminLoginSchema), async (req: Request, res
     res.json(await AuthService.loginAdmin(req.body, clientIp(req)));
   } catch (e) { next(e); }
 });
+
+router.post(
+  '/admin/web-login',
+  requireTrustedWebOrigin,
+  validate(AdminLoginSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await AuthService.loginAdmin(req.body, clientIp(req));
+      await assertWebRole(result, 'admin');
+      setWebRefreshCookie(res, 'admin', result.refresh_token);
+      res.json(webTokenResponse(result));
+    } catch (e) {
+      clearWebRefreshCookie(res, 'admin');
+      next(e);
+    }
+  },
+);
+
+router.post(
+  '/admin/web-refresh',
+  requireTrustedWebOrigin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const result = await AuthService.refresh(readWebRefreshCookie(req, 'admin'), clientIp(req));
+      await assertWebRole(result, 'admin');
+      setWebRefreshCookie(res, 'admin', result.refresh_token);
+      res.json(webTokenResponse(result));
+    } catch (e) {
+      clearWebRefreshCookie(res, 'admin');
+      next(e);
+    }
+  },
+);
+
+router.post(
+  '/admin/web-logout',
+  requireTrustedWebOrigin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await AuthService.logoutByRefreshToken(readWebRefreshCookie(req, 'admin'));
+      clearWebRefreshCookie(res, 'admin');
+      res.sendStatus(204);
+    } catch (e) {
+      clearWebRefreshCookie(res, 'admin');
+      next(e);
+    }
+  },
+);
 
 router.post('/admin/forgot-password', validate(AdminForgotPasswordSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -158,7 +290,7 @@ router.post('/refresh', validate(RefreshSchema), async (req: Request, res: Respo
 
 router.post('/logout', requireAuth, validate(LogoutSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    await AuthService.logout(req.body.refresh_token);
+    await AuthService.logout(req.body.refresh_token, req.user!.sub);
     res.sendStatus(204);
   } catch (e) { next(e); }
 });
@@ -183,3 +315,15 @@ router.delete('/fcm-token', requireAuth, validate(DeleteFcmTokenSchema), async (
 });
 
 export default router;
+
+type WebAuthResult = Awaited<ReturnType<typeof AuthService.refresh>>;
+
+async function assertWebRole(result: WebAuthResult, role: WebSessionRole): Promise<void> {
+  const isExpectedRole = role === 'company'
+    ? result.user.role === 'company'
+    : result.user.role === 'admin' || result.user.role === 'super_admin';
+  if (isExpectedRole) return;
+
+  await AuthService.logoutByRefreshToken(result.refresh_token).catch(() => undefined);
+  throw Errors.unauthorized('Browser session role does not match this application.', 'WEB_ROLE_MISMATCH');
+}

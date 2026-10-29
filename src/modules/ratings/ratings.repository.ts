@@ -70,6 +70,7 @@ const rateableAssignmentInclude = {
           id: true,
           user_id: true,
           name: true,
+          user: { select: { is_review_account: true } },
         },
       },
     },
@@ -79,7 +80,7 @@ const rateableAssignmentInclude = {
       id: true,
       deleted_at: true,
       user_id: true,
-      user: { select: { id: true, name: true } },
+      user: { select: { id: true, name: true, is_review_account: true } },
     },
   },
   attendance_logs: {
@@ -99,20 +100,34 @@ const RATING_TRANSACTION_RETRIES = 3;
 export function findApprovedCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_review_account: true } },
+    },
   });
 }
 
 export function findApprovedWorkerByUserId(userId: string) {
   return prisma.worker.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_review_account: true } },
+    },
   });
 }
 
-export function findWorkerSummary(workerId: string) {
+export function findWorkerSummary(workerId: string, isReviewAccount = false) {
   return prisma.worker.findFirst({
-    where: { id: workerId, deleted_at: null },
+    where: {
+      id: workerId,
+      deleted_at: null,
+      user: { is_review_account: isReviewAccount },
+    },
     select: { id: true, rating_avg: true, rating_count: true },
   });
 }
@@ -122,6 +137,7 @@ export function findRateableAssignment(input: {
   orderId?: string;
   workerId?: string;
   companyId: string;
+  isReviewAccount?: boolean;
 }) {
   return prisma.assignment.findFirst({
     where: {
@@ -130,8 +146,19 @@ export function findRateableAssignment(input: {
       ...(input.workerId ? { worker_id: input.workerId } : {}),
       status: { in: ["accepted", "completed"] },
       deleted_at: null,
-      worker: { deleted_at: null },
-      order: { company_id: input.companyId, deleted_at: null },
+      worker: {
+        deleted_at: null,
+        ...(input.isReviewAccount === undefined
+          ? {}
+          : { user: { is_review_account: input.isReviewAccount } }),
+      },
+      order: {
+        company_id: input.companyId,
+        deleted_at: null,
+        ...(input.isReviewAccount === undefined
+          ? {}
+          : { company: { user: { is_review_account: input.isReviewAccount } } }),
+      },
       attendance_logs: {
         some: {
           deleted_at: null,
@@ -143,9 +170,15 @@ export function findRateableAssignment(input: {
   });
 }
 
-export function listWorkerRatings(workerId: string) {
+export function listWorkerRatings(workerId: string, isReviewAccount = false) {
   return prisma.rating.findMany({
-    where: { worker_id: workerId, deleted_at: null },
+    where: {
+      worker_id: workerId,
+      deleted_at: null,
+      worker: { user: { is_review_account: isReviewAccount } },
+      order: { company: { user: { is_review_account: isReviewAccount } } },
+      rater: { is_review_account: isReviewAccount },
+    },
     include: ratingInclude,
     orderBy: { created_at: "desc" },
   });

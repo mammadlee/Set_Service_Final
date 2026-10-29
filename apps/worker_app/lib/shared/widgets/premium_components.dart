@@ -54,7 +54,7 @@ class Premium3DCard extends StatelessWidget {
     final content = AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOutCubic,
-      padding: padding,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: borderRadius,
         color: dark ? BrandColors.primaryBurgundy : BrandColors.cardCream,
@@ -64,7 +64,10 @@ class Premium3DCard extends StatelessWidget {
               : accentColor.withValues(alpha: 0.62),
         ),
       ),
-      child: child,
+      child: Material(
+        type: MaterialType.transparency,
+        child: Padding(padding: padding, child: child),
+      ),
     );
 
     if (onTap == null) return content;
@@ -164,6 +167,7 @@ class PremiumHeroPanel extends StatelessWidget {
     this.trailing,
     this.children = const [],
     this.compact = false,
+    this.wrapFullText = false,
     super.key,
   });
 
@@ -173,6 +177,7 @@ class PremiumHeroPanel extends StatelessWidget {
   final Widget? trailing;
   final List<Widget> children;
   final bool compact;
+  final bool wrapFullText;
 
   @override
   Widget build(BuildContext context) {
@@ -191,8 +196,8 @@ class PremiumHeroPanel extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: wrapFullText ? null : 2,
+                      overflow: wrapFullText ? null : TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(
                             color: BrandColors.white,
@@ -202,8 +207,8 @@ class PremiumHeroPanel extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       subtitle,
-                      maxLines: compact ? 2 : 3,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: wrapFullText ? null : (compact ? 2 : 3),
+                      overflow: wrapFullText ? null : TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: BrandColors.softBeige,
                         height: 1.35,
@@ -445,8 +450,7 @@ class PremiumStatCard extends StatelessWidget {
           const SizedBox(height: 14),
           Text(
             label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            softWrap: true,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: BrandColors.mutedBrown,
               fontWeight: FontWeight.w600,
@@ -734,8 +738,7 @@ class AnimatedStatusChip extends StatelessWidget {
             Flexible(
               child: Text(
                 label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                softWrap: true,
                 style: TextStyle(
                   color: foreground,
                   fontWeight: FontWeight.w600,
@@ -1081,8 +1084,7 @@ class PremiumChip extends StatelessWidget {
           Flexible(
             child: Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              softWrap: true,
               style: TextStyle(
                 color: fg,
                 fontWeight: FontWeight.w600,
@@ -1096,11 +1098,106 @@ class PremiumChip extends StatelessWidget {
   }
 }
 
+class PremiumSelectableChip extends StatelessWidget {
+  const PremiumSelectableChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+    this.semanticPrefix,
+    super.key,
+  });
+
+  final String label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+  final String? semanticPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    const radius = BorderRadius.all(Radius.circular(14));
+    final foreground = selected
+        ? BrandColors.primaryBurgundy
+        : BrandColors.darkText;
+
+    return Padding(
+      padding: const EdgeInsets.all(1),
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: semanticPrefix == null ? label : '$semanticPrefix: $label',
+        child: Material(
+          color: BrandColors.transparent,
+          borderRadius: radius,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: () => onSelected(!selected),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              constraints: const BoxConstraints(minHeight: 46, maxWidth: 296),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+              decoration: BoxDecoration(
+                color: selected
+                    ? BrandColors.accentGold.withValues(alpha: 0.24)
+                    : BrandColors.white.withValues(alpha: 0.9),
+                borderRadius: radius,
+                border: Border.all(
+                  color: selected
+                      ? BrandColors.primaryBurgundy
+                      : BrandColors.accentGold.withValues(alpha: 0.72),
+                  width: 1.25,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox.square(
+                    dimension: 18,
+                    child: AnimatedOpacity(
+                      opacity: selected ? 1 : 0,
+                      duration: const Duration(milliseconds: 120),
+                      child: Icon(
+                        Icons.check_rounded,
+                        key: ValueKey('selectable-chip-indicator-$label'),
+                        size: 17,
+                        color: BrandColors.primaryBurgundy,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      label,
+                      softWrap: true,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w600,
+                        height: 1.22,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PremiumBottomSheet extends StatelessWidget {
-  const PremiumBottomSheet({required this.child, this.title, super.key});
+  const PremiumBottomSheet({
+    required this.child,
+    this.title,
+    this.contentScrollable = true,
+    super.key,
+  });
 
   final Widget child;
   final String? title;
+  final bool contentScrollable;
 
   @override
   Widget build(BuildContext context) {
@@ -1126,7 +1223,15 @@ class PremiumBottomSheet extends StatelessWidget {
               Text(title!, style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 14),
             ],
-            Flexible(child: SingleChildScrollView(child: child)),
+            Flexible(
+              child: contentScrollable
+                  ? SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      child: child,
+                    )
+                  : child,
+            ),
           ],
         ),
       ),
@@ -1138,6 +1243,7 @@ Future<T?> showPremiumBottomSheet<T>({
   required BuildContext context,
   required Widget child,
   String? title,
+  bool contentScrollable = true,
 }) {
   return showModalBottomSheet<T>(
     context: context,
@@ -1157,7 +1263,11 @@ Future<T?> showPremiumBottomSheet<T>({
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.9,
         ),
-        child: PremiumBottomSheet(title: title, child: child),
+        child: PremiumBottomSheet(
+          title: title,
+          contentScrollable: contentScrollable,
+          child: child,
+        ),
       ),
     ),
   );

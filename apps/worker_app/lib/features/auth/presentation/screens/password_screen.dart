@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
@@ -32,8 +33,15 @@ class _PasswordScreenState extends State<PasswordScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
     final isReset = auth.pendingPurpose == OtpPurpose.workerPasswordReset;
+    final height = MediaQuery.sizeOf(context).height;
+    final topSpace = height < 700
+        ? 28.0
+        : height < 820
+        ? 56.0
+        : 92.0;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
@@ -43,6 +51,8 @@ class _PasswordScreenState extends State<PasswordScreen> {
         ),
         title: Text(
           isReset ? AppStrings.resetPassword : AppStrings.createPassword,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
       body: ConstrainedPage(
@@ -50,13 +60,27 @@ class _PasswordScreenState extends State<PasswordScreen> {
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              const SizedBox(height: 150),
+              SizedBox(height: topSpace),
               Text(
                 AppStrings.createNewPassword,
+                textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                AppStrings.passwordValidation,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: BrandColors.mutedBrown,
+                  height: 1.35,
                 ),
               ),
               const SizedBox(height: 24),
@@ -126,12 +150,7 @@ class _PasswordScreenState extends State<PasswordScreen> {
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    if (!RegExp(r'[A-Za-z]').hasMatch(value ?? '') ||
-        !RegExp(r'\d').hasMatch(value ?? '')) {
-      return AppStrings.passwordValidation;
-    }
-    return null;
+    return AuthInputValidators.newPassword(value);
   }
 
   String? _validatePasswordConfirm(String? value) {

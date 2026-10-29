@@ -1,11 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../storage/secure_storage_config.dart';
 import 'app_role.dart';
 
 class RoleSessionController extends ChangeNotifier {
   RoleSessionController({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage = storage ?? SecureStorageConfig.storage;
 
   static const _activeRoleKey = 'setservice_active_role';
 
@@ -29,9 +30,13 @@ class RoleSessionController extends ChangeNotifier {
 
   Future<void> bootstrap() async {
     final operation = ++_operation;
-    final rawRole = await _storage.read(key: _activeRoleKey);
+
+    // The mobile app must always open on the worker/company role chooser.
+    // A role is remembered only for the current running session.
+    await _storage.delete(key: _activeRoleKey);
     if (_disposed || operation != _operation) return;
-    activeRole = _roleFromValue(rawRole);
+
+    activeRole = null;
     loading = false;
     notifyListeners();
   }
@@ -50,13 +55,5 @@ class RoleSessionController extends ChangeNotifier {
     if (_disposed || operation != _operation) return;
     activeRole = null;
     notifyListeners();
-  }
-
-  AppRole? _roleFromValue(String? value) {
-    if (value == null) return null;
-    for (final role in AppRole.values) {
-      if (role.name == value) return role;
-    }
-    return null;
   }
 }

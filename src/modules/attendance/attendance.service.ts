@@ -3,12 +3,15 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
 import { sendPushToUser } from '../../lib/fcm';
 import { logger } from '../../lib/logger';
+import { buildKioskPublicUrl, resolveKioskPublicBaseUrl } from '../../lib/kiosk-public-url';
 import {
+  AttendanceQrPayload,
   generateAttendanceQrToken,
   hashQrToken,
   verifyAttendanceQrToken,
 } from '../../lib/qr';
 import { Role } from '../../types/prisma';
+import { ORDER_ATTENDANCE_STATUSES } from '../orders/orders.lifecycle';
 import {
   CheckInInput,
   CheckOutInput,
@@ -16,10 +19,17 @@ import {
   CreateKioskSessionInput,
   CreateVenueKioskInput,
   GenerateQrTokenInput,
+  ListKioskEligibleOrdersQueryInput,
   ListVenueKiosksQueryInput,
   ListAttendanceQueryInput,
+  SelectVenueKioskOrderInput,
 } from './attendance.schema';
 import * as AttendanceRepository from './attendance.repository';
+import {
+  isKioskCurrentOrder,
+  isKioskEligibleOrder,
+  isWithinAttendanceCheckoutGrace,
+} from './attendance.kiosk-eligibility';
 
 type AttendanceRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findAttendanceById>>>;
 type AssignmentRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findAcceptedAssignmentById>>>;
@@ -27,18 +37,26 @@ type CompanyRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.
 type WorkerRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findWorkerByUserId>>>;
 type KioskSessionRecord = AttendanceRepository.KioskSessionWithContext;
 type VenueKioskRecord = AttendanceRepository.VenueKioskWithContext;
+type KioskOrderRecord = NonNullable<Awaited<ReturnType<typeof AttendanceRepository.findOrderForKiosk>>>;
 
 const KIOSK_QR_REFRESH_SECONDS = 30;
 const KIOSK_TOKEN_BYTES = 32;
 const DEFAULT_KIOSK_SESSION_TTL_HOURS = 12;
 
-export async function generateQrToken(userId: string, roleValue: string, input: GenerateQrTokenInput) {
+export async function generateQrToken(
+  userId: string,
+  roleValue: string,
+  input: GenerateQrTokenInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const assignment = await getAssignmentForQr(input.assignment_id);
+  const assignment = await getAssignmentForQr(input.assignment_id, true);
+  assertAdminAssignmentCohort(role, actorIsReviewAccount, assignment);
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
     if (assignment.order.company_id !== company.id) {
@@ -51,6 +69,14 @@ export async function generateQrToken(userId: string, roleValue: string, input: 
     orderId: assignment.order_id,
     companyId: assignment.order.company_id,
     ttlSeconds: input.ttl_seconds,
+  });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    assignmentId: assignment.id,
+    orderId: assignment.order_id,
+    companyId: assignment.order.company_id,
+    expiresAt: qr.expiresAt,
   });
 
   return {
@@ -65,13 +91,20 @@ export async function generateQrToken(userId: string, roleValue: string, input: 
   };
 }
 
-export async function createKioskSession(userId: string, roleValue: string, input: CreateKioskSessionInput) {
+export async function createKioskSession(
+  userId: string,
+  roleValue: string,
+  input: CreateKioskSessionInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
   const assignment = await getAssignmentForQr(input.assignment_id);
+  assertAdminAssignmentCohort(role, actorIsReviewAccount, assignment);
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
     if (assignment.order.company_id !== company.id) {
@@ -80,6 +113,9 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
   }
 
   const expiresAt = parseKioskExpiry(input.expires_at);
+  // Validate the destination before persisting a capability. Production only
+  // permits the dedicated qr.setservice.az origin.
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const kioskToken = generateKioskDisplayToken();
@@ -96,7 +132,7 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
       return {
         ...toKioskSessionResponse(session),
         kiosk_token: kioskToken,
-        kiosk_url: buildKioskUrl(kioskToken),
+        kiosk_url: buildKioskPublicUrl(kioskToken, kioskPublicBase),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) continue;
@@ -109,22 +145,69 @@ export async function createKioskSession(userId: string, roleValue: string, inpu
 
 export async function getKioskSession(token: string) {
   const venueKiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
-  if (venueKiosk) return toVenueKioskResponse(venueKiosk);
+  if (venueKiosk) {
+    ensureVenueKioskUsable(venueKiosk);
+    return await resolveVenueKioskContext(venueKiosk);
+  }
 
   const session = await findValidKioskSessionByToken(token);
   return toKioskSessionResponse(session);
 }
 
+export async function selectVenueKioskOrder(token: string, input: SelectVenueKioskOrderInput) {
+  const kiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
+  if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
+  ensureVenueKioskUsable(kiosk);
+
+  const order = await AttendanceRepository.findOrderForKiosk(input.order_id);
+  if (!order || order.company_id !== kiosk.company_id) {
+    // Do not reveal whether an order belonging to another company exists.
+    throw Errors.notFound('Aktiv növbə tapılmadı.', 'KIOSK_ORDER_NOT_FOUND');
+  }
+  if (!await AttendanceRepository.isSelectableKioskOrder(kiosk.company_id, order.id)) {
+    throw Errors.conflict('Bu növbə hazırda QR üçün aktiv deyil.', 'ORDER_NOT_QR_ELIGIBLE');
+  }
+
+  const activated = await AttendanceRepository.activateVenueKiosk({
+    kioskId: kiosk.id,
+    companyId: kiosk.company_id,
+    orderId: order.id,
+    allowCheckoutOnly: true,
+    activationSource: 'kiosk_selection',
+  });
+  if (!activated) throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
+  return toVenueKioskPublicResponse(
+    activated,
+    await AttendanceRepository.listSelectableKioskOrders(kiosk.company_id),
+  );
+}
+
 export async function generateKioskQrToken(token: string) {
   const venueKiosk = await AttendanceRepository.findVenueKioskByTokenHash(hashKioskToken(token));
-  if (venueKiosk) return generateVenueKioskQrTokenFromRecord(venueKiosk);
+  if (venueKiosk) return await generateVenueKioskQrTokenFromRecord(venueKiosk);
 
   const session = await findValidKioskSessionByToken(token);
+  if (session.order.shift_start.getTime() > Date.now()) {
+    throw Errors.conflict(
+      'Növbə başlamayıb. QR kod başlanğıc vaxtında aktiv olacaq.',
+      'KIOSK_SHIFT_NOT_STARTED',
+    );
+  }
   const qr = generateAttendanceQrToken({
     assignmentId: session.assignment_id,
     orderId: session.order_id,
     companyId: session.company_id,
+    kioskSessionId: session.id,
     ttlSeconds: KIOSK_QR_REFRESH_SECONDS,
+  });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    assignmentId: session.assignment_id,
+    orderId: session.order_id,
+    companyId: session.company_id,
+    kioskSessionId: session.id,
+    expiresAt: qr.expiresAt,
   });
 
   return {
@@ -136,15 +219,27 @@ export async function generateKioskQrToken(token: string) {
   };
 }
 
-export async function createVenueKiosk(userId: string, roleValue: string, input: CreateVenueKioskInput) {
+export async function createVenueKiosk(
+  userId: string,
+  roleValue: string,
+  input: CreateVenueKioskInput,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const companyId = await resolveManageableCompanyId(userId, role, input.company_id);
+  const companyId = await resolveManageableCompanyId(
+    userId,
+    role,
+    input.company_id,
+    actorIsReviewAccount,
+  );
   const name = input.name.trim();
   const locationLabel = input.location_label?.trim();
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const kioskToken = generateKioskDisplayToken();
@@ -159,9 +254,9 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
       });
 
       return {
-        ...toVenueKioskResponse(kiosk),
+        ...toVenueKioskPublicResponse(kiosk),
         kiosk_token: kioskToken,
-        kiosk_url: buildKioskUrl(kioskToken),
+        kiosk_url: buildKioskPublicUrl(kioskToken, kioskPublicBase),
       };
     } catch (error) {
       if (isUniqueConstraintError(error)) continue;
@@ -172,7 +267,12 @@ export async function createVenueKiosk(userId: string, roleValue: string, input:
   throw Errors.internal('Venue kiosk tokeni yaradıla bilmədi.', 'KIOSK_TOKEN_CREATE_FAILED');
 }
 
-export async function listVenueKiosks(userId: string, roleValue: string, filters: ListVenueKiosksQueryInput) {
+export async function listVenueKiosks(
+  userId: string,
+  roleValue: string,
+  filters: ListVenueKiosksQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
@@ -180,14 +280,66 @@ export async function listVenueKiosks(userId: string, roleValue: string, filters
 
   let companyId = filters.company_id;
   if (role === 'company') {
-    companyId = (await getApprovedCompanyForUser(userId)).id;
+    companyId = await resolveManageableCompanyId(userId, role, filters.company_id);
   }
 
   return {
     data: (await AttendanceRepository.listVenueKiosks({
       deleted_at: null,
       ...(companyId ? { company_id: companyId } : {}),
-    })).map(toVenueKioskResponse),
+      ...((role === 'admin' || role === 'super_admin')
+        ? { company: { user: { is_review_account: isReviewAccount } } }
+        : {}),
+    })).map((kiosk) => toVenueKioskManagementResponse(kiosk)),
+  };
+}
+
+export async function listVenueKioskCompanies(
+  roleValue: string,
+  isReviewAccount = false,
+) {
+  const role = parseRole(roleValue);
+  if (role !== 'super_admin' && role !== 'admin') {
+    throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
+  }
+
+  return {
+    data: await AttendanceRepository.listKioskManageableCompanies(isReviewAccount),
+  };
+}
+
+export async function listKioskEligibleOrders(
+  userId: string,
+  roleValue: string,
+  filters: ListKioskEligibleOrdersQueryInput,
+  isReviewAccount = false,
+) {
+  const role = parseRole(roleValue);
+  if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
+    throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'FORBIDDEN');
+  }
+
+  let companyId = filters.company_id;
+  if (role === 'company') {
+    companyId = await resolveManageableCompanyId(userId, role, filters.company_id);
+  }
+
+  return {
+    data: (await AttendanceRepository.listKioskEligibleOrders(
+      companyId,
+      new Date(),
+      role === 'admin' || role === 'super_admin' ? isReviewAccount : undefined,
+    )).map((order) => ({
+      id: order.id,
+      title: order.title,
+      status: order.status,
+      company_id: order.company_id,
+      company: order.company,
+      start_datetime: order.shift_start,
+      end_datetime: order.shift_end,
+      location: order.location,
+      accepted_assignment_count: order._count.assignments,
+    })),
   };
 }
 
@@ -195,17 +347,17 @@ export async function activateVenueKiosk(
   userId: string,
   roleValue: string,
   id: string,
-  input: ActivateVenueKioskInput
+  input: ActivateVenueKioskInput,
+  actorIsReviewAccount = false,
 ) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const kiosk = await findManageableVenueKiosk(id, userId, role);
-  if (kiosk.status !== 'active' || kiosk.revoked_at !== null) {
-    throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
-  }
+  const kiosk = await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
+  ensureVenueKioskUsable(kiosk);
 
   const order = await AttendanceRepository.findOrderForKiosk(input.order_id);
   if (!order || order.deleted_at !== null) {
@@ -214,53 +366,90 @@ export async function activateVenueKiosk(
   if (order.company_id !== kiosk.company_id) {
     throw Errors.forbidden('Kiosk yalnız öz müəssisəsinin sifarişləri üçün aktiv edilə bilər.', 'FORBIDDEN');
   }
-  if (order.status !== 'active') {
-    throw Errors.conflict('QR ekranı yalnız aktiv sifariş üçün aktiv edilə bilər.', 'ORDER_NOT_ACTIVE');
-  }
-  if (order._count.assignments < 1) {
-    throw Errors.conflict('Bu sifariş üzrə işi qəbul etmiş işçi yoxdur.', 'NO_ACCEPTED_ASSIGNMENTS');
-  }
+  assertKioskEligibleOrder(order);
+  // Fail closed before the activation transaction if the public capability
+  // URL is not configured for the production kiosk origin.
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
 
-  return toVenueKioskResponse(await AttendanceRepository.activateVenueKiosk({
+  const activated = await AttendanceRepository.activateVenueKiosk({
     kioskId: kiosk.id,
     companyId: kiosk.company_id,
     orderId: order.id,
     activatedById: userId,
+    activatedByRole: role,
     expiresAt: parseOptionalFutureDate(input.expires_at, 'Kiosk aktiv sessiyasının bitmə tarixi gələcək tarix olmalıdır.'),
-  }));
+    activationSource: 'manual',
+  });
+  if (!activated) throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
+  return toVenueKioskManagementResponse(activated, kioskPublicBase);
 }
 
-export async function deactivateVenueKiosk(userId: string, roleValue: string, id: string) {
+export async function deactivateVenueKiosk(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
+  await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
-  const kiosk = await AttendanceRepository.deactivateVenueKiosk({ id, companyId });
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
+  const kiosk = await AttendanceRepository.deactivateVenueKiosk({
+    id,
+    companyId,
+    actorId: userId,
+    actorRole: role,
+  });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
-export async function disableVenueKiosk(userId: string, roleValue: string, id: string) {
+export async function disableVenueKiosk(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
+  await findManageableVenueKiosk(id, userId, role, actorIsReviewAccount);
 
   const companyId = role === 'company' ? (await getApprovedCompanyForUser(userId)).id : undefined;
-  const kiosk = await AttendanceRepository.disableVenueKiosk({ id, companyId });
+  const kioskPublicBase = resolveKioskPublicBaseUrl();
+  const kiosk = await AttendanceRepository.disableVenueKiosk({
+    id,
+    companyId,
+    actorId: userId,
+    actorRole: role,
+  });
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
-  return toVenueKioskResponse(kiosk);
+  return toVenueKioskManagementResponse(kiosk, kioskPublicBase);
 }
 
-export async function revokeKioskSession(userId: string, roleValue: string, id: string) {
+export async function revokeKioskSession(
+  userId: string,
+  roleValue: string,
+  id: string,
+  actorIsReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   if (role !== 'super_admin' && role !== 'admin' && role !== 'company') {
     throw Errors.forbidden('Bu əməliyyat üçün icazəniz yoxdur.', 'FORBIDDEN');
   }
+  assertReviewAdminKioskMutationAllowed(role, actorIsReviewAccount);
 
-  const session = await AttendanceRepository.findKioskSessionById(id);
+  const session = await AttendanceRepository.findKioskSessionById(
+    id,
+    role === 'admin' || role === 'super_admin' ? actorIsReviewAccount : undefined,
+  );
   if (!session) throw Errors.notFound('Kiosk sessiyası tapılmadı.', 'KIOSK_SESSION_NOT_FOUND');
 
   let companyId: string | undefined;
@@ -287,29 +476,32 @@ export async function checkIn(userId: string, roleValue: string, input: CheckInI
   }
 
   const worker = await getApprovedWorkerForUser(userId);
-  const assignment = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
+  const { assignment, payload } = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id, 'checkin');
 
   const result = await AttendanceRepository.createCheckInWithAudit({
     assignmentId: assignment.id,
     workerId: worker.id,
     actorId: userId,
     actorRole: role,
-    qrTokenHash: hashQrToken(input.qr_token),
+    qr: toQrContext(input.qr_token, payload),
     location: input.location,
     notes: input.notes,
   });
 
-  if (result.kind === 'already_checked_in') {
-    throw Errors.conflict('Bu təyinat üzrə artıq giriş edilib.', 'ATTENDANCE_ALREADY_CHECKED_IN');
-  }
-  if (result.kind === 'already_completed') {
-    throw Errors.conflict(
-      'Bu təyinat üzrə giriş-çıxış artıq tamamlanıb.',
-      'ATTENDANCE_ALREADY_COMPLETED'
-    );
-  }
-  if (result.kind === 'assignment_not_accepted') {
-    throw Errors.conflict('Giriş üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+  if (result.kind !== 'checked_in') {
+    if (result.kind === 'already_checked_in') {
+      throw Errors.conflict('Bu təyinat üzrə artıq giriş edilib.', 'ATTENDANCE_ALREADY_CHECKED_IN');
+    }
+    if (result.kind === 'already_completed') {
+      throw Errors.conflict(
+        'Bu təyinat üzrə giriş-çıxış artıq tamamlanıb.',
+        'ATTENDANCE_ALREADY_COMPLETED'
+      );
+    }
+    if (result.kind === 'assignment_not_accepted') {
+      throw Errors.conflict('Giriş üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+    }
+    throwQrUseError(result.kind);
   }
 
   await createAttendanceNotificationSafely(result.attendance, 'checked_in');
@@ -335,22 +527,26 @@ export async function checkOut(userId: string, roleValue: string, input: CheckOu
   }
 
   const worker = await getApprovedWorkerForUser(userId);
-  const assignment = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id);
+  const { assignment, payload } = await getWorkerAssignmentForQr(input.qr_token, input.assignment_id, worker.id, 'checkout');
 
   const result = await AttendanceRepository.checkOutWithAudit({
     assignmentId: assignment.id,
     workerId: worker.id,
     actorId: userId,
     actorRole: role,
+    qr: toQrContext(input.qr_token, payload),
     location: input.location,
     notes: input.notes,
   });
 
-  if (result.kind === 'not_checked_in') {
-    throw Errors.badRequest('Çıxış üçün əvvəlcə giriş edilməlidir.', 'ATTENDANCE_NOT_CHECKED_IN');
-  }
-  if (result.kind === 'assignment_not_accepted') {
-    throw Errors.conflict('Çıxış üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+  if (result.kind !== 'checked_out') {
+    if (result.kind === 'not_checked_in') {
+      throw Errors.badRequest('Çıxış üçün əvvəlcə giriş edilməlidir.', 'ATTENDANCE_NOT_CHECKED_IN');
+    }
+    if (result.kind === 'assignment_not_accepted') {
+      throw Errors.conflict('Çıxış üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
+    }
+    throwQrUseError(result.kind);
   }
 
   await createAttendanceNotificationSafely(result.attendance, 'checked_out');
@@ -386,48 +582,126 @@ async function createAttendanceNotificationSafely(
   }
 }
 
-export async function listAttendance(userId: string, roleValue: string, filters: ListAttendanceQueryInput) {
+export async function listAttendance(
+  userId: string,
+  roleValue: string,
+  filters: ListAttendanceQueryInput,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
   const where: Prisma.AttendanceLogWhereInput = { deleted_at: null };
+  const assignmentWhere: Prisma.AssignmentWhereInput = { deleted_at: null };
+  const attendanceConditions: Prisma.AttendanceLogWhereInput[] = [];
 
   if (filters.assignment_id) where.assignment_id = filters.assignment_id;
   if (filters.open_only !== undefined) {
     where.checkout_time = filters.open_only ? null : { not: null };
   }
 
+  if (filters.start_date || filters.end_date) {
+    attendanceConditions.push({
+      checkin_time: {
+        ...(filters.start_date ? { gte: filters.start_date } : {}),
+        ...(filters.end_date ? { lte: filters.end_date } : {}),
+      },
+    });
+  }
+  if (filters.updated_since) where.updated_at = { gt: filters.updated_since };
+
+  if (filters.worker_id) assignmentWhere.worker_id = filters.worker_id;
+  if (filters.order_id) assignmentWhere.order_id = filters.order_id;
+  if (filters.worker_search) {
+    assignmentWhere.worker = {
+      deleted_at: null,
+      user: { name: { contains: filters.worker_search, mode: 'insensitive' } },
+    };
+  }
+  if (filters.position_id) {
+    assignmentWhere.OR = [
+      { position_id: filters.position_id },
+      { order_category_item: { position_id: filters.position_id, deleted_at: null } },
+    ];
+  }
+
+  const now = new Date();
+  if (filters.status === 'not_checked_in') {
+    where.checkin_time = null;
+  } else if (filters.status === 'currently_working') {
+    where.checkin_time = { not: null };
+    where.checkout_time = null;
+    assignmentWhere.order = { shift_end: { gt: now } };
+  } else if (filters.status === 'checked_out') {
+    where.checkin_time = { not: null };
+    where.checkout_time = { not: null };
+    assignmentWhere.status = { not: 'completed' };
+  } else if (filters.status === 'completed') {
+    where.checkout_time = { not: null };
+    assignmentWhere.status = 'completed';
+  } else if (filters.status === 'missing_incomplete') {
+    attendanceConditions.push({
+      OR: [
+        { checkin_time: null },
+        {
+          checkin_time: { not: null },
+          checkout_time: null,
+          assignment: { order: { shift_end: { lte: now } } },
+        },
+      ],
+    });
+  }
+
   if (role === 'super_admin' || role === 'admin') {
-    if (filters.worker_id || filters.order_id) {
-      where.assignment = {
-        ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
-        ...(filters.order_id ? { order_id: filters.order_id } : {}),
-      };
+    if (filters.company_id) {
+      assignmentWhere.order = mergeOrderFilter(assignmentWhere.order, {
+        company_id: filters.company_id,
+        deleted_at: null,
+      });
     }
+    attendanceConditions.push({
+      assignment: {
+        worker: { user: { is_review_account: isReviewAccount } },
+        order: { company: { user: { is_review_account: isReviewAccount } } },
+      },
+    });
   } else if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
-    where.assignment = {
-      ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
-      ...(filters.order_id ? { order_id: filters.order_id } : {}),
-      order: { company_id: company.id, deleted_at: null },
-    };
+    const companyIsReviewAccount = company.user.is_review_account === true;
+    if (filters.company_id && filters.company_id !== company.id) {
+      throw Errors.forbidden('Müəssisə yalnız öz davamiyyət qeydlərini görə bilər.', 'FORBIDDEN');
+    }
+    assignmentWhere.order = mergeOrderFilter(assignmentWhere.order, {
+      company_id: company.id,
+      deleted_at: null,
+    });
+    attendanceConditions.push({
+      assignment: {
+        worker: { user: { is_review_account: companyIsReviewAccount } },
+      },
+    });
   } else if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
+    const workerIsReviewAccount = worker.user.is_review_account === true;
     if (filters.worker_id && filters.worker_id !== worker.id) {
       throw Errors.forbidden('Workers can view only their own attendance records.', 'FORBIDDEN');
     }
-    where.assignment = {
-      worker_id: worker.id,
+    assignmentWhere.worker_id = worker.id;
+    assignmentWhere.order = mergeOrderFilter(assignmentWhere.order, {
+      ...(filters.company_id ? { company_id: filters.company_id } : {}),
       deleted_at: null,
-      ...(filters.order_id ? { order_id: filters.order_id } : {}),
-      order: { deleted_at: null },
-    };
+      company: { user: { is_review_account: workerIsReviewAccount } },
+    });
   } else {
     throw Errors.forbidden('Hesab rolu dəstəklənmir.', 'FORBIDDEN');
   }
+
+  attendanceConditions.push({ assignment: assignmentWhere });
+  where.AND = attendanceConditions;
 
   const { data, total } = await AttendanceRepository.listAttendance({
     where,
     page: filters.page,
     limit: filters.limit,
+    sortBy: filters.sort_by,
     sort: filters.sort,
   });
 
@@ -442,11 +716,109 @@ export async function listAttendance(userId: string, roleValue: string, filters:
   };
 }
 
-export async function getAttendance(id: string, userId: string, roleValue: string) {
+export async function getAttendance(
+  id: string,
+  userId: string,
+  roleValue: string,
+  isReviewAccount = false,
+) {
   const role = parseRole(roleValue);
-  const attendance = await findVisibleAttendance(id, userId, role);
+  const attendance = await findVisibleAttendance(id, userId, role, isReviewAccount);
   if (!attendance) throw Errors.notFound('Giriş-çıxış qeydi tapılmadı.', 'ATTENDANCE_NOT_FOUND');
   return toAttendanceResponse(attendance, role);
+}
+
+export async function listAttendanceMonitor(
+  roleValue: string,
+  filters: ListAttendanceQueryInput,
+  isReviewAccount = false,
+) {
+  const role = parseRole(roleValue);
+  if (role !== 'super_admin' && role !== 'admin') {
+    throw Errors.forbidden('Canlı davamiyyət monitoru yalnız səlahiyyətli adminlər üçündür.', 'FORBIDDEN');
+  }
+
+  const now = new Date();
+  const conditions: Prisma.AssignmentWhereInput[] = [
+    { status: { in: ['assigned', 'accepted', 'completed'] } },
+    { worker: { deleted_at: null, user: { is_active: true, deleted_at: null } } },
+    { order: { deleted_at: null } },
+  ];
+  conditions.push(
+    { worker: { user: { is_review_account: isReviewAccount } } },
+    { order: { company: { user: { is_review_account: isReviewAccount } } } },
+  );
+
+  if (filters.assignment_id) conditions.push({ id: filters.assignment_id });
+  if (filters.order_id) conditions.push({ order_id: filters.order_id });
+  if (filters.worker_id) conditions.push({ worker_id: filters.worker_id });
+  if (filters.worker_search) {
+    conditions.push({ worker: { user: { name: { contains: filters.worker_search, mode: 'insensitive' } } } });
+  }
+  if (filters.company_id) conditions.push({ order: { company_id: filters.company_id } });
+  if (filters.position_id) {
+    conditions.push({
+      OR: [
+        { position_id: filters.position_id },
+        { order_category_item: { position_id: filters.position_id, deleted_at: null } },
+      ],
+    });
+  }
+  if (filters.start_date || filters.end_date) {
+    conditions.push({
+      order: {
+        ...(filters.start_date ? { shift_end: { gte: filters.start_date } } : {}),
+        ...(filters.end_date ? { shift_start: { lte: filters.end_date } } : {}),
+      },
+    });
+  }
+  if (filters.updated_since) {
+    conditions.push({
+      OR: [
+        { updated_at: { gt: filters.updated_since } },
+        { attendance_activity_at: { gt: filters.updated_since } },
+      ],
+    });
+  }
+
+  const openLog = { deleted_at: null, checkin_time: { not: null }, checkout_time: null } as const;
+  const completedLog = { deleted_at: null, checkout_time: { not: null } } as const;
+  if (filters.open_only === true || filters.status === 'currently_working') {
+    conditions.push({ attendance_logs: { some: openLog }, order: { shift_end: { gt: now } } });
+  } else if (filters.open_only === false || filters.status === 'checked_out') {
+    conditions.push({ attendance_logs: { some: completedLog }, status: { not: 'completed' } });
+  } else if (filters.status === 'completed') {
+    conditions.push({ status: 'completed', attendance_logs: { some: completedLog } });
+  } else if (filters.status === 'not_checked_in') {
+    conditions.push({ attendance_logs: { none: { deleted_at: null } }, order: { shift_end: { gt: now } } });
+  } else if (filters.status === 'missing_incomplete') {
+    conditions.push({
+      order: { shift_end: { lte: now } },
+      OR: [
+        { attendance_logs: { none: { deleted_at: null } } },
+        { attendance_logs: { some: openLog } },
+      ],
+    });
+  }
+
+  const { data, total } = await AttendanceRepository.listAttendanceMonitor({
+    where: { deleted_at: null, AND: conditions },
+    page: filters.page,
+    limit: filters.limit,
+    sortBy: filters.sort_by,
+    sort: filters.sort,
+  });
+
+  return {
+    data: data.map(toAttendanceMonitorResponse),
+    meta: {
+      page: filters.page,
+      limit: filters.limit,
+      total,
+      total_pages: Math.ceil(total / filters.limit),
+    },
+    server_time: now,
+  };
 }
 
 async function findValidKioskSessionByToken(token: string): Promise<KioskSessionRecord> {
@@ -456,8 +828,16 @@ async function findValidKioskSessionByToken(token: string): Promise<KioskSession
   return session;
 }
 
-async function findManageableVenueKiosk(id: string, userId: string, role: Role): Promise<VenueKioskRecord> {
-  const kiosk = await AttendanceRepository.findVenueKioskById(id);
+async function findManageableVenueKiosk(
+  id: string,
+  userId: string,
+  role: Role,
+  actorIsReviewAccount = false,
+): Promise<VenueKioskRecord> {
+  const kiosk = await AttendanceRepository.findVenueKioskById(
+    id,
+    role === 'admin' || role === 'super_admin' ? actorIsReviewAccount : undefined,
+  );
   if (!kiosk) throw Errors.notFound('QR ekranı tapılmadı.', 'VENUE_KIOSK_NOT_FOUND');
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
@@ -471,7 +851,8 @@ async function findManageableVenueKiosk(id: string, userId: string, role: Role):
 async function resolveManageableCompanyId(
   userId: string,
   role: Role,
-  requestedCompanyId?: string
+  requestedCompanyId?: string,
+  actorIsReviewAccount = false,
 ): Promise<string> {
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
@@ -484,14 +865,74 @@ async function resolveManageableCompanyId(
   if (!requestedCompanyId) {
     throw Errors.badRequest('Company is required for venue kiosk creation.', 'COMPANY_REQUIRED');
   }
-  return requestedCompanyId;
+
+  const company = await AttendanceRepository.findKioskManageableCompanyById(
+    requestedCompanyId,
+    actorIsReviewAccount,
+  );
+  if (!company) {
+    throw Errors.notFound(
+      'Aktiv və təsdiqlənmiş müəssisə tapılmadı.',
+      'COMPANY_NOT_AVAILABLE',
+    );
+  }
+  return company.id;
 }
 
-function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
+function assertReviewAdminKioskMutationAllowed(
+  role: Role,
+  isReviewAccount: boolean,
+): void {
+  if ((role !== 'admin' && role !== 'super_admin') || !isReviewAccount) return;
+  throw Errors.forbidden(
+    'Store review administrators have read-only access.',
+    'STORE_REVIEW_ADMIN_VIEW_ONLY',
+  );
+}
+
+function assertAdminAssignmentCohort(
+  role: Role,
+  isReviewAccount: boolean,
+  assignment: AssignmentRecord,
+): void {
+  if (role !== 'admin' && role !== 'super_admin') return;
+  if (
+    assignment.worker.user.is_review_account === isReviewAccount
+    && assignment.order.company.user.is_review_account === isReviewAccount
+  ) return;
+  // Keep hidden-cohort identifiers indistinguishable from unknown IDs.
+  throw Errors.notFound('Təyinat tapılmadı.', 'ASSIGNMENT_NOT_FOUND');
+}
+
+function assertKioskEligibleOrder(order: KioskOrderRecord, now: Date = new Date()): void {
+  if (isKioskEligibleOrder({
+    status: order.status,
+    shift_end: order.shift_end,
+    deleted_at: order.deleted_at,
+  }, now)) {
+    return;
+  }
+
+  if (!ORDER_ATTENDANCE_STATUSES.includes(order.status)) {
+    throw Errors.conflict('QR ekranı yalnız aktiv sifariş üçün aktiv edilə bilər.', 'ORDER_NOT_ACTIVE');
+  }
+  if (order.shift_end.getTime() <= now.getTime()) {
+    throw Errors.conflict('Bitmiş sifariş üçün QR ekranı aktiv edilə bilməz.', 'ORDER_EXPIRED');
+  }
+  throw Errors.notFound('Sifariş tapılmadı.', 'ORDER_NOT_FOUND');
+}
+
+async function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
   ensureVenueKioskUsable(kiosk);
   const activeSession = getUsableActiveSession(kiosk);
   if (!activeSession) {
-    throw Errors.conflict('QR ekranı hazır deyil. Admin tərəfindən aktiv ediləcək.', 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+    if (kiosk.active_sessions.length > 0) {
+      throw Errors.gone('QR sifarişinin və ya sessiyasının aktiv müddəti bitib.', 'KIOSK_ORDER_INACTIVE');
+    }
+    throw Errors.conflict('QR ekranı üçün aktiv sifariş seçilməlidir.', 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+  }
+  if (activeSession.order.shift_start.getTime() > Date.now()) {
+    throw Errors.conflict('Növbə başlamayıb. QR kod başlanğıc vaxtında avtomatik açılacaq.', 'KIOSK_SHIFT_NOT_STARTED');
   }
 
   const qr = generateAttendanceQrToken({
@@ -501,14 +942,58 @@ function generateVenueKioskQrTokenFromRecord(kiosk: VenueKioskRecord) {
     kioskSessionId: activeSession.id,
     ttlSeconds: KIOSK_QR_REFRESH_SECONDS,
   });
+  await AttendanceRepository.registerAttendanceQrToken({
+    tokenHash: hashQrToken(qr.token),
+    nonce: qr.nonce,
+    orderId: activeSession.order_id,
+    companyId: activeSession.company_id,
+    kioskId: kiosk.id,
+    kioskSessionId: activeSession.id,
+    expiresAt: qr.expiresAt,
+  });
 
   return {
-    ...toVenueKioskResponse(kiosk),
+    ...toVenueKioskPublicResponse(kiosk),
     token: qr.token,
     expires_at: qr.expiresAt,
     refresh_after_seconds: KIOSK_QR_REFRESH_SECONDS,
     kiosk_expires_at: activeSession.expires_at,
   };
+}
+
+async function resolveVenueKioskContext(kiosk: VenueKioskRecord) {
+  const activeSession = getUsableActiveSession(kiosk);
+  const now = new Date();
+  const candidates = await AttendanceRepository.listSelectableKioskOrders(kiosk.company_id, now);
+
+  // Keep a selected live shift stable. Simultaneous shifts are still returned
+  // so the tablet operator can switch explicitly without disrupting scans.
+  if (activeSession && isKioskCurrentOrder(activeSession.order, now)) {
+    return toVenueKioskPublicResponse(kiosk, candidates);
+  }
+
+  // Keep a recently ended shift available for check-out. A newly started shift
+  // appears in the selector; switching is explicit so outstanding check-outs are
+  // not silently stranded.
+  if (activeSession && activeSession.order.shift_end.getTime() <= now.getTime()) {
+    return toVenueKioskPublicResponse(kiosk, candidates);
+  }
+
+  // A future manual activation must not hide a shift that is already running.
+  const autoCandidates = candidates;
+  if (autoCandidates.length === 1) {
+    const activated = await AttendanceRepository.activateVenueKiosk({
+      kioskId: kiosk.id,
+      companyId: kiosk.company_id,
+      orderId: autoCandidates[0]!.id,
+      ...(isKioskCurrentOrder(autoCandidates[0]!, now) ? { requireStarted: true } : { allowCheckoutOnly: true }),
+      activationSource: 'automatic',
+    });
+    if (!activated) throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
+    return toVenueKioskPublicResponse(activated, candidates);
+  }
+
+  return toVenueKioskPublicResponse(kiosk, candidates, autoCandidates.length > 1);
 }
 
 function ensureVenueKioskUsable(kiosk: VenueKioskRecord): void {
@@ -517,6 +1002,8 @@ function ensureVenueKioskUsable(kiosk: VenueKioskRecord): void {
     kiosk.revoked_at !== null ||
     kiosk.status !== 'active' ||
     kiosk.company.deleted_at !== null ||
+    !kiosk.company.user.is_active ||
+    kiosk.company.user.deleted_at !== null ||
     kiosk.company.status !== 'approved'
   ) {
     throw Errors.gone('Bu QR ekranı deaktiv edilib.', 'VENUE_KIOSK_DISABLED');
@@ -533,7 +1020,9 @@ function getUsableActiveSession(kiosk: VenueKioskRecord) {
     session.deleted_at !== null ||
     session.status !== 'active' ||
     session.order.deleted_at !== null ||
-    session.order.status !== 'active' ||
+    !isWithinAttendanceCheckoutGrace(session.order) ||
+    (session.order.shift_end.getTime() <= Date.now()
+      && (session.order._count?.assignments ?? 0) === 0) ||
     session.order.company_id !== kiosk.company_id
   ) {
     return null;
@@ -549,9 +1038,11 @@ function ensureKioskSessionActive(session: KioskSessionRecord): void {
     session.revoked_at !== null ||
     expired ||
     session.company.deleted_at !== null ||
+    !session.company.user.is_active ||
+    session.company.user.deleted_at !== null ||
     session.company.status !== 'approved' ||
     session.order.deleted_at !== null ||
-    session.order.status !== 'active' ||
+    !isWithinAttendanceCheckoutGrace(session.order, new Date(now)) ||
     session.assignment.deleted_at !== null ||
     session.assignment.status !== 'accepted' ||
     session.assignment.order_id !== session.order_id ||
@@ -626,17 +1117,12 @@ function decryptKioskToken(ciphertext: string | null): string | null {
 
 function kioskEncryptionKey(): Buffer {
   const secret =
-    process.env.KIOSK_TOKEN_ENCRYPTION_SECRET ||
-    process.env.JWT_SECRET ||
-    process.env.QR_HMAC_SECRET ||
-    'development-kiosk-token-encryption-secret';
+    process.env.KIOSK_TOKEN_ENCRYPTION_SECRET ??
+    (process.env.NODE_ENV !== 'production' ? 'development-kiosk-token-encryption-secret' : undefined);
+  if (!secret) {
+    throw new Error('KIOSK_TOKEN_ENCRYPTION_SECRET is required in production.');
+  }
   return crypto.createHash('sha256').update(secret).digest();
-}
-
-function buildKioskUrl(token: string): string {
-  const base = (process.env.KIOSK_PUBLIC_BASE_URL ?? process.env.PUBLIC_APP_URL ?? '').replace(/\/+$/, '');
-  const path = `/kiosk/${encodeURIComponent(token)}`;
-  return base ? `${base}${path}` : path;
 }
 
 function toKioskSessionResponse(session: KioskSessionRecord) {
@@ -659,9 +1145,21 @@ function toKioskSessionResponse(session: KioskSessionRecord) {
   };
 }
 
-function toVenueKioskResponse(kiosk: VenueKioskRecord) {
+function toVenueKioskPublicResponse(
+  kiosk: VenueKioskRecord,
+  eligibleOrders: Array<{
+    id: string;
+    title: string;
+    status: string;
+    company_id: string;
+    shift_start: Date;
+    shift_end: Date;
+    location: string;
+  }> = [],
+  selectionRequired?: boolean,
+) {
   const activeSession = getUsableActiveSession(kiosk);
-  const kioskToken = decryptKioskToken(kiosk.token_ciphertext);
+  const qrAvailable = activeSession !== null && activeSession.order.shift_start.getTime() <= Date.now();
   return {
     id: kiosk.id,
     kiosk_id: kiosk.id,
@@ -676,7 +1174,19 @@ function toVenueKioskResponse(kiosk: VenueKioskRecord) {
     created_at: kiosk.created_at,
     updated_at: kiosk.updated_at,
     refresh_interval_seconds: KIOSK_QR_REFRESH_SECONDS,
-    kiosk_url: kioskToken ? buildKioskUrl(kioskToken) : undefined,
+    qr_available: qrAvailable,
+    checkout_only: qrAvailable && activeSession!.order.shift_end.getTime() <= Date.now(),
+    selection_required: selectionRequired ?? (activeSession === null && eligibleOrders.length > 1),
+    eligible_orders: eligibleOrders.map((order) => ({
+      id: order.id,
+      title: order.title,
+      status: order.status,
+      company_id: order.company_id,
+      location: order.location,
+      shift_start: order.shift_start,
+      shift_end: order.shift_end,
+      checkout_only: order.shift_end.getTime() <= Date.now(),
+    })),
     active_session: activeSession
       ? {
           id: activeSession.id,
@@ -699,30 +1209,70 @@ function toVenueKioskResponse(kiosk: VenueKioskRecord) {
   };
 }
 
+function toVenueKioskManagementResponse(kiosk: VenueKioskRecord, kioskPublicBase?: string) {
+  const response = toVenueKioskPublicResponse(kiosk);
+  const kioskToken = decryptKioskToken(kiosk.token_ciphertext);
+  return {
+    ...response,
+    kiosk_url: kioskToken ? buildKioskPublicUrl(kioskToken, kioskPublicBase) : undefined,
+  };
+}
+
 function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
 
-async function findVisibleAttendance(id: string, userId: string, role: Role): Promise<AttendanceRecord | null> {
-  if (role === 'super_admin' || role === 'admin') return AttendanceRepository.findAttendanceById(id);
+async function findVisibleAttendance(
+  id: string,
+  userId: string,
+  role: Role,
+  isReviewAccount = false,
+): Promise<AttendanceRecord | null> {
+  if (role === 'super_admin' || role === 'admin') {
+    return AttendanceRepository.findAttendanceByIdForReviewScope(id, isReviewAccount);
+  }
 
   if (role === 'company') {
     const company = await getApprovedCompanyForUser(userId);
-    return AttendanceRepository.findAttendanceByIdForCompany(id, company.id);
+    return AttendanceRepository.findAttendanceByIdForCompany(
+      id,
+      company.id,
+      company.user.is_review_account === true,
+    );
   }
 
   if (role === 'worker') {
     const worker = await getApprovedWorkerForUser(userId);
-    return AttendanceRepository.findAttendanceByIdForWorker(id, worker.id);
+    return AttendanceRepository.findAttendanceByIdForWorker(
+      id,
+      worker.id,
+      worker.user.is_review_account === true,
+    );
   }
 
   return null;
 }
 
-async function getAssignmentForQr(assignmentId: string): Promise<AssignmentRecord> {
+async function getAssignmentForQr(
+  assignmentId: string,
+  requireStarted = false,
+): Promise<AssignmentRecord> {
   const assignment = await AttendanceRepository.findAcceptedAssignmentById(assignmentId);
   if (!assignment) throw Errors.notFound('Təyinat tapılmadı.', 'ASSIGNMENT_NOT_FOUND');
-  if (assignment.status !== 'accepted' || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+  const now = new Date();
+  const activeWindow = requireStarted
+    ? isKioskCurrentOrder(assignment.order, now)
+    : isKioskEligibleOrder(assignment.order, now);
+  if (
+    assignment.status !== 'accepted' ||
+    (assignment.worker.user.is_review_account === true)
+      !== (assignment.order.company.user.is_review_account === true) ||
+    !activeWindow ||
+    assignment.order.company.status !== 'approved' ||
+    assignment.order.company.deleted_at !== null ||
+    !assignment.order.company.user.is_active ||
+    assignment.order.company.user.deleted_at !== null
+  ) {
     throw Errors.conflict('QR yaratmaq üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED');
   }
   return assignment;
@@ -731,8 +1281,9 @@ async function getAssignmentForQr(assignmentId: string): Promise<AssignmentRecor
 async function getWorkerAssignmentForQr(
   qrToken: string,
   submittedAssignmentId: string | undefined,
-  workerId: string
-): Promise<AssignmentRecord> {
+  workerId: string,
+  action: 'checkin' | 'checkout',
+): Promise<{ assignment: AssignmentRecord; payload: AttendanceQrPayload }> {
   const verified = verifyAttendanceQrToken(qrToken);
   if (!verified.valid) {
     if (verified.expired) throw Errors.gone('QR token has expired.', 'QR_TOKEN_EXPIRED');
@@ -740,9 +1291,9 @@ async function getWorkerAssignmentForQr(
   }
 
   if (verified.payload.assignment_id) {
-    const assignment = await getWorkerAcceptedAssignment(verified.payload.assignment_id, workerId);
+    const assignment = await getWorkerAcceptedAssignment(verified.payload.assignment_id, workerId, action);
     verifyPayloadForAssignment(verified.payload, assignment);
-    return assignment;
+    return { assignment, payload: verified.payload };
   }
 
   const assignment = await AttendanceRepository.findAcceptedAssignmentForWorkerOrder(workerId, verified.payload.order_id);
@@ -752,26 +1303,48 @@ async function getWorkerAssignmentForQr(
       'KIOSK_ASSIGNMENT_NOT_FOUND'
     );
   }
+  assertWorkerAssignmentActive(assignment, action);
   if (submittedAssignmentId && submittedAssignmentId !== assignment.id) {
     // The QR is order-based; use the authenticated worker's accepted assignment for that order.
   }
   verifyPayloadForAssignment(verified.payload, assignment);
-  return assignment;
+  return { assignment, payload: verified.payload };
 }
 
-async function getWorkerAcceptedAssignment(assignmentId: string, workerId: string): Promise<AssignmentRecord> {
+async function getWorkerAcceptedAssignment(
+  assignmentId: string,
+  workerId: string,
+  action: 'checkin' | 'checkout' = 'checkin',
+): Promise<AssignmentRecord> {
   const assignment = await AttendanceRepository.findAcceptedAssignmentById(assignmentId);
   if (!assignment) throw Errors.notFound('Təyinat tapılmadı.', 'ASSIGNMENT_NOT_FOUND');
   if (assignment.worker_id !== workerId) {
     throw Errors.forbidden('Worker can use attendance only for own assignment.', 'FORBIDDEN');
   }
-  if (assignment.status !== 'accepted' || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+  assertWorkerAssignmentActive(assignment, action);
+  return assignment;
+}
+
+function assertWorkerAssignmentActive(
+  assignment: AssignmentRecord,
+  action: 'checkin' | 'checkout' = 'checkin',
+): void {
+  const activeWindow = action === 'checkout'
+    ? isWithinAttendanceCheckoutGrace(assignment.order)
+    : isKioskCurrentOrder(assignment.order);
+  if (
+    assignment.status !== 'accepted' ||
+    !activeWindow ||
+    assignment.order.company.status !== 'approved' ||
+    assignment.order.company.deleted_at !== null ||
+    !assignment.order.company.user.is_active ||
+    assignment.order.company.user.deleted_at !== null
+  ) {
     throw Errors.conflict('Davamiyyət üçün təyinat qəbul edilmiş və sifariş aktiv olmalıdır.', 'ASSIGNMENT_NOT_ACCEPTED', {
       status: assignment.status,
       order_status: assignment.order.status,
     });
   }
-  return assignment;
 }
 
 function verifyQrForAssignment(qrToken: string, assignment: AssignmentRecord): void {
@@ -801,9 +1374,33 @@ function verifyPayloadForAssignment(
   }
 }
 
+function toQrContext(qrToken: string, payload: AttendanceQrPayload): AttendanceRepository.AttendanceQrContext {
+  return {
+    tokenHash: hashQrToken(qrToken),
+    nonce: payload.nonce,
+    assignmentId: payload.assignment_id,
+    orderId: payload.order_id,
+    companyId: payload.company_id,
+    kioskId: payload.kiosk_id,
+    kioskSessionId: payload.kiosk_session_id,
+  };
+}
+
+function throwQrUseError(kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_replayed'): never {
+  if (kind === 'qr_expired') throw Errors.gone('QR token has expired.', 'QR_TOKEN_EXPIRED');
+  if (kind === 'qr_revoked') throw Errors.gone('QR session has been revoked.', 'QR_TOKEN_REVOKED');
+  if (kind === 'qr_replayed') {
+    throw Errors.conflict('This QR token was already used by the worker.', 'QR_TOKEN_REPLAYED');
+  }
+  throw Errors.unauthorized('QR token yanlışdır.', 'QR_TOKEN_INVALID');
+}
+
 async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord> {
   const company = await AttendanceRepository.findCompanyByUserId(userId);
   if (!company || company.deleted_at) throw Errors.notFound('Müəssisə profili tapılmadı.', 'COMPANY_NOT_FOUND');
+  if (!company.user.is_active || company.user.deleted_at) {
+    throw Errors.forbidden('Müəssisə hesabı aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
   if (company.status !== 'approved') {
     throw Errors.forbidden('Davamiyyət üçün müəssisə hesabı təsdiqlənməlidir.', 'ACCOUNT_NOT_APPROVED', {
       status: company.status,
@@ -815,6 +1412,9 @@ async function getApprovedCompanyForUser(userId: string): Promise<CompanyRecord>
 async function getApprovedWorkerForUser(userId: string): Promise<WorkerRecord> {
   const worker = await AttendanceRepository.findWorkerByUserId(userId);
   if (!worker || worker.deleted_at) throw Errors.notFound('İşçi profili tapılmadı.', 'WORKER_NOT_FOUND');
+  if (!worker.user.is_active || worker.user.deleted_at) {
+    throw Errors.forbidden('İşçi hesabı aktiv deyil.', 'ACCOUNT_INACTIVE');
+  }
   if (worker.status !== 'approved') {
     throw Errors.forbidden('Davamiyyət üçün işçi hesabı təsdiqlənməlidir.', 'ACCOUNT_NOT_APPROVED', {
       status: worker.status,
@@ -829,12 +1429,24 @@ function parseRole(role: string): Role {
 }
 
 function toAttendanceResponse(attendance: AttendanceRecord, viewerRole: Role) {
+  const position = attendance.assignment.position ?? attendance.assignment.order_category_item?.position;
+  const jobPosition = position?.name_az
+    ?? attendance.assignment.order_category_item?.category
+    ?? attendance.assignment.assigned_category
+    ?? null;
+  const attendanceStatus = attendanceViewStatus(attendance);
   return {
     id: attendance.id,
     assignment_id: attendance.assignment_id,
     checkin_time: attendance.checkin_time,
     checkout_time: attendance.checkout_time,
     duration_minutes: calculateDurationMinutes(attendance.checkin_time, attendance.checkout_time),
+    status: attendanceStatus,
+    attendance_status: attendanceStatus,
+    worker_name: attendance.assignment.worker.user.name,
+    company_name: attendance.assignment.order.company.name,
+    order_title: attendance.assignment.order.title,
+    job_position: jobPosition,
     checkin_location: attendance.checkin_location,
     checkout_location: attendance.checkout_location,
     checkin_notes: attendance.checkin_notes,
@@ -844,6 +1456,8 @@ function toAttendanceResponse(attendance: AttendanceRecord, viewerRole: Role) {
     assignment: {
       id: attendance.assignment.id,
       status: attendance.assignment.status,
+      assigned_category: attendance.assignment.assigned_category,
+      position: position ? { id: position.id, name: position.name_az, name_az: position.name_az, name_en: position.name_en } : null,
       worker: {
         id: attendance.assignment.worker.id,
         name: attendance.assignment.worker.user.name,
@@ -860,6 +1474,87 @@ function toAttendanceResponse(attendance: AttendanceRecord, viewerRole: Role) {
       },
     },
   };
+}
+
+function attendanceViewStatus(attendance: AttendanceRecord) {
+  if (!attendance.checkin_time) return 'not_checked_in' as const;
+  if (!attendance.checkout_time) {
+    return attendance.assignment.order.shift_end.getTime() <= Date.now()
+      ? 'missing_incomplete' as const
+      : 'currently_working' as const;
+  }
+  return attendance.assignment.status === 'completed' ? 'completed' as const : 'checked_out' as const;
+}
+
+function toAttendanceMonitorResponse(assignment: AttendanceRepository.AttendanceMonitorAssignment) {
+  const attendance = assignment.attendance_logs[0] ?? null;
+  const position = assignment.position ?? assignment.order_category_item?.position;
+  const jobPosition = position?.name_az
+    ?? assignment.order_category_item?.category
+    ?? assignment.assigned_category
+    ?? null;
+  let status: 'not_checked_in' | 'currently_working' | 'checked_out' | 'completed' | 'missing_incomplete';
+  if (!attendance?.checkin_time) {
+    status = assignment.order.shift_end.getTime() <= Date.now() ? 'missing_incomplete' : 'not_checked_in';
+  } else if (!attendance.checkout_time) {
+    status = assignment.order.shift_end.getTime() <= Date.now() ? 'missing_incomplete' : 'currently_working';
+  } else {
+    status = assignment.status === 'completed' ? 'completed' : 'checked_out';
+  }
+
+  return {
+    id: attendance?.id ?? null,
+    attendance_id: attendance?.id ?? null,
+    assignment_id: assignment.id,
+    status,
+    attendance_status: status,
+    checkin_time: attendance?.checkin_time ?? null,
+    checkout_time: attendance?.checkout_time ?? null,
+    duration_minutes: calculateDurationMinutes(
+      attendance?.checkin_time ?? null,
+      attendance?.checkout_time ?? null,
+    ),
+    created_at: attendance?.created_at ?? null,
+    updated_at: attendance?.updated_at ?? assignment.updated_at,
+    assigned_at: assignment.assigned_at,
+    worker_name: assignment.worker.user.name,
+    company_name: assignment.order.company.name,
+    order_title: assignment.order.title,
+    job_position: jobPosition,
+    assignment: {
+      id: assignment.id,
+      status: assignment.status,
+      assigned_category: assignment.assigned_category,
+      position: position
+        ? { id: position.id, name: position.name_az, name_az: position.name_az, name_en: position.name_en }
+        : null,
+      worker: {
+        id: assignment.worker.id,
+        name: assignment.worker.user.name,
+        phone: assignment.worker.user.phone,
+      },
+      order: {
+        id: assignment.order.id,
+        title: assignment.order.title,
+        status: assignment.order.status,
+        shift_start: assignment.order.shift_start,
+        shift_end: assignment.order.shift_end,
+        company: assignment.order.company,
+      },
+    },
+  };
+}
+
+function mergeOrderFilter(
+  existing: Prisma.OrderWhereInput | Prisma.OrderRelationFilter | undefined,
+  additional: Prisma.OrderWhereInput,
+): Prisma.OrderWhereInput {
+  if (!existing) return additional;
+  if ('is' in existing || 'isNot' in existing) {
+    const relationWhere = existing.is && typeof existing.is === 'object' ? existing.is : {};
+    return { AND: [relationWhere, additional] };
+  }
+  return { AND: [existing as Prisma.OrderWhereInput, additional] };
 }
 
 function calculateDurationMinutes(checkinTime: Date | null, checkoutTime: Date | null): number | null {

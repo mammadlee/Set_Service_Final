@@ -1,6 +1,31 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { Role } from '../../types/prisma';
+import { Errors } from '../../lib/errors';
+import { OrderStatus, Role } from '../../types/prisma';
+import {
+  completeOrderWhenFinished,
+  markOrderInProgress,
+  ORDER_ATTENDANCE_STATUSES,
+} from '../orders/orders.lifecycle';
+import {
+  checkoutEligibleOrderWhere,
+  kioskCurrentOrderWhere,
+  kioskEligibleOrderWhere,
+} from './attendance.kiosk-eligibility';
+
+export type AttendanceQrContext = {
+  tokenHash: string;
+  nonce: string;
+  assignmentId?: string;
+  orderId: string;
+  companyId: string;
+  kioskId?: string;
+  kioskSessionId?: string;
+};
+
+type AttendanceQrConsumeResult =
+  | { kind: 'consumed' }
+  | { kind: 'qr_invalid' | 'qr_expired' | 'qr_revoked' | 'qr_replayed' };
 
 export const attendanceInclude = {
   assignment: {
@@ -9,11 +34,22 @@ export const attendanceInclude = {
       status: true,
       worker_id: true,
       order_id: true,
+      position_id: true,
+      assigned_category: true,
+      position: { select: { id: true, name_az: true, name_en: true } },
+      order_category_item: {
+        select: {
+          id: true,
+          category: true,
+          position_id: true,
+          position: { select: { id: true, name_az: true, name_en: true } },
+        },
+      },
       worker: {
         select: {
           id: true,
           status: true,
-          user: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true, phone: true, is_review_account: true } },
         },
       },
       order: {
@@ -29,7 +65,7 @@ export const attendanceInclude = {
               id: true,
               name: true,
               status: true,
-              user: { select: { id: true, name: true, phone: true } },
+              user: { select: { id: true, name: true, phone: true, is_review_account: true } },
             },
           },
         },
@@ -50,6 +86,7 @@ export const kioskSessionInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
     },
   },
   order: {
@@ -89,6 +126,7 @@ export const venueKioskInclude = {
       status: true,
       user_id: true,
       deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
     },
   },
   active_sessions: {
@@ -106,6 +144,16 @@ export const venueKioskInclude = {
           location: true,
           company_id: true,
           deleted_at: true,
+          _count: {
+            select: {
+              assignments: {
+                where: {
+                  deleted_at: null,
+                  attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -119,14 +167,64 @@ export type VenueKioskWithContext = Prisma.VenueKioskGetPayload<{
 export function findCompanyByUserId(userId: string) {
   return prisma.company.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+    },
+  });
+}
+
+const kioskManageableCompanyWhere = {
+  status: 'approved',
+  deleted_at: null,
+  user: { is_active: true, deleted_at: null },
+} satisfies Prisma.CompanyWhereInput;
+
+export function listKioskManageableCompanies(isReviewAccount = false) {
+  return prisma.company.findMany({
+    where: {
+      ...kioskManageableCompanyWhere,
+      user: {
+        is_active: true,
+        deleted_at: null,
+        is_review_account: isReviewAccount,
+      },
+    },
+    select: { id: true, name: true, status: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
+}
+
+export function findKioskManageableCompanyById(id: string, isReviewAccount?: boolean) {
+  return prisma.company.findFirst({
+    where: {
+      ...kioskManageableCompanyWhere,
+      id,
+      ...(isReviewAccount === undefined
+        ? {}
+        : {
+            user: {
+              is_active: true,
+              deleted_at: null,
+              is_review_account: isReviewAccount,
+            },
+          }),
+    },
+    select: { id: true },
   });
 }
 
 export function findWorkerByUserId(userId: string) {
   return prisma.worker.findUnique({
     where: { user_id: userId },
-    select: { id: true, status: true, deleted_at: true },
+    select: {
+      id: true,
+      status: true,
+      deleted_at: true,
+      user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+    },
   });
 }
 
@@ -134,15 +232,33 @@ export function findAcceptedAssignmentById(id: string) {
   return prisma.assignment.findFirst({
     where: { id, deleted_at: null },
     include: {
-      worker: { select: { id: true, user_id: true, status: true } },
+      worker: {
+        select: {
+          id: true,
+          user_id: true,
+          status: true,
+          user: { select: { is_review_account: true } },
+        },
+      },
       order: {
         select: {
           id: true,
           title: true,
           status: true,
           company_id: true,
+          shift_start: true,
+          shift_end: true,
           deleted_at: true,
-          company: { select: { id: true, name: true, status: true, user_id: true } },
+          company: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              user_id: true,
+              deleted_at: true,
+              user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+            },
+          },
         },
       },
     },
@@ -158,15 +274,33 @@ export function findAcceptedAssignmentForWorkerOrder(workerId: string, orderId: 
       deleted_at: null,
     },
     include: {
-      worker: { select: { id: true, user_id: true, status: true } },
+      worker: {
+        select: {
+          id: true,
+          user_id: true,
+          status: true,
+          user: { select: { is_review_account: true } },
+        },
+      },
       order: {
         select: {
           id: true,
           title: true,
           status: true,
           company_id: true,
+          shift_start: true,
+          shift_end: true,
           deleted_at: true,
-          company: { select: { id: true, name: true, status: true, user_id: true } },
+          company: {
+            select: {
+              id: true,
+              name: true,
+              status: true,
+              user_id: true,
+              deleted_at: true,
+              user: { select: { is_active: true, deleted_at: true, is_review_account: true } },
+            },
+          },
         },
       },
     },
@@ -181,15 +315,143 @@ export function findOrderForKiosk(orderId: string) {
       title: true,
       status: true,
       company_id: true,
+      shift_start: true,
+      shift_end: true,
       deleted_at: true,
+    },
+  });
+}
+
+export function listKioskEligibleOrders(
+  companyId?: string,
+  now: Date = new Date(),
+  isReviewAccount?: boolean,
+) {
+  return prisma.order.findMany({
+    where: {
+      ...kioskEligibleOrderWhere({ now, companyId }),
+      ...(isReviewAccount === undefined
+        ? {}
+        : { AND: [{ company: { user: { is_review_account: isReviewAccount } } }] }),
+    },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      company_id: true,
+      shift_start: true,
+      shift_end: true,
+      location: true,
+      company: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
       _count: {
         select: {
           assignments: {
-            where: { status: 'accepted', deleted_at: null },
+            where: {
+              status: 'accepted',
+              deleted_at: null,
+              ...(isReviewAccount === undefined
+                ? {}
+                : { worker: { user: { is_review_account: isReviewAccount } } }),
+            },
           },
         },
       },
     },
+    orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+  });
+}
+
+export function listCurrentKioskOrders(companyId: string, now: Date = new Date()) {
+  return prisma.order.findMany({
+    where: kioskCurrentOrderWhere({ now, companyId }),
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      company_id: true,
+      shift_start: true,
+      shift_end: true,
+      location: true,
+    },
+    orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+  });
+}
+
+/**
+ * Returns shifts the tablet can switch to. Current shifts are always included;
+ * a recently ended shift is included only while it still has an open attendance
+ * record that can be checked out during the configured grace window.
+ */
+export async function listSelectableKioskOrders(companyId: string, now: Date = new Date()) {
+  const [current, checkoutOnly] = await Promise.all([
+    prisma.order.findMany({
+      where: kioskCurrentOrderWhere({ now, companyId }),
+      select: kioskOrderCandidateSelect,
+      orderBy: [{ shift_start: 'asc' }, { created_at: 'asc' }],
+    }),
+    prisma.order.findMany({
+      where: {
+        ...checkoutEligibleOrderWhere({ now, companyId }),
+        shift_start: { lte: now },
+        shift_end: { lte: now },
+        assignments: {
+          some: {
+            deleted_at: null,
+            attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+          },
+        },
+      },
+      select: kioskOrderCandidateSelect,
+      orderBy: [{ shift_end: 'desc' }, { created_at: 'asc' }],
+    }),
+  ]);
+
+  const byId = new Map<string, (typeof current)[number]>();
+  for (const order of [...current, ...checkoutOnly]) byId.set(order.id, order);
+  return [...byId.values()];
+}
+
+export async function isSelectableKioskOrder(companyId: string, orderId: string, now: Date = new Date()) {
+  const order = await prisma.order.findFirst({
+    where: {
+      ...checkoutEligibleOrderWhere({ now, companyId, orderId }),
+      shift_start: { lte: now },
+      OR: [
+        { shift_end: { gt: now } },
+        {
+          assignments: {
+            some: {
+              deleted_at: null,
+              attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  return order !== null;
+}
+
+const kioskOrderCandidateSelect = {
+  id: true,
+  title: true,
+  status: true,
+  company_id: true,
+  shift_start: true,
+  shift_end: true,
+  location: true,
+  deleted_at: true,
+} satisfies Prisma.OrderSelect;
+
+export function countKioskEligibleOrders(companyId: string, now: Date = new Date()) {
+  return prisma.order.count({
+    where: kioskEligibleOrderWhere({ now, companyId }),
   });
 }
 
@@ -222,9 +484,15 @@ export function listVenueKiosks(where: Prisma.VenueKioskWhereInput) {
   });
 }
 
-export function findVenueKioskById(id: string) {
+export function findVenueKioskById(id: string, isReviewAccount?: boolean) {
   return prisma.venueKiosk.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { company: { user: { is_review_account: isReviewAccount } } }),
+    },
     include: venueKioskInclude,
   });
 }
@@ -240,10 +508,74 @@ export function activateVenueKiosk(input: {
   kioskId: string;
   companyId: string;
   orderId: string;
-  activatedById: string;
+  activatedById?: string;
+  activatedByRole?: Role;
   expiresAt?: Date;
+  requireStarted?: boolean;
+  allowCheckoutOnly?: boolean;
+  activationSource?: 'manual' | 'automatic' | 'kiosk_selection';
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Match attendance/cancellation lock order: order first, kiosk second.
+    // Recheck lifecycle, ownership and approval after acquiring the order lock.
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${input.orderId} FOR UPDATE`;
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM "venue_kiosks"
+      WHERE id = ${input.kioskId}
+        AND company_id = ${input.companyId}
+        AND status = 'active'
+        AND revoked_at IS NULL
+        AND deleted_at IS NULL
+      FOR UPDATE
+    `;
+    if (locked.length !== 1) return null;
+
+    const now = new Date();
+    const order = await tx.order.findFirst({
+      where: input.allowCheckoutOnly
+        ? {
+            ...checkoutEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
+            shift_start: { lte: now },
+            OR: [
+              { shift_end: { gt: now } },
+              {
+                assignments: {
+                  some: {
+                    deleted_at: null,
+                    attendance_logs: { some: { deleted_at: null, checkout_time: null } },
+                  },
+                },
+              },
+            ],
+          }
+        : input.requireStarted
+          ? kioskCurrentOrderWhere({ now, companyId: input.companyId, orderId: input.orderId })
+          : kioskEligibleOrderWhere({ now, companyId: input.companyId, orderId: input.orderId }),
+      select: { id: true },
+    });
+    if (!order) {
+      throw Errors.conflict('QR üçün sifariş artıq uyğun deyil.', 'ORDER_NOT_QR_ELIGIBLE');
+    }
+    const existing = await tx.kioskActiveSession.findFirst({
+      where: {
+        kiosk_id: input.kioskId,
+        company_id: input.companyId,
+        order_id: input.orderId,
+        status: 'active',
+        revoked_at: null,
+        deleted_at: null,
+        OR: [{ expires_at: null }, { expires_at: { gt: now } }],
+      },
+      select: { id: true, expires_at: true },
+    });
+    // Retrying the same activation must not revoke the QR workers are scanning.
+    if (existing && (input.expiresAt === undefined || existing.expires_at?.getTime() === input.expiresAt.getTime())) {
+      return tx.venueKiosk.findFirstOrThrow({
+        where: { id: input.kioskId, deleted_at: null },
+        include: venueKioskInclude,
+      });
+    }
     await tx.kioskActiveSession.updateMany({
       where: {
         kiosk_id: input.kioskId,
@@ -253,8 +585,12 @@ export function activateVenueKiosk(input: {
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.kioskId, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
     });
 
     await tx.kioskActiveSession.create({
@@ -267,6 +603,21 @@ export function activateVenueKiosk(input: {
       },
     });
 
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.activatedById,
+        actor_role: input.activatedByRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.kioskId,
+        metadata: {
+          order_id: input.orderId,
+          source: input.activationSource ?? 'manual',
+          status: 'active',
+        },
+      },
+    });
+
     return tx.venueKiosk.findFirstOrThrow({
       where: { id: input.kioskId, deleted_at: null },
       include: venueKioskInclude,
@@ -274,18 +625,27 @@ export function activateVenueKiosk(input: {
   });
 }
 
-export function deactivateVenueKiosk(input: { id: string; companyId?: string }) {
+export function deactivateVenueKiosk(input: {
+  id: string;
+  companyId?: string;
+  actorId?: string;
+  actorRole?: Role;
+}) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const kiosk = await tx.venueKiosk.findFirst({
-      where: {
-        id: input.id,
-        deleted_at: null,
-        ...(input.companyId ? { company_id: input.companyId } : {}),
-      },
-      select: { id: true },
-    });
-    if (!kiosk) return null;
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND company_id = ${input.companyId} AND deleted_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND deleted_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return null;
 
+    const now = new Date();
     await tx.kioskActiveSession.updateMany({
       where: {
         kiosk_id: input.id,
@@ -295,7 +655,22 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
+      },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.actorId,
+        actor_role: input.actorRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.id,
+        metadata: { status: 'inactive', source: 'management' },
       },
     });
 
@@ -306,8 +681,27 @@ export function deactivateVenueKiosk(input: { id: string; companyId?: string }) 
   });
 }
 
-export function disableVenueKiosk(input: { id: string; companyId?: string }) {
+export function disableVenueKiosk(input: {
+  id: string;
+  companyId?: string;
+  actorId?: string;
+  actorRole?: Role;
+}) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND company_id = ${input.companyId} AND deleted_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "venue_kiosks"
+          WHERE id = ${input.id} AND deleted_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return null;
+
+    const now = new Date();
     const update = await tx.venueKiosk.updateMany({
       where: {
         id: input.id,
@@ -317,7 +711,7 @@ export function disableVenueKiosk(input: { id: string; companyId?: string }) {
       },
       data: {
         status: 'disabled',
-        revoked_at: new Date(),
+        revoked_at: now,
       },
     });
     if (update.count !== 1) return null;
@@ -331,7 +725,22 @@ export function disableVenueKiosk(input: { id: string; companyId?: string }) {
       },
       data: {
         status: 'revoked',
-        revoked_at: new Date(),
+        revoked_at: now,
+      },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actor_id: input.actorId,
+        actor_role: input.actorRole ?? 'company',
+        action: 'status_changed',
+        entity_type: 'venue_kiosk',
+        entity_id: input.id,
+        metadata: { status: 'disabled', source: 'management' },
       },
     });
 
@@ -370,23 +779,177 @@ export function findKioskSessionByTokenHash(tokenHash: string) {
   });
 }
 
-export function findKioskSessionById(id: string) {
+export function findKioskSessionById(id: string, isReviewAccount?: boolean) {
   return prisma.kioskSession.findFirst({
-    where: { id, deleted_at: null },
+    where: {
+      id,
+      deleted_at: null,
+      ...(isReviewAccount === undefined
+        ? {}
+        : { company: { user: { is_review_account: isReviewAccount } } }),
+    },
     include: kioskSessionInclude,
   });
 }
 
 export function revokeKioskSession(input: { id: string; companyId?: string }) {
-  return prisma.kioskSession.updateMany({
-    where: {
-      id: input.id,
-      deleted_at: null,
-      revoked_at: null,
-      ...(input.companyId ? { company_id: input.companyId } : {}),
-    },
-    data: { revoked_at: new Date() },
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const locked = input.companyId
+      ? await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "kiosk_sessions"
+          WHERE id = ${input.id} AND company_id = ${input.companyId}
+            AND deleted_at IS NULL AND revoked_at IS NULL
+          FOR UPDATE
+        `
+      : await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "kiosk_sessions"
+          WHERE id = ${input.id} AND deleted_at IS NULL AND revoked_at IS NULL
+          FOR UPDATE
+        `;
+    if (locked.length !== 1) return { count: 0 };
+
+    const now = new Date();
+    const result = await tx.kioskSession.updateMany({
+      where: { id: input.id, deleted_at: null, revoked_at: null },
+      data: { revoked_at: now },
+    });
+    await tx.attendanceQrToken.updateMany({
+      where: { kiosk_session_id: input.id, revoked_at: null, deleted_at: null },
+      data: { revoked_at: now },
+    });
+    return result;
   });
+}
+
+export function registerAttendanceQrToken(input: AttendanceQrContext & { expiresAt: Date }) {
+  return prisma.attendanceQrToken.create({
+    data: {
+      token_hash: input.tokenHash,
+      nonce: input.nonce,
+      assignment_id: input.assignmentId,
+      order_id: input.orderId,
+      company_id: input.companyId,
+      kiosk_id: input.kioskId,
+      kiosk_session_id: input.kioskSessionId,
+      expires_at: input.expiresAt,
+    },
+    select: { id: true },
+  });
+}
+
+async function consumeAttendanceQrToken(
+  tx: Prisma.TransactionClient,
+  input: {
+    qr: AttendanceQrContext;
+    assignmentId: string;
+    workerId: string;
+    action: 'checkin' | 'checkout';
+  },
+): Promise<AttendanceQrConsumeResult> {
+  const { qr } = input;
+
+  // Revocation and consumption take capability locks in the same order:
+  // physical/legacy session first, then the persisted short-lived QR grant.
+  if (qr.kioskId && qr.kioskSessionId) {
+    const lockedKiosk = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "venue_kiosks"
+      WHERE id = ${qr.kioskId}
+      FOR UPDATE
+    `;
+    const lockedSession = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "kiosk_active_sessions"
+      WHERE id = ${qr.kioskSessionId}
+      FOR UPDATE
+    `;
+    if (lockedKiosk.length !== 1 || lockedSession.length !== 1) return { kind: 'qr_revoked' };
+
+    const [kiosk, session] = await Promise.all([
+      tx.venueKiosk.findFirst({
+        where: {
+          id: qr.kioskId,
+          company_id: qr.companyId,
+          status: 'active',
+          revoked_at: null,
+          deleted_at: null,
+        },
+        select: { id: true },
+      }),
+      tx.kioskActiveSession.findFirst({
+        where: {
+          id: qr.kioskSessionId,
+          kiosk_id: qr.kioskId,
+          order_id: qr.orderId,
+          company_id: qr.companyId,
+          status: 'active',
+          revoked_at: null,
+          deleted_at: null,
+          OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }],
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (!kiosk || !session) return { kind: 'qr_revoked' };
+  } else if (qr.kioskSessionId) {
+    const lockedSession = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "kiosk_sessions"
+      WHERE id = ${qr.kioskSessionId}
+      FOR UPDATE
+    `;
+    if (lockedSession.length !== 1) return { kind: 'qr_revoked' };
+    const session = await tx.kioskSession.findFirst({
+      where: {
+        id: qr.kioskSessionId,
+        assignment_id: input.assignmentId,
+        order_id: qr.orderId,
+        company_id: qr.companyId,
+        revoked_at: null,
+        deleted_at: null,
+        OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }],
+      },
+      select: { id: true },
+    });
+    if (!session) return { kind: 'qr_revoked' };
+  }
+
+  const lockedGrant = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM "attendance_qr_tokens"
+    WHERE token_hash = ${qr.tokenHash}
+    FOR UPDATE
+  `;
+  if (lockedGrant.length !== 1) return { kind: 'qr_invalid' };
+
+  const grant = await tx.attendanceQrToken.findUnique({
+    where: { token_hash: qr.tokenHash },
+  });
+  if (!grant || grant.deleted_at !== null) return { kind: 'qr_invalid' };
+  if (grant.revoked_at !== null) return { kind: 'qr_revoked' };
+  if (grant.expires_at.getTime() <= Date.now()) return { kind: 'qr_expired' };
+  if (
+    grant.nonce !== qr.nonce ||
+    grant.order_id !== qr.orderId ||
+    grant.company_id !== qr.companyId ||
+    grant.assignment_id !== (qr.assignmentId ?? null) ||
+    grant.kiosk_id !== (qr.kioskId ?? null) ||
+    grant.kiosk_session_id !== (qr.kioskSessionId ?? null) ||
+    (qr.assignmentId !== undefined && qr.assignmentId !== input.assignmentId)
+  ) {
+    return { kind: 'qr_invalid' };
+  }
+
+  try {
+    await tx.attendanceQrUse.create({
+      data: {
+        qr_token_id: grant.id,
+        worker_id: input.workerId,
+        assignment_id: input.assignmentId,
+        action: input.action,
+      },
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) return { kind: 'qr_replayed' };
+    throw error;
+  }
+  return { kind: 'consumed' };
 }
 
 export function findAttendanceById(id: string) {
@@ -396,18 +959,59 @@ export function findAttendanceById(id: string) {
   });
 }
 
-export function findAttendanceByIdForCompany(id: string, companyId: string) {
+export function findReviewAttendanceById(id: string) {
   return prisma.attendanceLog.findFirst({
     where: {
       id,
       deleted_at: null,
-      assignment: { order: { company_id: companyId, deleted_at: null } },
+      assignment: {
+        worker: { user: { is_review_account: true } },
+        order: { company: { user: { is_review_account: true } } },
+      },
     },
     include: attendanceInclude,
   });
 }
 
-export function findAttendanceByIdForWorker(id: string, workerId: string) {
+export function findAttendanceByIdForReviewScope(id: string, isReviewAccount: boolean) {
+  return prisma.attendanceLog.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      assignment: {
+        worker: { user: { is_review_account: isReviewAccount } },
+        order: { company: { user: { is_review_account: isReviewAccount } } },
+      },
+    },
+    include: attendanceInclude,
+  });
+}
+
+export function findAttendanceByIdForCompany(
+  id: string,
+  companyId: string,
+  isReviewAccount?: boolean,
+) {
+  return prisma.attendanceLog.findFirst({
+    where: {
+      id,
+      deleted_at: null,
+      assignment: {
+        ...(isReviewAccount === undefined
+          ? {}
+          : { worker: { user: { is_review_account: isReviewAccount } } }),
+        order: { company_id: companyId, deleted_at: null },
+      },
+    },
+    include: attendanceInclude,
+  });
+}
+
+export function findAttendanceByIdForWorker(
+  id: string,
+  workerId: string,
+  isReviewAccount?: boolean,
+) {
   return prisma.attendanceLog.findFirst({
     where: {
       id,
@@ -415,7 +1019,12 @@ export function findAttendanceByIdForWorker(id: string, workerId: string) {
       assignment: {
         worker_id: workerId,
         deleted_at: null,
-        order: { deleted_at: null },
+        order: {
+          deleted_at: null,
+          ...(isReviewAccount === undefined
+            ? {}
+            : { company: { user: { is_review_account: isReviewAccount } } }),
+        },
       },
     },
     include: attendanceInclude,
@@ -426,6 +1035,7 @@ export async function listAttendance(input: {
   where: Prisma.AttendanceLogWhereInput;
   page: number;
   limit: number;
+  sortBy: 'created_at' | 'checkin_time' | 'checkout_time' | 'updated_at';
   sort: 'asc' | 'desc';
 }) {
   const [total, data] = await prisma.$transaction([
@@ -433,7 +1043,11 @@ export async function listAttendance(input: {
     prisma.attendanceLog.findMany({
       where: input.where,
       include: attendanceInclude,
-      orderBy: { created_at: input.sort },
+      orderBy: [
+        { [input.sortBy]: input.sort },
+        ...(input.sortBy === 'created_at' ? [] : [{ created_at: input.sort }]),
+        { id: input.sort },
+      ],
       skip: (input.page - 1) * input.limit,
       take: input.limit,
     }),
@@ -442,32 +1056,169 @@ export async function listAttendance(input: {
   return { total, data };
 }
 
+export const attendanceMonitorSelect = {
+  id: true,
+  status: true,
+  assigned_at: true,
+  attendance_activity_at: true,
+  last_checkin_at: true,
+  last_checkout_at: true,
+  updated_at: true,
+  assigned_category: true,
+  position: { select: { id: true, name_az: true, name_en: true } },
+  order_category_item: {
+    select: {
+      id: true,
+      category: true,
+      position: { select: { id: true, name_az: true, name_en: true } },
+    },
+  },
+  worker: {
+    select: {
+      id: true,
+      status: true,
+      user: { select: { name: true, phone: true } },
+    },
+  },
+  order: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      shift_start: true,
+      shift_end: true,
+      company: { select: { id: true, name: true } },
+    },
+  },
+  attendance_logs: {
+    where: { deleted_at: null },
+    orderBy: { created_at: 'desc' },
+    take: 1,
+    select: {
+      id: true,
+      checkin_time: true,
+      checkout_time: true,
+      created_at: true,
+      updated_at: true,
+    },
+  },
+} satisfies Prisma.AssignmentSelect;
+
+export type AttendanceMonitorAssignment = Prisma.AssignmentGetPayload<{
+  select: typeof attendanceMonitorSelect;
+}>;
+
+export async function listAttendanceMonitor(input: {
+  where: Prisma.AssignmentWhereInput;
+  page: number;
+  limit: number;
+  sortBy: 'created_at' | 'checkin_time' | 'checkout_time' | 'updated_at';
+  sort: 'asc' | 'desc';
+}) {
+  const assignmentSort: keyof Pick<
+    Prisma.AssignmentOrderByWithRelationInput,
+    'assigned_at' | 'attendance_activity_at' | 'last_checkin_at' | 'last_checkout_at'
+  > = input.sortBy === 'updated_at'
+    ? 'attendance_activity_at'
+    : input.sortBy === 'checkin_time'
+      ? 'last_checkin_at'
+      : input.sortBy === 'checkout_time'
+        ? 'last_checkout_at'
+        : 'assigned_at';
+  const primaryOrder = assignmentSort === 'last_checkin_at' || assignmentSort === 'last_checkout_at'
+    ? { [assignmentSort]: { sort: input.sort, nulls: 'last' as const } }
+    : { [assignmentSort]: input.sort };
+  const [total, data] = await prisma.$transaction([
+    prisma.assignment.count({ where: input.where }),
+    prisma.assignment.findMany({
+      where: input.where,
+      select: attendanceMonitorSelect,
+      orderBy: [primaryOrder, { id: 'asc' }],
+      skip: (input.page - 1) * input.limit,
+      take: input.limit,
+    }),
+  ]);
+  return { total, data };
+}
+
 export function createCheckInWithAudit(input: {
   assignmentId: string;
   workerId: string;
   actorId: string;
   actorRole: Role;
-  qrTokenHash: string;
+  qr: AttendanceQrContext;
   location?: unknown;
   notes?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        deleted_at: null,
+      },
+      select: {
+        order_id: true,
+        worker: { select: { user: { select: { is_review_account: true } } } },
+        order: {
+          select: {
+            company: { select: { user: { select: { is_review_account: true } } } },
+          },
+        },
+      },
+    });
+    if (!candidate) return { kind: 'assignment_not_accepted' as const };
+    if (
+      (candidate.worker.user.is_review_account === true)
+      !== (candidate.order.company.user.is_review_account === true)
+    ) return { kind: 'assignment_not_accepted' as const };
+
+    // Every lifecycle path locks parent order first, then assignment. This keeps
+    // check-in serialized with both whole-order and direct-assignment cancellation
+    // without introducing an assignment -> order deadlock.
+    await tx.$queryRaw`
+      SELECT id
+      FROM "orders"
+      WHERE id = ${candidate.order_id}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id
+      FROM "assignments"
+      WHERE id = ${input.assignmentId}
+      FOR UPDATE
+    `;
+
     const assignment = await tx.assignment.findFirst({
       where: {
         id: input.assignmentId,
         worker_id: input.workerId,
         status: 'accepted',
         deleted_at: null,
+        worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+        order: kioskCurrentOrderWhere({ now: new Date() }),
       },
       select: {
         id: true,
         worker_id: true,
         order_id: true,
-        order: { select: { id: true, status: true, deleted_at: true } },
+        worker: { select: { status: true, deleted_at: true } },
+        order: { select: { id: true, status: true, shift_start: true, shift_end: true, deleted_at: true,
+          company: { select: { status: true, deleted_at: true } } } },
       },
     });
 
-    if (!assignment || assignment.order.status !== 'active' || assignment.order.deleted_at !== null) {
+    if (
+      !assignment ||
+      !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
+      assignment.order.deleted_at !== null ||
+      assignment.order.shift_start.getTime() > Date.now() ||
+      assignment.order.shift_end.getTime() <= Date.now() ||
+      assignment.order.company.status !== 'approved' ||
+      assignment.order.company.deleted_at !== null ||
+      assignment.worker.status !== 'approved' ||
+      assignment.worker.deleted_at !== null
+    ) {
       return { kind: 'assignment_not_accepted' as const };
     }
 
@@ -482,16 +1233,33 @@ export function createCheckInWithAudit(input: {
         : { kind: 'already_checked_in' as const };
     }
 
+    const qrResult = await consumeAttendanceQrToken(tx, {
+      qr: input.qr,
+      assignmentId: assignment.id,
+      workerId: input.workerId,
+      action: 'checkin',
+    });
+    if (qrResult.kind !== 'consumed') return qrResult;
+
     try {
+      const checkedInAt = new Date();
       const attendance = await tx.attendanceLog.create({
         data: {
           assignment_id: input.assignmentId,
-          checkin_time: new Date(),
+          checkin_time: checkedInAt,
           checkin_location: input.location ?? undefined,
           checkin_notes: input.notes,
-          qr_token_hash: input.qrTokenHash,
+          qr_token_hash: input.qr.tokenHash,
         },
         include: attendanceInclude,
+      });
+
+      await tx.assignment.updateMany({
+        where: { id: input.assignmentId, deleted_at: null },
+        data: {
+          last_checkin_at: checkedInAt,
+          attendance_activity_at: checkedInAt,
+        },
       });
 
       await tx.auditLog.create({
@@ -509,7 +1277,19 @@ export function createCheckInWithAudit(input: {
         },
       });
 
-      return { kind: 'checked_in' as const, attendance };
+      await markOrderInProgress(tx, assignment.order_id, {
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        reason: 'attendance_checked_in',
+      });
+
+      const refreshedAttendance = await tx.attendanceLog.findFirst({
+        where: { id: attendance.id, deleted_at: null },
+        include: attendanceInclude,
+      });
+      if (!refreshedAttendance) throw new Error('Created attendance record could not be reloaded.');
+
+      return { kind: 'checked_in' as const, attendance: refreshedAttendance };
 
       /*
       await tx.notification.create({
@@ -541,10 +1321,31 @@ export function checkOutWithAudit(input: {
   workerId: string;
   actorId: string;
   actorRole: Role;
+  qr: AttendanceQrContext;
   location?: unknown;
   notes?: string;
 }) {
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const candidate = await tx.assignment.findFirst({
+      where: { id: input.assignmentId, worker_id: input.workerId, deleted_at: null },
+      select: {
+        order_id: true,
+        worker: { select: { user: { select: { is_review_account: true } } } },
+        order: {
+          select: {
+            company: { select: { user: { select: { is_review_account: true } } } },
+          },
+        },
+      },
+    });
+    if (!candidate) return { kind: 'assignment_not_accepted' as const };
+    if (
+      (candidate.worker.user.is_review_account === true)
+      !== (candidate.order.company.user.is_review_account === true)
+    ) return { kind: 'assignment_not_accepted' as const };
+    await tx.$queryRaw`SELECT id FROM "orders" WHERE id = ${candidate.order_id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "assignments" WHERE id = ${input.assignmentId} FOR UPDATE`;
+
     const openLog = await tx.attendanceLog.findFirst({
       where: {
         assignment_id: input.assignmentId,
@@ -554,7 +1355,8 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: 'active', deleted_at: null },
+          worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+          order: checkoutEligibleOrderWhere({ now: new Date() }),
         },
       },
       select: {
@@ -570,7 +1372,9 @@ export function checkOutWithAudit(input: {
         select: {
           status: true,
           deleted_at: true,
-          order: { select: { status: true, deleted_at: true } },
+          worker: { select: { status: true, deleted_at: true } },
+          order: { select: { status: true, shift_end: true, deleted_at: true,
+            company: { select: { status: true, deleted_at: true } } } },
         },
       });
       if (isAssignmentBlockedForAttendance(assignment)) {
@@ -579,6 +1383,15 @@ export function checkOutWithAudit(input: {
       return { kind: 'not_checked_in' as const };
     }
 
+    const qrResult = await consumeAttendanceQrToken(tx, {
+      qr: input.qr,
+      assignmentId: input.assignmentId,
+      workerId: input.workerId,
+      action: 'checkout',
+    });
+    if (qrResult.kind !== 'consumed') return qrResult;
+
+    const checkedOutAt = new Date();
     const updateResult = await tx.attendanceLog.updateMany({
       where: {
         id: openLog.id,
@@ -588,11 +1401,12 @@ export function checkOutWithAudit(input: {
           worker_id: input.workerId,
           status: 'accepted',
           deleted_at: null,
-          order: { status: 'active', deleted_at: null },
+          worker: { status: 'approved', deleted_at: null, user: { is_active: true, deleted_at: null } },
+          order: checkoutEligibleOrderWhere({ now: new Date() }),
         },
       },
       data: {
-        checkout_time: new Date(),
+        checkout_time: checkedOutAt,
         checkout_location: input.location ?? undefined,
         checkout_notes: input.notes,
       },
@@ -604,13 +1418,32 @@ export function checkOutWithAudit(input: {
         select: {
           status: true,
           deleted_at: true,
-          order: { select: { status: true, deleted_at: true } },
+          worker: { select: { status: true, deleted_at: true } },
+          order: { select: { status: true, shift_end: true, deleted_at: true,
+            company: { select: { status: true, deleted_at: true } } } },
         },
       });
       if (isAssignmentBlockedForAttendance(assignment)) {
         return { kind: 'assignment_not_accepted' as const };
       }
       return { kind: 'not_checked_in' as const };
+    }
+
+    const assignmentUpdate = await tx.assignment.updateMany({
+      where: {
+        id: input.assignmentId,
+        worker_id: input.workerId,
+        status: 'accepted',
+        deleted_at: null,
+      },
+      data: {
+        status: 'completed',
+        last_checkout_at: checkedOutAt,
+        attendance_activity_at: checkedOutAt,
+      },
+    });
+    if (assignmentUpdate.count !== 1) {
+      return { kind: 'assignment_not_accepted' as const };
     }
 
     const attendance = await tx.attendanceLog.findFirst({
@@ -635,7 +1468,18 @@ export function checkOutWithAudit(input: {
       },
     });
 
-    return { kind: 'checked_out' as const, attendance };
+    await completeOrderWhenFinished(tx, openLog.assignment.order_id, {
+      actorId: input.actorId,
+      actorRole: input.actorRole,
+      reason: 'attendance_checked_out',
+    });
+    const refreshedAttendance = await tx.attendanceLog.findFirst({
+      where: { id: attendance.id, deleted_at: null },
+      include: attendanceInclude,
+    });
+    if (!refreshedAttendance) return { kind: 'not_checked_in' as const };
+
+    return { kind: 'checked_out' as const, attendance: refreshedAttendance };
 
     /*
     await tx.notification.create({
@@ -691,15 +1535,22 @@ function isAssignmentBlockedForAttendance(
   assignment: {
     status: string;
     deleted_at: Date | null;
-    order: { status: string; deleted_at: Date | null };
+    worker: { status: string; deleted_at: Date | null };
+    order: { status: string; deleted_at: Date | null; shift_end: Date;
+      company: { status: string; deleted_at: Date | null } };
   } | null
 ): boolean {
   return (
     !assignment ||
     assignment.status !== 'accepted' ||
     assignment.deleted_at !== null ||
-    assignment.order.status !== 'active' ||
-    assignment.order.deleted_at !== null
+    !ORDER_ATTENDANCE_STATUSES.includes(assignment.order.status as OrderStatus) ||
+    assignment.order.deleted_at !== null ||
+    assignment.order.shift_end.getTime() <= Date.now() ||
+    assignment.order.company.status !== 'approved' ||
+    assignment.order.company.deleted_at !== null ||
+    assignment.worker.status !== 'approved' ||
+    assignment.worker.deleted_at !== null
   );
 }
 

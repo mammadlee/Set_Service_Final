@@ -5,7 +5,7 @@ export function SystemSettingsPage() {
   return (
     <>
       <PageHeader
-        title="Sistem Parametrləri"
+        title="Sistem parametrləri"
         description="Ümumi sistem sazlamaları üçün mərkəzləşdirilmiş bölmə."
       />
       <section className="panel">

@@ -1,13 +1,9 @@
 import { prisma } from '../../lib/prisma';
 import { Errors } from '../../lib/errors';
+import { NotificationListQuery } from './notifications.schema';
 
-export async function listNotifications(userId: string, query: {
-  page?: number;
-  limit?: number;
-  unread_only?: boolean;
-}) {
-  const page = query.page ?? 1;
-  const limit = query.limit ?? 20;
+export async function listNotifications(userId: string, query: NotificationListQuery) {
+  const { page, limit } = query;
   const where: Record<string, unknown> = {
     recipient_id: userId,
     deleted_at: null,
@@ -18,7 +14,10 @@ export async function listNotifications(userId: string, query: {
     prisma.notification.count({ where }),
     prisma.notification.findMany({
       where,
-      orderBy: { created_at: 'desc' },
+      orderBy: [
+        { created_at: 'desc' },
+        { id: 'desc' },
+      ],
       skip: (page - 1) * limit,
       take: limit,
     }),
@@ -31,18 +30,29 @@ export async function listNotifications(userId: string, query: {
 }
 
 export async function markNotificationRead(userId: string, id: string) {
-  const notification = await prisma.notification.findUnique({ where: { id } });
-  if (!notification || notification.deleted_at) {
-    throw Errors.notFound('Notification not found.', 'NOTIFICATION_NOT_FOUND');
-  }
-  if (notification.recipient_id !== userId) {
-    throw Errors.forbidden('You can only update your own notifications.', 'NOTIFICATION_FORBIDDEN');
+  const now = new Date();
+  const result = await prisma.notification.updateMany({
+    where: {
+      id,
+      recipient_id: userId,
+      deleted_at: null,
+      read_at: null,
+    },
+    data: { read_at: now },
+  });
+  if (result.count === 1) {
+    return prisma.notification.findFirstOrThrow({
+      where: { id, recipient_id: userId, deleted_at: null },
+    });
   }
 
-  return prisma.notification.update({
-    where: { id },
-    data: { read_at: notification.read_at ?? new Date() },
+  const existing = await prisma.notification.findFirst({
+    where: { id, recipient_id: userId, deleted_at: null },
   });
+  if (!existing) {
+    throw Errors.notFound('Notification not found.', 'NOTIFICATION_NOT_FOUND');
+  }
+  return existing;
 }
 
 export async function markAllNotificationsRead(userId: string) {

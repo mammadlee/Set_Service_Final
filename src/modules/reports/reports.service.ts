@@ -2,20 +2,29 @@ import { Prisma } from '@prisma/client';
 import { Errors } from '../../lib/errors';
 import { prisma } from '../../lib/prisma';
 import { ReportQueryInput } from './reports.schema';
+import { ORDER_ATTENDANCE_STATUSES } from '../orders/orders.lifecycle';
 
-export async function getAdminReportSummary(filters: ReportQueryInput) {
+type ReportSummaryOptions = {
+  includePendingWorkerApprovals?: boolean;
+  isReviewAccount?: boolean;
+};
+
+export async function getAdminReportSummary(
+  filters: ReportQueryInput,
+  options: ReportSummaryOptions = {},
+) {
   const now = new Date();
   const todayStart = startOfDay(now);
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const dateRange = buildDateRange(filters);
 
-  const orderWhere = buildOrderWhere(filters, dateRange);
-  const assignmentWhere = buildAssignmentWhere(filters, dateRange);
-  const attendanceWhere = buildAttendanceWhere(filters, dateRange);
-  const ratingWhere = buildRatingWhere(filters, dateRange);
-  const pendingWorkerWhere = buildPendingWorkerWhere(filters, dateRange);
-  const pendingCompanyWhere = buildPendingCompanyWhere(filters, dateRange);
+  const orderWhere = buildOrderWhere(filters, dateRange, options.isReviewAccount);
+  const assignmentWhere = buildAssignmentWhere(filters, dateRange, options.isReviewAccount);
+  const attendanceWhere = buildAttendanceWhere(filters, dateRange, options.isReviewAccount);
+  const ratingWhere = buildRatingWhere(filters, dateRange, options.isReviewAccount);
+  const pendingWorkerWhere = buildPendingWorkerWhere(filters, dateRange, options.isReviewAccount);
+  const pendingCompanyWhere = buildPendingCompanyWhere(filters, dateRange, options.isReviewAccount);
 
   const [
     todayActiveOrders,
@@ -25,8 +34,8 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
     rejectedAssignments,
     pendingWorkerApprovals,
     pendingCompanyApprovals,
-    workerWorkRows,
-    companyUsageRows,
+    workerWorkGroups,
+    companyUsageGroups,
     attendanceTotal,
     attendanceCompleted,
     attendanceOpen,
@@ -38,7 +47,7 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
     prisma.order.count({
       where: {
         ...orderWhere,
-        status: 'active',
+        status: { in: ORDER_ATTENDANCE_STATUSES },
         shift_start: { lt: tomorrowStart },
         shift_end: { gte: todayStart },
       },
@@ -57,25 +66,19 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
       select: { assignment: { select: { worker_id: true } } },
     }),
     prisma.assignment.count({ where: { ...assignmentWhere, status: 'rejected' } }),
-    prisma.worker.count({ where: pendingWorkerWhere }),
+    options.includePendingWorkerApprovals === false
+      ? Promise.resolve(0)
+      : prisma.worker.count({ where: pendingWorkerWhere }),
     prisma.company.count({ where: pendingCompanyWhere }),
-    prisma.attendanceLog.findMany({
+    prisma.attendanceLog.groupBy({
+      by: ['assignment_id'],
       where: { ...attendanceWhere, checkout_time: { not: null } },
-      select: {
-        assignment: {
-          select: {
-            worker_id: true,
-            worker: { select: { user: { select: { name: true } } } },
-          },
-        },
-      },
+      _count: { _all: true },
     }),
-    prisma.order.findMany({
+    prisma.order.groupBy({
+      by: ['company_id'],
       where: orderWhere,
-      select: {
-        company_id: true,
-        company: { select: { name: true } },
-      },
+      _count: { _all: true },
     }),
     prisma.attendanceLog.count({ where: attendanceWhere }),
     prisma.attendanceLog.count({ where: { ...attendanceWhere, checkout_time: { not: null } } }),
@@ -135,25 +138,50 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
     checkedInWorkerIds.add(row.assignment.worker_id);
   }
 
+  const [workerAssignments, usageCompanies] = await Promise.all([
+    prisma.assignment.findMany({
+      where: {
+        id: { in: workerWorkGroups.map((row) => row.assignment_id) },
+        worker: { user: { is_review_account: options.isReviewAccount === true } },
+        order: { company: { user: { is_review_account: options.isReviewAccount === true } } },
+      },
+      select: {
+        id: true,
+        worker_id: true,
+        worker: { select: { user: { select: { name: true } } } },
+      },
+    }),
+    prisma.company.findMany({
+      where: {
+        id: { in: companyUsageGroups.map((row) => row.company_id) },
+        user: { is_review_account: options.isReviewAccount === true },
+      },
+      select: { id: true, name: true },
+    }),
+  ]);
+
   const workerWorkCounts: Record<string, { worker_id: string; worker_name: string; completed_count: number }> = {};
-  for (const row of workerWorkRows) {
-    const workerId = row.assignment.worker_id;
+  const completedCountByAssignment = new Map(
+    workerWorkGroups.map((row) => [row.assignment_id, row._count._all]),
+  );
+  for (const assignment of workerAssignments) {
+    const workerId = assignment.worker_id;
     workerWorkCounts[workerId] ??= {
       worker_id: workerId,
-      worker_name: row.assignment.worker.user.name,
+      worker_name: assignment.worker.user.name,
       completed_count: 0,
     };
-    workerWorkCounts[workerId].completed_count += 1;
+    workerWorkCounts[workerId].completed_count += completedCountByAssignment.get(assignment.id) ?? 0;
   }
 
   const companyUsage: Record<string, { company_id: string; company_name: string; order_count: number }> = {};
-  for (const row of companyUsageRows) {
-    companyUsage[row.company_id] ??= {
+  const companyNames = new Map(usageCompanies.map((company) => [company.id, company.name]));
+  for (const row of companyUsageGroups) {
+    companyUsage[row.company_id] = {
       company_id: row.company_id,
-      company_name: row.company.name,
-      order_count: 0,
+      company_name: companyNames.get(row.company_id) ?? 'Unknown company',
+      order_count: row._count._all,
     };
-    companyUsage[row.company_id].order_count += 1;
   }
 
   const assignmentStats: Array<{ status: string; count: number }> = [];
@@ -165,7 +193,13 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
   }
   const demandStats = buildDemandStats(categoryDemandRows, legacyDemandRows);
   const workerDetail = filters.worker_id
-    ? await buildWorkerDetail(filters.worker_id, filters, ratingStats._avg.score ?? 0, ratingStats._count._all)
+    ? await buildWorkerDetail(
+        filters.worker_id,
+        filters,
+        ratingStats._avg.score ?? 0,
+        ratingStats._count._all,
+        options.isReviewAccount,
+      )
     : null;
 
   return {
@@ -213,27 +247,69 @@ export async function getAdminReportSummary(filters: ReportQueryInput) {
 export async function getCompanyReportSummary(userId: string, filters: ReportQueryInput) {
   const company = await prisma.company.findFirst({
     where: { user_id: userId, deleted_at: null },
-    select: { id: true },
+    select: { id: true, user: { select: { is_review_account: true } } },
   });
   if (!company) {
     throw Errors.notFound('Company profile not found.', 'COMPANY_NOT_FOUND');
   }
 
+  if (filters.worker_id) {
+    await assertCompanyWorkerReportAccess(
+      company.id,
+      filters.worker_id,
+      company.user.is_review_account === true,
+    );
+  }
+
   const { foc_training: _focTraining, ...companyVisibleFilters } = filters;
-  return getAdminReportSummary({
-    ...companyVisibleFilters,
-    company_id: company.id,
+  return getAdminReportSummary(
+    {
+      ...companyVisibleFilters,
+      company_id: company.id,
+    },
+    {
+      includePendingWorkerApprovals: false,
+      isReviewAccount: company.user.is_review_account === true,
+    },
+  );
+}
+
+async function assertCompanyWorkerReportAccess(
+  companyId: string,
+  workerId: string,
+  isReviewAccount: boolean,
+): Promise<void> {
+  const relationship = await prisma.assignment.findFirst({
+    where: {
+      worker_id: workerId,
+      deleted_at: null,
+      worker: { user: { is_review_account: isReviewAccount } },
+      order: {
+        company_id: companyId,
+        deleted_at: null,
+        company: { user: { is_review_account: isReviewAccount } },
+      },
+    },
+    select: { id: true },
   });
+  if (!relationship) {
+    throw Errors.notFound('Worker report was not found.', 'REPORT_WORKER_NOT_FOUND');
+  }
 }
 
 async function buildWorkerDetail(
   workerId: string,
   filters: ReportQueryInput,
   ratingAverage: number,
-  ratingCount: number
+  ratingCount: number,
+  isReviewAccount = false,
 ) {
   const worker = await prisma.worker.findFirst({
-    where: { id: workerId, deleted_at: null },
+    where: {
+      id: workerId,
+      deleted_at: null,
+      user: { is_review_account: isReviewAccount },
+    },
     select: {
       id: true,
       worker_class: true,
@@ -248,7 +324,7 @@ async function buildWorkerDetail(
     checkout_time: Date | null;
     assignment: { order: { company: { name: string } } };
   }> = await prisma.attendanceLog.findMany({
-    where: buildAttendanceWhere(filters, buildDateRange(filters)),
+    where: buildAttendanceWhere(filters, buildDateRange(filters), isReviewAccount),
     select: {
       checkin_time: true,
       checkout_time: true,
@@ -421,7 +497,11 @@ function buildDateRange(filters: ReportQueryInput) {
   };
 }
 
-function buildOrderWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.OrderWhereInput {
+function buildOrderWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.OrderWhereInput {
   const andFilters: Prisma.OrderWhereInput[] = [];
   const workerFocFilter = buildWorkerFocFilter(filters);
   if (filters.category) {
@@ -459,7 +539,10 @@ function buildOrderWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeF
       assignments: {
         some: {
           deleted_at: null,
-          worker: workerFocFilter,
+          worker: {
+            ...workerFocFilter,
+            user: { is_review_account: isReviewAccount },
+          },
         },
       },
     });
@@ -469,12 +552,14 @@ function buildOrderWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeF
     deleted_at: null,
     ...(dateRange ? { created_at: dateRange } : {}),
     ...(filters.company_id ? { company_id: filters.company_id } : {}),
+    company: { user: { is_review_account: isReviewAccount } },
     ...(filters.worker_id
       ? {
           assignments: {
             some: {
               worker_id: filters.worker_id,
               deleted_at: null,
+              worker: { user: { is_review_account: isReviewAccount } },
             },
           },
         }
@@ -483,7 +568,11 @@ function buildOrderWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeF
   };
 }
 
-function buildAssignmentWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.AssignmentWhereInput {
+function buildAssignmentWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.AssignmentWhereInput {
   const andFilters: Prisma.AssignmentWhereInput[] = [];
   const workerFocFilter = buildWorkerFocFilter(filters);
   if (filters.category) {
@@ -524,24 +613,36 @@ function buildAssignmentWhere(filters: ReportQueryInput, dateRange?: Prisma.Date
     deleted_at: null,
     ...(dateRange ? { assigned_at: dateRange } : {}),
     ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
-    ...(workerFocFilter ? { worker: workerFocFilter } : {}),
+    worker: {
+      ...(workerFocFilter ?? {}),
+      user: { is_review_account: isReviewAccount },
+    },
     ...(andFilters.length ? { AND: andFilters } : {}),
     order: {
       deleted_at: null,
       ...(filters.company_id ? { company_id: filters.company_id } : {}),
+      company: { user: { is_review_account: isReviewAccount } },
     },
   };
 }
 
-function buildAttendanceWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.AttendanceLogWhereInput {
+function buildAttendanceWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.AttendanceLogWhereInput {
   return {
     deleted_at: null,
     ...(dateRange ? { created_at: dateRange } : {}),
-    assignment: buildAssignmentWhere(filters),
+    assignment: buildAssignmentWhere(filters, undefined, isReviewAccount),
   };
 }
 
-function buildRatingWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.RatingWhereInput {
+function buildRatingWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.RatingWhereInput {
   const andFilters: Prisma.RatingWhereInput[] = [];
   const workerFocFilter = buildWorkerFocFilter(filters);
   if (filters.category) {
@@ -644,22 +745,32 @@ function buildRatingWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTime
     deleted_at: null,
     ...(dateRange ? { created_at: dateRange } : {}),
     ...(filters.worker_id ? { worker_id: filters.worker_id } : {}),
-    ...(workerFocFilter ? { worker: workerFocFilter } : {}),
+    worker: {
+      ...(workerFocFilter ?? {}),
+      user: { is_review_account: isReviewAccount },
+    },
+    rater: { is_review_account: isReviewAccount },
     ...(andFilters.length ? { AND: andFilters } : {}),
     order: {
       deleted_at: null,
       ...(filters.company_id ? { company_id: filters.company_id } : {}),
+      company: { user: { is_review_account: isReviewAccount } },
     },
   };
 }
 
-function buildPendingWorkerWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.WorkerWhereInput {
+function buildPendingWorkerWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.WorkerWhereInput {
   return {
     deleted_at: null,
     status: 'pending_approval',
     ...(dateRange ? { created_at: dateRange } : {}),
     ...(filters.worker_id ? { id: filters.worker_id } : {}),
     ...(buildWorkerFocFilter(filters) ?? {}),
+    user: { is_review_account: isReviewAccount },
   };
 }
 
@@ -669,10 +780,23 @@ function buildWorkerFocFilter(filters: ReportQueryInput): Prisma.WorkerWhereInpu
   return undefined;
 }
 
-function buildPendingCompanyWhere(filters: ReportQueryInput, dateRange?: Prisma.DateTimeFilter): Prisma.CompanyWhereInput {
+function buildPendingCompanyWhere(
+  filters: ReportQueryInput,
+  dateRange?: Prisma.DateTimeFilter,
+  isReviewAccount = false,
+): Prisma.CompanyWhereInput {
   return {
     deleted_at: null,
     status: 'pending_approval',
+    user: {
+      password_set_at: { not: null },
+      is_active: true,
+      deleted_at: null,
+      is_review_account: isReviewAccount,
+      otp_codes: {
+        some: { purpose: 'company_registration', consumed_at: { not: null } },
+      },
+    },
     ...(dateRange ? { created_at: dateRange } : {}),
     ...(filters.company_id ? { id: filters.company_id } : {}),
   };

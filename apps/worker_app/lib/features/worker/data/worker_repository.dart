@@ -1,13 +1,39 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http_parser/http_parser.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/network/api_exception.dart';
+import '../../../core/network/private_document_download.dart';
+import '../../../shared/app_strings.dart';
 import '../../auth/data/models/auth_models.dart';
+import 'models/worker_rating.dart';
 
 class WorkerRepository {
   WorkerRepository({required ApiClient apiClient}) : _dio = apiClient.dio;
 
+  static const maxUploadBytes = 5 * 1024 * 1024;
+  static const _imageExtensions = {'jpg', 'jpeg', 'png', 'webp'};
+  static const _documentExtensions = {..._imageExtensions, 'pdf'};
+
   final Dio _dio;
+
+  Options _enrollmentOptions(String token) => Options(
+    headers: {'authorization': 'Bearer $token'},
+    extra: const {'enrollmentSession': true, 'skipAuthRefresh': true},
+  );
+
+  Future<WorkerMe> getEnrollmentProfile(String token) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/workers/me/enrollment',
+        options: _enrollmentOptions(token),
+      );
+      return WorkerMe.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
 
   Future<WorkerMe> getMe() async {
     try {
@@ -18,7 +44,38 @@ class WorkerRepository {
     }
   }
 
+  Future<WorkerRatingSummary> getMyRatings() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>('/ratings/me');
+      return WorkerRatingSummary.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<void> reportRating({
+    required String ratingId,
+    required String reason,
+    String? details,
+  }) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/moderation/reports',
+        data: {
+          'target_type': 'rating',
+          'target_id': ratingId,
+          'reason': reason,
+          if (details != null && details.trim().isNotEmpty)
+            'details': details.trim(),
+        },
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<WorkerMe> updateProfile({
+    String? fullName,
     required String? email,
     required List<String> positionIds,
     required List<String> skills,
@@ -32,6 +89,7 @@ class WorkerRepository {
       final response = await _dio.patch<Map<String, dynamic>>(
         '/workers/me',
         data: {
+          if (fullName != null) 'full_name': fullName.trim(),
           'email': email?.trim().isEmpty == true ? null : email?.trim(),
           if (positionIds.isNotEmpty) 'position_ids': positionIds,
           'skills': skills,
@@ -50,26 +108,30 @@ class WorkerRepository {
     }
   }
 
-  Future<void> requestPhoneChange(String phone) async {
+  Future<void> requestPhoneChange({
+    required String phone,
+    required String currentPassword,
+  }) async {
     try {
       await _dio.post<Map<String, dynamic>>(
-        '/auth/worker/phone-change/request',
-        data: {'phone': phone},
+        '/auth/worker/phone-change/v2/request',
+        data: {'phone': phone, 'current_password': currentPassword},
       );
     } catch (error) {
       throw mapDioException(error);
     }
   }
 
-  Future<void> confirmPhoneChange({
+  Future<WorkerPhoneChangeResult> confirmPhoneChange({
     required String phone,
     required String otpCode,
   }) async {
     try {
-      await _dio.post<Map<String, dynamic>>(
+      final response = await _dio.post<Map<String, dynamic>>(
         '/auth/worker/phone-change/confirm',
         data: {'phone': phone, 'otp_code': otpCode},
       );
+      return WorkerPhoneChangeResult.fromJson(response.data ?? const {});
     } catch (error) {
       throw mapDioException(error);
     }
@@ -97,46 +159,192 @@ class WorkerRepository {
     }
   }
 
-  Future<WorkerMe> uploadProfilePhoto(String path, String fileName) async {
-    return _uploadFile('/workers/me/profile-photo', path, fileName);
-  }
-
-  Future<WorkerMe> uploadDocument({
-    required String type,
-    required String path,
-    required String fileName,
-  }) async {
-    return _uploadFile('/workers/me/documents', path, fileName, type: type);
-  }
-
-  Future<WorkerMe> _uploadFile(
-    String endpoint,
-    String path,
-    String fileName, {
-    String? type,
-  }) async {
+  Future<void> deleteMyAccount() async {
     try {
-      final formData = FormData.fromMap({
-        if (type != null) 'type': type,
-        'file': await MultipartFile.fromFile(
-          path,
-          filename: fileName,
-          contentType: _mediaTypeForFile(fileName),
-        ),
-      });
-      final response = await _dio.post<Map<String, dynamic>>(
-        endpoint,
-        data: formData,
-        options: Options(contentType: 'multipart/form-data'),
+      await _dio.post<Map<String, dynamic>>(
+        '/workers/me/account-deletion-request',
+        data: const {'confirm': true},
       );
-      return WorkerMe.fromJson(response.data ?? const {});
     } catch (error) {
       throw mapDioException(error);
     }
   }
 
+  Future<WorkerMe> uploadProfilePhoto({
+    required String fileName,
+    String? path,
+    Uint8List? bytes,
+    int? fileSize,
+    ProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    return _uploadFile(
+      '/workers/me/profile-photo',
+      fileName: fileName,
+      path: path,
+      bytes: bytes,
+      fileSize: fileSize,
+      allowedExtensions: _imageExtensions,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  Future<WorkerMe> uploadDocument({
+    required String type,
+    required String fileName,
+    String? path,
+    Uint8List? bytes,
+    int? fileSize,
+    ProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+    String? enrollmentToken,
+  }) async {
+    return _uploadFile(
+      '/workers/me/documents',
+      fileName: fileName,
+      path: path,
+      bytes: bytes,
+      fileSize: fileSize,
+      allowedExtensions: _documentExtensions,
+      type: type,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+      enrollmentToken: enrollmentToken,
+    );
+  }
+
+  Future<void> deleteDocument({
+    required String type,
+    String? enrollmentToken,
+  }) async {
+    try {
+      await _dio.delete<Map<String, dynamic>>(
+        '/workers/me/documents/$type',
+        options: enrollmentToken == null
+            ? null
+            : _enrollmentOptions(enrollmentToken),
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<Uri> getDocumentDownloadUrl({
+    required String workerId,
+    required String type,
+    String? enrollmentToken,
+  }) async {
+    return requestPrivateDocumentDownload(
+      _dio,
+      path: enrollmentToken == null
+          ? '/workers/${Uri.encodeComponent(workerId)}/documents/${Uri.encodeComponent(type)}/download'
+          : '/workers/me/documents/${Uri.encodeComponent(type)}/download',
+      options: enrollmentToken == null
+          ? null
+          : _enrollmentOptions(enrollmentToken),
+    );
+  }
+
+  @visibleForTesting
+  static Uri? resolveDocumentDownloadUrl(
+    String? value, {
+    required String apiBaseUrl,
+  }) {
+    return resolvePrivateDocumentDownloadUrl(value, apiBaseUrl: apiBaseUrl);
+  }
+
+  Future<WorkerMe> _uploadFile(
+    String endpoint, {
+    required String fileName,
+    String? path,
+    Uint8List? bytes,
+    int? fileSize,
+    required Set<String> allowedExtensions,
+    String? type,
+    ProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+    String? enrollmentToken,
+  }) async {
+    try {
+      if ((path == null || path.isEmpty) && bytes == null) {
+        throw const ApiException(
+          message: AppStrings.pickFileCancelled,
+          code: 'UPLOAD_FILE_REQUIRED',
+        );
+      }
+      final extension = _extensionOf(fileName);
+      if (!allowedExtensions.contains(extension)) {
+        throw const ApiException(
+          message: AppStrings.unsupportedFileFormat,
+          code: 'UPLOAD_MIME_NOT_ALLOWED',
+        );
+      }
+      final declaredSize = bytes?.length ?? fileSize;
+      if (declaredSize != null && declaredSize > maxUploadBytes) {
+        throw const ApiException(
+          message: AppStrings.uploadFileTooLarge,
+          code: 'UPLOAD_FILE_TOO_LARGE',
+        );
+      }
+      final filePart = bytes != null
+          ? MultipartFile.fromBytes(
+              bytes,
+              filename: fileName,
+              contentType: _mediaTypeForFile(fileName),
+            )
+          : await MultipartFile.fromFile(
+              path!,
+              filename: fileName,
+              contentType: _mediaTypeForFile(fileName),
+            );
+      if (filePart.length > maxUploadBytes) {
+        throw const ApiException(
+          message: AppStrings.uploadFileTooLarge,
+          code: 'UPLOAD_FILE_TOO_LARGE',
+        );
+      }
+      final formData = FormData.fromMap({
+        if (type != null) 'type': type,
+        'file': filePart,
+      });
+      final response = await _dio.post<Map<String, dynamic>>(
+        endpoint,
+        data: formData,
+        options: Options(
+          headers: enrollmentToken == null
+              ? null
+              : {'authorization': 'Bearer $enrollmentToken'},
+          extra: enrollmentToken == null
+              ? null
+              : const {'enrollmentSession': true, 'skipAuthRefresh': true},
+          contentType: 'multipart/form-data',
+          sendTimeout: const Duration(seconds: 60),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+        onSendProgress: onSendProgress,
+        cancelToken: cancelToken,
+      );
+      return WorkerMe.fromJson(response.data ?? const {});
+    } catch (error) {
+      if (error is DioException && error.type == DioExceptionType.cancel) {
+        throw const ApiException(
+          message: AppStrings.uploadCancelled,
+          code: 'UPLOAD_CANCELLED',
+        );
+      }
+      throw mapDioException(error);
+    }
+  }
+
+  String _extensionOf(String fileName) {
+    final separator = fileName.lastIndexOf('.');
+    if (separator <= 0 || separator == fileName.length - 1) return '';
+    return fileName.substring(separator + 1).toLowerCase();
+  }
+
   MediaType _mediaTypeForFile(String fileName) {
-    final extension = fileName.split('.').last.toLowerCase();
+    final extension = _extensionOf(fileName);
     return switch (extension) {
       'jpg' || 'jpeg' => MediaType('image', 'jpeg'),
       'png' => MediaType('image', 'png'),
