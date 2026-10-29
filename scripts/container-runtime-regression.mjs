@@ -68,6 +68,72 @@ for (const [image, expected] of expectedCommands) {
   ]);
 }
 
+docker([
+  'run',
+  '--rm',
+  '--entrypoint',
+  '/nodejs/bin/node',
+  apiImage,
+  '-e',
+  `
+    const fs = require('node:fs');
+    const tool = 'dist/tools/invalidate-auth-sessions.js';
+    if (!fs.existsSync(tool) || !fs.statSync(tool).isFile()) {
+      throw new Error(tool + ' must be present in the API image');
+    }
+    for (const dependency of ['typescript', 'ts-node', 'nodemon']) {
+      try {
+        require.resolve(dependency);
+        throw new Error(dependency + ' must not be present in the API runtime image');
+      } catch (error) {
+        if (error?.code !== 'MODULE_NOT_FOUND') throw error;
+      }
+    }
+  `,
+]);
+
+const invalidatorHelp = spawnSync('docker', [
+  'run',
+  '--rm',
+  '--entrypoint',
+  '/nodejs/bin/node',
+  apiImage,
+  'dist/tools/invalidate-auth-sessions.js',
+  '--help',
+], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+assert.equal(
+  invalidatorHelp.status,
+  0,
+  `JWT invalidator --help failed: ${invalidatorHelp.stderr || invalidatorHelp.stdout}`,
+);
+assert.match(
+  `${invalidatorHelp.stdout}\n${invalidatorHelp.stderr}`,
+  /JWT_SESSION_INVALIDATOR_USAGE: node dist\/tools\/invalidate-auth-sessions\.js \[--dry-run\|--apply\]/,
+);
+
+const invalidatorWithoutApplyGate = spawnSync('docker', [
+  'run',
+  '--rm',
+  '-e',
+  'NODE_ENV=production',
+  '-e',
+  'JWT_ROTATION_CHANGE_ID=container-runtime-regression',
+  '--entrypoint',
+  '/nodejs/bin/node',
+  apiImage,
+  'dist/tools/invalidate-auth-sessions.js',
+  '--apply',
+], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+assert.notEqual(
+  invalidatorWithoutApplyGate.status,
+  0,
+  'JWT invalidator --apply must reject a missing explicit confirmation gate',
+);
+assert.match(
+  `${invalidatorWithoutApplyGate.stdout}\n${invalidatorWithoutApplyGate.stderr}`,
+  /JWT_ROTATION_CONFIRM/,
+);
+
 for (const image of [migrationImage, provisionerImage]) {
   docker([
     'run',

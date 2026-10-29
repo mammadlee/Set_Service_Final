@@ -622,6 +622,13 @@ jobs:
           setservice-migration:${{ github.sha }}
           "$POSTGRES_CI_IMAGE"
 
+      - name: Exercise JWT session invalidator against PostgreSQL 16
+        run: >-
+          node scripts/jwt-invalidator-container-regression.mjs
+          setservice-api:${{ github.sha }}
+          setservice-migration:${{ github.sha }}
+          "$POSTGRES_CI_IMAGE"
+
       - name: Exercise reviewer provisioner image against PostgreSQL 16
         run: >-
           node scripts/reviewer-provisioner-container-regression.mjs

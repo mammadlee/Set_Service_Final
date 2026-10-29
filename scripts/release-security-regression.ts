@@ -416,7 +416,8 @@ function testP0RotationControls(): void {
 
   const authMiddleware = read('src/middleware/auth.ts');
   const authService = read('src/modules/auth/auth.service.ts');
-  const rotationScript = read('scripts/invalidate-auth-sessions.ts');
+  const rotationTool = read('src/tools/invalidate-auth-sessions.ts');
+  const rotationWrapper = read('scripts/invalidate-auth-sessions.ts');
   const smsSource = read('src/lib/sms.ts');
   const uploadSource = read('src/lib/uploads.ts');
   const scannerSource = read('scripts/check-secrets.mjs');
@@ -426,9 +427,17 @@ function testP0RotationControls(): void {
   assert.match(authService, /REFRESH_TOKEN_REUSE/);
   assert.match(authService, /revokeTokenFamily/);
   assert.match(authService, /session_version: \{ increment: 1 \}/);
-  assert.match(rotationScript, /JWT_ROTATION_CONFIRM/);
-  assert.match(rotationScript, /NODE_ENV !== 'production'/);
-  assert.match(rotationScript, /revoked_reason: ROTATION_REASON/);
+  assert.match(rotationTool, /JWT_ROTATION_CONFIRM/);
+  assert.match(rotationTool, /NODE_ENV !== 'production'/);
+  assert.match(rotationTool, /revoked_reason: ROTATION_REASON/);
+  assert.match(rotationTool, /session_version: \{ increment: 1 \}/);
+  assert.match(rotationTool, /TransactionIsolationLevel\.Serializable/);
+  assert.match(rotationTool, /args\.length === 1 && args\[0\] === '--dry-run'/);
+  assert.match(rotationTool, /args\.length === 1 && args\[0\] === '--apply'/);
+  assert.match(rotationTool, /JWT_SESSION_INVALIDATOR_USAGE/);
+  assert.match(rotationWrapper, /export \* from '\.\.\/src\/tools\/invalidate-auth-sessions'/);
+  assert.match(rotationWrapper, /runAuthSessionInvalidator\(\)/);
+  assert.doesNotMatch(rotationWrapper, /updateMany|ROTATION_REASON|TransactionIsolationLevel/);
   assert.match(smsSource, /const PG365_PURPOSE = 'INF' as const/);
   assert.match(smsSource, /requiredCredentialEnv\(env, 'PG365_PRIVATE_KEY'\)/);
   assert.match(uploadSource, /requireRuntimeCredential\('S3_SECRET_ACCESS_KEY'\)/);
@@ -436,6 +445,12 @@ function testP0RotationControls(): void {
   assert.match(scannerSource, /ANDROID\|APP_STORE\|APPLE\|AWS\|CLOUDFLARE/);
   assert.match(scannerSource, /PG365/);
   assert.match(runbook, /Global session invalidation/);
+  assert.match(runbook, /ghcr\.io\/mammadlee\/setservice-api@sha256:<approved-api-digest>/);
+  assert.match(runbook, /docker run --rm --pull never/);
+  assert.match(runbook, /--read-only --tmpfs \/tmp:size=64m,mode=1777/);
+  assert.match(runbook, /--cap-drop ALL --security-opt no-new-privileges:true/);
+  assert.match(runbook, /must never run automatically/);
+  assert.doesNotMatch(runbook, /run --rm --no-deps --no-build/);
   assert.match(runbook, /bucket private/i);
   assert.match(runbook, /Rollback plan/);
 }

@@ -83,6 +83,19 @@ assert.match(workflow, /Immutable release tag already exists with a different di
 assert.match(workflow, /\.tag = \$tag/);
 assert.match(
   workflow,
+  /api_ref="\$\(jq -er 'select\(\.target == "api"\) \| \.immutable_ref' "\$\{fragments\[@\]\}"\)"/,
+);
+assert.match(
+  workflow,
+  /node scripts\/jwt-invalidator-container-regression\.mjs[\s\S]*"\$api_ref"[\s\S]*"\$migration_ref"[\s\S]*"\$POSTGRES_CI_IMAGE"/,
+);
+assert.ok(
+  workflow.indexOf('node scripts/jwt-invalidator-container-regression.mjs') <
+    workflow.indexOf('Promote verified digests to immutable release tags'),
+  'JWT invalidator regression must pass before immutable release-tag promotion',
+);
+assert.match(
+  workflow,
   /node scripts\/reviewer-provisioner-container-regression\.mjs[\s\S]*"\$POSTGRES_CI_IMAGE"/,
 );
 for (const approvedImage of [

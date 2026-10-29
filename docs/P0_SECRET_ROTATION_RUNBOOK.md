@@ -34,23 +34,59 @@ JWT secrets must be independent 256-bit random values encoded as base64url (43 c
 
 1. Create new, independent `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` secret versions.
 2. Deploy the new versions to every API and outbox worker instance. Do not leave an old instance serving traffic.
-3. Run the read-only scope preview:
+3. Confirm the replacement secrets are active on every instance and API/outbox health checks pass. Select the signed API digest from the approved release manifest, confirm that exact image is already present, and confirm the existing egress network without rendering configuration values:
 
-   ```text
-   npm run security:jwt-rotation
+   ```bash
+   readonly SETSERVICE_ENV=/opt/set-service/.env
+   readonly API_IMAGE='ghcr.io/mammadlee/setservice-api@sha256:<approved-api-digest>'
+   docker image inspect "${API_IMAGE}" >/dev/null
+   docker network inspect set-service_egress >/dev/null
    ```
 
-4. Set `NODE_ENV=production`, `JWT_ROTATION_CONFIRM=INVALIDATE_ALL_SESSIONS`, and the change-record value in `JWT_ROTATION_CHANGE_ID`; then run:
+4. Run the compiled invalidator from that exact API image in preview mode. This is a hardened one-off container command; it is not part of the API or outbox startup command and it must never run automatically. `--pull never` prevents this step from substituting another image:
 
-   ```text
-   npm run security:jwt-rotation -- --apply
+   ```bash
+   docker run --rm --pull never \
+     --network set-service_egress \
+     --read-only --tmpfs /tmp:size=64m,mode=1777 \
+     --cap-drop ALL --security-opt no-new-privileges:true \
+     --env-file "${SETSERVICE_ENV}" -e NODE_ENV=production \
+     --entrypoint /nodejs/bin/node \
+     "${API_IMAGE}" dist/tools/invalidate-auth-sessions.js --dry-run
    ```
 
-5. Verify that protected requests with pre-rotation access tokens fail and that pre-rotation refresh tokens cannot rotate.
-6. Verify a fresh login, refresh, and logout. A stale logout request can return an invalid-token response because the old refresh signature is no longer accepted; the database family has already been revoked.
-7. Verify registration resumes with a newly issued registration token. Pre-rotation registration tokens are intentionally invalid because they use the access secret and `session_version` check.
+5. In the restricted operator shell, set the non-secret change-record identifier, then apply exactly once with both explicit gates. The replacement JWT secrets remain injected through the existing Compose environment; never place them in this command or shell history:
+
+   ```bash
+   read -r -p 'Non-secret JWT rotation change ID: ' JWT_ROTATION_CHANGE_ID
+   test -n "${JWT_ROTATION_CHANGE_ID}"
+   docker run --rm --pull never \
+     --network set-service_egress \
+     --read-only --tmpfs /tmp:size=64m,mode=1777 \
+     --cap-drop ALL --security-opt no-new-privileges:true \
+     --env-file "${SETSERVICE_ENV}" -e NODE_ENV=production \
+     -e JWT_ROTATION_CONFIRM=INVALIDATE_ALL_SESSIONS \
+     -e "JWT_ROTATION_CHANGE_ID=${JWT_ROTATION_CHANGE_ID}" \
+     --entrypoint /nodejs/bin/node \
+     "${API_IMAGE}" dist/tools/invalidate-auth-sessions.js --apply
+   unset JWT_ROTATION_CHANGE_ID
+   ```
+
+6. Verify that protected requests with pre-rotation access tokens fail and that pre-rotation refresh tokens cannot rotate.
+7. Verify a fresh login, refresh, and logout. A stale logout request can return an invalid-token response because the old refresh signature is no longer accepted; the database family has already been revoked.
+8. Verify registration resumes with a newly issued registration token. Pre-rotation registration tokens are intentionally invalid because they use the access secret and `session_version` check.
 
 The apply operation uses one serializable transaction: every user `session_version` is incremented and every active refresh token is revoked with reason `security_rotation`. Existing refresh reuse detection and per-family logout revoke behavior remain unchanged.
+After `--apply`, keep the replacement secrets and require fresh login. Do not restore the archived pre-rotation `.env`, decrement `session_version`, or un-revoke refresh tokens.
+
+If the historical-secret gate prevents the signed API digest from being published
+while the JWT identity is still open, first replace the signing secrets in the
+currently deployed services and prove that old tokens fail and fresh
+authentication succeeds. That cryptographic replacement evidence may close the
+historical JWT identity; it does not waive database invalidation. After every
+historical identity is legitimately closed and the signed API digest becomes
+available, run the one-off invalidator immediately and before database migration
+or application rollout.
 
 ## PG365 credential migration
 

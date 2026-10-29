@@ -476,13 +476,18 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
-      - name: Verify provisioner and migration images on PostgreSQL 16
+      - name: Verify one-off production tools on PostgreSQL 16
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t fragments < <(find release-artifacts -maxdepth 1 -name '*.fragment.json' -type f | sort)
+          api_ref="$(jq -er 'select(.target == "api") | .immutable_ref' "${fragments[@]}")"
           provisioner_ref="$(jq -er 'select(.target == "reviewer-provisioner") | .immutable_ref' "${fragments[@]}")"
           migration_ref="$(jq -er 'select(.target == "migration") | .immutable_ref' "${fragments[@]}")"
+          node scripts/jwt-invalidator-container-regression.mjs \
+            "$api_ref" \
+            "$migration_ref" \
+            "$POSTGRES_CI_IMAGE"
           node scripts/reviewer-provisioner-container-regression.mjs \
             "$provisioner_ref" \
             "$migration_ref" \
