@@ -759,7 +759,10 @@ jobs:
 
       - name: Build debug APK
         working-directory: apps/worker_app
-        run: flutter build apk --debug
+        # This is a CI smoke artifact, not the Play release bundle. Restrict it
+        # to the production Android ABI so packaging does not depend on the
+        # runner's deprecated x86 Android toolchain.
+        run: flutter build apk --debug --target-platform android-arm64
 
       - name: Verify Android release signing fails closed without credentials
         working-directory: apps/worker_app

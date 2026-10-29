@@ -238,6 +238,10 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /Missing required Android release configuration/);
   assert.doesNotMatch(workflowText, /built=false|Signed AAB skipped/);
   assert.match(workflowText, /flutter build web --release/);
+  assert.match(
+    workflowText,
+    /flutter build apk --debug --target-platform android-arm64/,
+  );
   assert.match(workflowText, /flutter build appbundle --release/);
   assert.match(workflowText, /flutter build ios --release --no-codesign/);
   assert.equal((workflowText.match(/flutter-version: 3\.32\.6/g) ?? []).length, 2);
