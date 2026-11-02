@@ -14,19 +14,21 @@ across historical configuration and deployment documents:
 - 4 private-key markers;
 - 3 R2 account-endpoint markers.
 
-The evidence ledger resolves 54 exact synthetic matches and the 3 exact R2
-account-endpoint metadata matches. The remaining 42 matches across 11
+The evidence ledger resolves 72 exact synthetic matches and the 3 exact R2
+account-endpoint metadata matches. The remaining 24 matches across 6
 credential identities continue to block the full-history gate.
 
 The unresolved categories are authentication material (legacy JWT and QR),
-database and Redis connection credentials, object-storage credentials, and
-SMS and email provider credentials. The Firebase-like private-key fragments
-are verified synthetic documentation examples. Other matches cannot be proven
-inactive from Git alone, so treat every unverified match as potentially active.
+database and Redis connection credentials, and one structurally plausible R2
+credential pair. The Firebase-like private-key fragments and the cross-provider
+placeholder groups documented below are verified synthetic examples. Other
+matches cannot be proven inactive from Git alone, so treat every unverified
+match as potentially active.
 
 ## Verified synthetic findings
 
-The 54 entries below are documentation-only synthetic values. Their exact
+The 54 entries below are explicit documentation-only synthetic values. Another
+18 findings are resolved by the cross-provider placeholder triage below. Their exact
 commit/path/line/rule coordinates are mirrored in
 `config/historical-secret-evidence.json`; the scanner may reconcile only those
 exact coordinates. This is not a value-based allowlist and it stores no value,
@@ -104,6 +106,34 @@ The evidence rules are deliberately narrow:
 | `3cf9b7c72bd30e16e2b07ef7c89852ce41082c14` | `STAGING_DEPLOYMENT.md` | 52 | `literal-secret-assignment` | explicit marker |
 | `3cf9b7c72bd30e16e2b07ef7c89852ce41082c14` | `STAGING_DEPLOYMENT.md` | 53 | `literal-secret-assignment` | explicit marker |
 
+## Cross-provider placeholder triage
+
+The following 18 findings are classified as `synthetic`, not `revoked` or
+`never-issued`. This classification is based on exact source context and
+credential structure without storing or reporting any value, URL, identifier,
+hash, or fingerprint:
+
+| Identity | Findings | Non-secret evidence |
+| --- | ---: | --- |
+| `R2-PAIR-2` | 8 | In `ENV_SETUP.md`, one 15-character scalar is assigned as both access ID and secret in separate generic S3 and Cloudflare R2 examples, and the same scalar is reused for unrelated SMS and email API-key fields. It matches neither the documented AWS S3 20/40 form nor Cloudflare R2's token-ID/SHA-256 derivation. |
+| `R2-PAIR-3` | 4 | In the generic object-storage example in `PRODUCTION_READINESS.md`, one 24-character scalar is assigned as both access ID and secret and is also reused as the SMS API-key example. It matches neither provider issuance model. The source does not establish a Cloudflare provider. |
+| `SMS-1` | 2 | The generic HTTP SMS example reuses the exact `R2-PAIR-3` documentation scalar; the same document states that provider onboarding and payload mapping are pending. |
+| `SMS-2` | 2 | The generic HTTP SMS example reuses the exact `R2-PAIR-2` documentation scalar across six unrelated authentication fields. |
+| `EMAIL-1` | 2 | The generic HTTP email example reuses the exact `R2-PAIR-2` documentation scalar across six unrelated authentication fields. |
+
+Primary format evidence:
+
+- Cloudflare documents that an R2 Access Key ID is the API-token ID and the
+  Secret Access Key is derived as the SHA-256 hash of the token value:
+  <https://developers.cloudflare.com/r2/api/tokens/>.
+- AWS documents the S3 account access-key examples as a 20-character access ID
+  and a 40-character secret:
+  <https://docs.aws.amazon.com/AmazonS3/latest/developerguide/MakingRequests.html#AboutAccessKeys>.
+
+These findings therefore need no provider inventory check. Current production
+R2, SMS, and email credentials remain separate deployment secrets and are not
+classified or exposed by this triage.
+
 ## Verified non-secret provider metadata
 
 The three `R2-ACCOUNT-1` occurrences are standard Cloudflare R2 S3 endpoint
@@ -115,20 +145,19 @@ authentication. These exact three coordinates are therefore classified as
 Provider evidence:
 <https://developers.cloudflare.com/r2/get-started/s3/#2-generate-api-credentials>
 
-The remaining 42 findings are deliberately excluded from the resolved set:
-six public database/direct URLs with embedded authentication, eighteen R2
-access key ID/secret access key occurrences, six Redis URLs with embedded
-authentication, four SMS API keys, two email API keys, and six opaque legacy
-JWT/QR values. GitHub repository metadata contains the four immutable CI image
-variables but no production provider-secret inventory. Therefore all 42 remain
+The remaining 24 findings are deliberately excluded from the resolved set:
+six database/direct URLs with embedded authentication, six structurally
+plausible R2 access-key occurrences, six Redis URLs with embedded
+authentication, and six opaque legacy JWT/QR values. GitHub repository metadata
+contains the four immutable CI image variables but no production provider-secret
+inventory. Therefore all 24 remain
 `active or status unknown` until an authorized operator completes the provider
 and production secret-manager comparison.
 
-They are recorded under 11 non-sensitive aliases (`DB-1`, `R2-PAIR-1` through
-`R2-PAIR-3`, `REDIS-1`, `REDIS-2`, `SMS-1`, `SMS-2`, `EMAIL-1`,
-`JWT-LEGACY-1`, and `QR-HMAC-1`). These aliases group duplicate historical
-occurrences without recording the underlying credential value or a reusable
-fingerprint.
+They are recorded under 6 non-sensitive aliases (`DB-1`, `R2-PAIR-1`,
+`REDIS-1`, `REDIS-2`, `JWT-LEGACY-1`, and `QR-HMAC-1`). These aliases group
+duplicate historical occurrences without recording the underlying credential
+value or a reusable fingerprint.
 
 ## Required inventory gate
 
@@ -144,16 +173,16 @@ value. Record only one of these outcomes for each category:
 
 | Identity | Findings | Classification | Required non-secret confirmation |
 | --- | ---: | --- | --- |
-| `DB-1` | 6 | authentication credential in Neon database/direct URLs | Privately map project and role, then provide `never-issued` evidence or the credential rotation/revocation timestamp and change record. |
+| `DB-1` | 6 | **Unknown/blocked.** Valid PostgreSQL URLs with a single-label internal hostname; repository evidence does not support the previous Neon attribution. | Privately map the historical host/role to its actual environment and provide deletion/reset/`never-issued` evidence. The production `NO_MATCH` result proves only that it is not current. |
 | `R2-ACCOUNT-1` | 3 | non-secret Cloudflare R2 account endpoint metadata | **Verified** from the provider documentation linked above; no credential-status action. |
-| `R2-PAIR-1` | 6 | Cloudflare R2 Access Key ID/Secret Access Key pair | Privately map the provider token, then provide `never-issued` evidence or revocation timestamp and change record. |
-| `R2-PAIR-2` | 8 | Cloudflare R2 Access Key ID/Secret Access Key pair | Same Cloudflare token-inventory confirmation; it may share a change record only if the provider inventory proves the same identity. |
-| `R2-PAIR-3` | 4 | Cloudflare R2 Access Key ID/Secret Access Key pair | Same Cloudflare token-inventory confirmation; do not infer identity from naming or documentation location. |
-| `REDIS-1` | 4 | authentication credential in Redis URLs | Privately identify provider, instance, and user; provide `never-issued` evidence or credential rotation/revocation timestamp and change record. |
-| `REDIS-2` | 2 | authentication credential in a Redis URL | Perform an independent Redis inventory match; do not assume it is the same credential as `REDIS-1`. |
-| `SMS-1` | 2 | SMS provider API key | Identify provider/account privately and provide key status plus `never-issued` or revocation evidence. |
-| `SMS-2` | 2 | SMS provider API key | Perform an independent provider inventory match; do not assume it is the same key as `SMS-1`. |
-| `EMAIL-1` | 2 | email provider API key | Identify provider/account privately and provide key status plus `never-issued` or revocation evidence. |
+| `R2-PAIR-1` | 6 | **Unknown/blocked.** Structurally plausible Cloudflare R2 Access Key ID/Secret Access Key pair with no unrelated-key duplication. | Privately map the Cloudflare token and provide `never-issued` evidence or revocation timestamp and change record. |
+| `R2-PAIR-2` | 8 | **Synthetic documentation.** Cross-provider duplicate and incompatible credential structure. | No provider check for these historical documentation occurrences. |
+| `R2-PAIR-3` | 4 | **Synthetic documentation.** Generic object-storage duplicate; Cloudflare attribution was unsupported. | No provider check for these historical documentation occurrences. |
+| `REDIS-1` | 4 | **Unknown/blocked.** Valid Redis URL with an internal single-label hostname; could have authenticated an internal deployment. | Privately identify the historical instance/user and provide reset/deletion/`never-issued` evidence. |
+| `REDIS-2` | 2 | **Unknown/blocked.** Staging context and password reuse with `DB-1` are strong placeholder signals but do not prove non-use. | Perform an independent historical staging Redis inventory match; do not merge it with `REDIS-1`. |
+| `SMS-1` | 2 | **Synthetic documentation.** Exact cross-provider duplicate described above. | No provider check for these historical documentation occurrences. |
+| `SMS-2` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
+| `EMAIL-1` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
 | `JWT-LEGACY-1` | 3 | internal JWT signing secret | Equality-check only inside the secret manager against every accepted key; if previously active, provide replacement rollout, session invalidation/expiry, timestamp, and change record. |
 | `QR-HMAC-1` | 3 | internal QR signing secret | Equality-check only against every accepted QR key; if previously active, provide replacement rollout and proof the maximum QR lifetime elapsed. |
 
@@ -173,19 +202,18 @@ must not be added through any permitted metadata field.
 
 ## Rotation order
 
-1. Create replacement R2/S3 credentials with the minimum required permissions.
-   Deploy and verify them, then revoke the historical credentials.
-2. Rotate SMS and email provider credentials and verify only controlled test
-   delivery. Revoke the previous provider credentials.
-3. Create new database and Redis credentials, perform a rolling cutover, verify
+1. If `R2-PAIR-1` is present or cannot be disproven, create a bucket-scoped
+   replacement, verify it, and then revoke the historical credential.
+2. Create new database and Redis credentials where the historical identities
+   are present or cannot be disproven, perform a rolling cutover, verify
    application health, and then revoke the previous credentials. Do not expose
    connection strings in command output.
-4. Rotate JWT access and refresh secrets together. Increment/revoke application
+3. Rotate JWT access and refresh secrets together. Increment/revoke application
    sessions so tokens signed by a historical key cannot remain valid. Expect
    users to sign in again.
-5. Rotate the QR HMAC secret after the maximum QR lifetime has elapsed. Existing
+4. Rotate the QR HMAC secret after the maximum QR lifetime has elapsed. Existing
    short-lived QR tokens may be invalidated during the maintenance window.
-6. Re-run the current-tree and full-history scanners. A history match may remain
+5. Re-run the current-tree and full-history scanners. A history match may remain
    until history cleanup, but every operational credential it represented must
    already be revoked.
 
