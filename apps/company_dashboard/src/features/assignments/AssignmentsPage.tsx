@@ -16,7 +16,7 @@ import {
 import { StatusBadge } from "../../shared/components/StatusBadge";
 import { useAsync } from "../../shared/hooks/useAsync";
 import { appStrings, statusLabel } from "../../shared/i18n/appStrings";
-import { normalizeDocuments } from "../../shared/utils/documents";
+import { documentStatusLabel, normalizeDocuments, openPrivateDocument, type DisplayDocument } from "../../shared/utils/documents";
 import { formatDateTime } from "../../shared/utils/format";
 import { attendanceService } from "../attendance/attendance.service";
 import { workersService } from "../workers/workers.service";
@@ -466,17 +466,44 @@ function WorkerProfileModal({
           <p className="muted">{appStrings.workerProfile.noDocuments}</p>
         ) : (
           <div className="document-list">
-            {documents.map((document, index) => (
-              <div className="document-row" key={`${document.type}-${index}`}>
-                <span>{document.name || document.type}</span>
-                <a href={document.url} target="_blank" rel="noreferrer">
-                  {appStrings.view}
-                </a>
-              </div>
+            {documents.map((document) => (
+              <WorkerDocumentItem key={`${profile.id}-${document.type}`} workerId={profile.id} document={document} />
             ))}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function WorkerDocumentItem({ workerId, document }: { workerId: string; document: DisplayDocument }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function openDocument() {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await openPrivateDocument(() => workersService.documentUrl(workerId, document.type));
+    } catch (failure) {
+      setError(getErrorMessage(failure));
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <div className="document-row">
+      <div>
+        <strong>Sağlamlıq arayışı</strong>
+        {document.name ? <p className="muted">{document.name}</p> : null}
+        <p className="muted">{documentStatusLabel(document)}</p>
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
+      </div>
+      {document.canDownload ? (
+        <button className="btn secondary" type="button" disabled={loading} onClick={() => void openDocument()}>
+          {loading ? 'Açılır…' : appStrings.view}
+        </button>
+      ) : null}
     </div>
   );
 }

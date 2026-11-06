@@ -1,3 +1,5 @@
+import { APP_TIME_ZONE } from '../api/config';
+
 export function formatDateTime(value?: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
@@ -9,6 +11,7 @@ export function formatDateTime(value?: string | null): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: APP_TIME_ZONE,
   }).format(date);
 }
 

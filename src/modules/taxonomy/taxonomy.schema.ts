@@ -10,7 +10,7 @@ const optionalTrimmedString = (max: number) =>
 
 const updateNameAz = z
   .string({
-    invalid_type_error: 'Azərbaycan adı mətn olmalıdır.',
+    error: 'Azərbaycan adı mətn olmalıdır.',
   })
   .trim()
   .min(1, 'Azərbaycan adı boş ola bilməz.')
@@ -21,7 +21,7 @@ const updateNameEn = z.preprocess(
   (value) => (typeof value === 'string' ? value.trim() : value),
   z
     .string({
-      invalid_type_error: 'İngilis adı mətn olmalıdır.',
+      error: 'İngilis adı mətn olmalıdır.',
     })
     .max(160, 'İngilis adı 160 simvoldan çox ola bilməz.')
     .nullable()
@@ -39,7 +39,7 @@ const updateStatus = z.preprocess(
   TaxonomyStatusSchema.optional()
 );
 
-const optionalBoolean = z.boolean({ invalid_type_error: 'Aktivlik dəyəri boolean olmalıdır.' }).optional();
+const optionalBoolean = z.boolean({ error: 'Aktivlik dəyəri boolean olmalıdır.' }).optional();
 
 function firstDefined<T>(...values: Array<T | undefined>): T | undefined {
   return values.find((value) => value !== undefined);

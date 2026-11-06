@@ -1,15 +1,17 @@
 const DEV_BASE_URL = 'http://localhost:3000';
 const DEV_KIOSK_BASE_URL = 'http://localhost:5174';
+const DEFAULT_TIME_ZONE = 'Asia/Baku';
 
 export const API_BASE_URL = resolveApiBaseUrl();
 export const KIOSK_BASE_URL = resolveKioskBaseUrl();
+export const APP_TIME_ZONE = resolveTimeZone();
 
 function resolveApiBaseUrl(): string {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 
   if (!configuredUrl) {
     if (import.meta.env.PROD) {
-      throw new Error('Admin panel üçün VITE_API_BASE_URL production mühitində mütləq verilməlidir.');
+      throw new Error('Admin paneli üçün VITE_API_BASE_URL canlı mühitdə mütləq verilməlidir.');
     }
     return appendApiVersion(DEV_BASE_URL);
   }
@@ -19,15 +21,21 @@ function resolveApiBaseUrl(): string {
   try {
     parsed = new URL(normalized);
   } catch {
-    throw new Error('Admin panel API ünvanı düzgün URL deyil.');
+    throw new Error('Admin panelinin API ünvanı düzgün URL deyil.');
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Admin panel API ünvanı http və ya https ilə başlamalıdır.');
+    throw new Error('Admin panelinin API ünvanı HTTP və ya HTTPS ilə başlamalıdır.');
   }
 
-  if (import.meta.env.PROD && isLocalhost(parsed.hostname)) {
-    throw new Error('Production admin panel localhost API ünvanı ilə işləyə bilməz.');
+  if (import.meta.env.PROD && parsed.protocol !== 'https:') {
+    throw new Error('Canlı mühitdə admin panelinin API ünvanı HTTPS istifadə etməlidir.');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('Admin panelinin API ünvanında giriş məlumatları, sorğu sətri və ya fraqment olmamalıdır.');
+  }
+  if (import.meta.env.PROD && isPrivateOrLocalHostname(parsed.hostname)) {
+    throw new Error('Canlı mühitdə admin paneli localhost API ünvanı ilə işləyə bilməz.');
   }
 
   return appendApiVersion(normalized);
@@ -38,8 +46,14 @@ function appendApiVersion(baseUrl: string): string {
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
 }
 
-function isLocalhost(hostname: string): boolean {
-  return ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(hostname);
+function resolveTimeZone(): string {
+  const value = import.meta.env.VITE_APP_TIME_ZONE?.trim() || DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat('az-Latn-AZ', { timeZone: value }).format(new Date(0));
+    return value;
+  } catch {
+    throw new Error('Admin panelinin VITE_APP_TIME_ZONE dəyəri düzgün IANA saat qurşağı deyil.');
+  }
 }
 
 function resolveKioskBaseUrl(): string {
@@ -47,7 +61,7 @@ function resolveKioskBaseUrl(): string {
 
   if (!configuredUrl) {
     if (import.meta.env.PROD) {
-      throw new Error('Admin panel üçün VITE_KIOSK_BASE_URL production mühitində mütləq verilməlidir.');
+      throw new Error('Admin paneli üçün VITE_KIOSK_BASE_URL canlı mühitdə mütləq verilməlidir.');
     }
     return DEV_KIOSK_BASE_URL;
   }
@@ -61,18 +75,67 @@ function resolveKioskBaseUrl(): string {
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('QR kiosk ünvanı http və ya https ilə başlamalıdır.');
+    throw new Error('QR kiosk ünvanı HTTP və ya HTTPS ilə başlamalıdır.');
   }
 
-  if (import.meta.env.PROD && isLocalhost(parsed.hostname)) {
-    throw new Error('Production admin panel localhost QR kiosk ünvanı ilə işləyə bilməz.');
+  if (import.meta.env.PROD && parsed.protocol !== 'https:') {
+    throw new Error('Canlı mühitdə QR kiosk ünvanı HTTPS istifadə etməlidir.');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('QR kiosk ünvanında giriş məlumatları, sorğu sətri və ya fraqment olmamalıdır.');
+  }
+  if (import.meta.env.PROD && isPrivateOrLocalHostname(parsed.hostname)) {
+    throw new Error('Canlı mühitdə admin paneli localhost QR kiosk ünvanı ilə işləyə bilməz.');
   }
 
   return normalized;
 }
 
 export function resolveKioskUrl(kioskUrl: string): string {
-  if (/^https?:\/\//i.test(kioskUrl)) return kioskUrl;
+  if (/^https?:\/\//i.test(kioskUrl)) {
+    const resolved = new URL(kioskUrl);
+    if (resolved.origin !== new URL(KIOSK_BASE_URL).origin) {
+      throw new Error('QR kiosk ünvanı konfiqurasiyada göstərilən mənbə ilə uyğun gəlmir.');
+    }
+    return resolved.toString();
+  }
   const cleanPath = kioskUrl.startsWith('/') ? kioskUrl : `/${kioskUrl}`;
   return `${KIOSK_BASE_URL}${cleanPath}`;
+}
+
+function isPrivateOrLocalHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (
+    hostname === 'localhost' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.localdomain')
+  ) {
+    return true;
+  }
+  if (hostname.includes(':')) {
+    return (
+      hostname === '::' ||
+      hostname === '::1' ||
+      hostname.startsWith('::ffff:') ||
+      /^(fc|fd|fe[89ab])/.test(hostname)
+    );
+  }
+
+  const octets = hostname.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [first, second] = octets;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    first >= 224
+  );
 }

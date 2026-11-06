@@ -5,10 +5,10 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../router/app_routes.dart';
 import '../session/app_role.dart';
 import '../session/role_session_controller.dart';
 import '../../shared/app_strings.dart';
+import 'push_deep_link.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -28,6 +28,7 @@ class PushNotificationService {
   GlobalKey<NavigatorState>? _navigatorKey;
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _tapSubscription;
+  RemoteMessage? _pendingInitialMessage;
 
   Stream<String> get onTokenRefresh =>
       _messaging?.onTokenRefresh ?? const Stream<String>.empty();
@@ -57,9 +58,26 @@ class PushNotificationService {
       _handleNotificationTap,
     );
 
-    final initialMessage = await _messaging?.getInitialMessage();
-    if (initialMessage != null) {
-      scheduleMicrotask(() => _handleNotificationTap(initialMessage));
+    try {
+      _pendingInitialMessage = await _messaging?.getInitialMessage();
+    } catch (_) {
+      debugPrint(AppStrings.firebaseNotConfigured);
+    }
+  }
+
+  Future<void> handlePendingInitialMessage() async {
+    final message = _pendingInitialMessage;
+    if (message == null) return;
+
+    // The initial message can arrive before MaterialApp has attached its
+    // NavigatorState. Give the first route a short, bounded window to mount.
+    for (var attempt = 0; attempt < 5; attempt += 1) {
+      if (_navigatorKey?.currentState != null) {
+        _pendingInitialMessage = null;
+        _handleNotificationTap(message);
+        return;
+      }
+      await Future<void>.delayed(Duration(milliseconds: 150 * (attempt + 1)));
     }
   }
 
@@ -67,12 +85,17 @@ class PushNotificationService {
     if (!_available) return null;
     final messaging = _messaging;
     if (messaging == null) return null;
-    final settings = await messaging.requestPermission();
-    final allowed =
-        settings.authorizationStatus == AuthorizationStatus.authorized ||
-        settings.authorizationStatus == AuthorizationStatus.provisional;
-    if (!allowed) return null;
-    return messaging.getToken();
+    try {
+      final settings = await messaging.requestPermission();
+      final allowed =
+          settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+      if (!allowed) return null;
+      return await messaging.getToken();
+    } catch (_) {
+      debugPrint(AppStrings.firebaseNotConfigured);
+      return null;
+    }
   }
 
   Future<String?> currentToken() async {
@@ -138,20 +161,16 @@ class PushNotificationService {
     final navigator = _navigatorKey?.currentState;
     if (navigator == null) return;
 
-    final assignmentId = message.data['assignment_id'];
-    final role = message.data['role'];
     final activeRole = _activeRole();
-    if (assignmentId is String && assignmentId.isNotEmpty && role == 'worker') {
-      if (activeRole != AppRole.worker) return;
-      try {
-        navigator.pushNamed(
-          AppRoutes.assignmentDetail,
-          arguments: assignmentId,
-        );
-      } catch (_) {
-        // Notification payloads are external input; incomplete navigation data
-        // must never crash the app.
-      }
+    if (activeRole == null) return;
+    final deepLink = resolvePushDeepLink(message.data, activeRole);
+    if (deepLink == null) return;
+
+    try {
+      navigator.pushNamed(deepLink.routeName, arguments: deepLink.argument);
+    } catch (_) {
+      // Notification payloads are external input; incomplete navigation data
+      // must never crash the app.
     }
   }
 

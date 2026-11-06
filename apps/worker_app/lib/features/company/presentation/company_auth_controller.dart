@@ -1,26 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/push/push_registration_service.dart';
+import '../../../core/session/session_coordinator.dart';
 import '../../../shared/app_strings.dart';
 import '../data/company_repository.dart';
 
 class CompanyAuthController extends ChangeNotifier {
-  CompanyAuthController(this._repository, this._pushRegistrationService);
+  CompanyAuthController(
+    this._repository,
+    this._pushRegistrationService,
+    this._sessionCoordinator,
+  ) {
+    _sessionInvalidationSubscription = _sessionCoordinator.invalidations
+        .where((event) => event.sessionKey == 'company')
+        .listen(_handleSessionInvalidation);
+  }
 
   final CompanyRepository _repository;
   final PushRegistrationService _pushRegistrationService;
+  final SessionCoordinator _sessionCoordinator;
+  late final StreamSubscription<SessionInvalidation>
+  _sessionInvalidationSubscription;
 
   CompanyAuthState state = CompanyAuthState.splash;
   String? pendingPhone;
   String? pendingEmail;
   String? pendingOtpCode;
   String? pendingOtpChallenge;
+  String? enrollmentToken;
   CompanyPendingOtpPurpose? pendingPurpose;
   String? blockedStatus;
   String? errorMessage;
   String? successMessage;
   String? companyName;
+  String? companyProfileId;
   bool isSubmitting = false;
   bool _disposed = false;
 
@@ -32,6 +48,8 @@ class CompanyAuthController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_sessionInvalidationSubscription.cancel());
+    unawaited(_pushRegistrationService.dispose());
     super.dispose();
   }
 
@@ -41,6 +59,7 @@ class CompanyAuthController extends ChangeNotifier {
 
     if (!await _repository.hasStoredTokens()) {
       state = CompanyAuthState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
       return;
     }
@@ -48,18 +67,55 @@ class CompanyAuthController extends ChangeNotifier {
     try {
       final me = await _repository.getMe();
       companyName = me.name;
+      companyProfileId = me.id;
       state = me.status == 'approved'
           ? CompanyAuthState.authenticated
           : _blockedState(me.status);
+      _notifySessionState(
+        state == CompanyAuthState.authenticated
+            ? SessionState.authenticated
+            : SessionState.blocked,
+      );
     } on ApiException catch (error) {
-      if (!_applyApprovalError(error)) {
+      if (_applyApprovalError(error)) {
+        await _repository.clearLocalSession();
+        _notifySessionState(SessionState.blocked, code: error.code);
+      } else if (isTerminalSessionErrorCode(error.code)) {
         await _repository.clearLocalSession();
         state = CompanyAuthState.unauthenticated;
+      } else {
+        state = CompanyAuthState.authenticated;
+        errorMessage = error.message;
+        _notifySessionState(SessionState.offlineAuthenticated);
       }
     } catch (_) {
-      await _repository.clearLocalSession();
-      state = CompanyAuthState.unauthenticated;
+      state = CompanyAuthState.authenticated;
+      errorMessage = AppStrings.unknownError;
+      _notifySessionState(SessionState.offlineAuthenticated);
     }
+    notifyListeners();
+  }
+
+  void _handleSessionInvalidation(SessionInvalidation event) {
+    pendingPhone = null;
+    pendingEmail = null;
+    pendingOtpCode = null;
+    pendingOtpChallenge = null;
+    enrollmentToken = null;
+    pendingPurpose = null;
+    blockedStatus = null;
+    companyName = null;
+    companyProfileId = null;
+    successMessage = null;
+    errorMessage = AppStrings.backendError(code: event.code);
+    state = CompanyAuthState.unauthenticated;
+    notifyListeners();
+  }
+
+  void clearTransientMessages() {
+    if (errorMessage == null && successMessage == null) return;
+    errorMessage = null;
+    successMessage = null;
     notifyListeners();
   }
 
@@ -70,12 +126,20 @@ class CompanyAuthController extends ChangeNotifier {
     required String phone,
   }) async {
     await _submit(() async {
-      await _repository.registerCompany(
+      final registration = await _repository.registerCompany(
         name: name,
         contactName: contactName,
         email: email,
         phone: phone,
       );
+      final token = registration.enrollmentToken?.trim();
+      if (token == null || token.isEmpty) {
+        throw const ApiException(
+          message: 'Qeydiyyat sessiyası yaradılmadı. Yenidən cəhd edin.',
+          code: 'COMPANY_ENROLLMENT_TOKEN_MISSING',
+        );
+      }
+      enrollmentToken = token;
       pendingPhone = phone;
       pendingEmail = email;
       pendingPurpose = CompanyPendingOtpPurpose.registration;
@@ -93,7 +157,9 @@ class CompanyAuthController extends ChangeNotifier {
         password: password,
       );
       companyName = session.user.name;
+      companyProfileId = session.user.company?.id;
       state = CompanyAuthState.authenticated;
+      _notifySessionState(SessionState.authenticated);
     });
   }
 
@@ -131,21 +197,25 @@ class CompanyAuthController extends ChangeNotifier {
 
     await _submit(() async {
       if (pendingPurpose == CompanyPendingOtpPurpose.registration) {
-        if (email == null || email.isEmpty) {
+        final token = enrollmentToken;
+        if (email == null || email.isEmpty || token == null || token.isEmpty) {
           errorMessage = AppStrings.otpSessionExpired;
           state = CompanyAuthState.unauthenticated;
           return;
         }
         await _repository.completeCompanyRegistration(
-          email: email,
+          enrollmentToken: token,
           otpCode: otpCode,
           otpChallenge: otpChallenge,
           password: password,
         );
         pendingOtpCode = null;
         pendingOtpChallenge = null;
+        enrollmentToken = null;
+        blockedStatus = 'pending_approval';
+        errorMessage = null;
         state = CompanyAuthState.pendingApproval;
-        errorMessage = AppStrings.companyPendingApprovalMessage;
+        _notifySessionState(SessionState.blocked, code: 'PENDING_APPROVAL');
         return;
       }
       if (email == null && phone == null) {
@@ -203,6 +273,39 @@ class CompanyAuthController extends ChangeNotifier {
     }
   }
 
+  Future<bool> deleteAccount() async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _pushRegistrationService.unregisterDeviceToken();
+      await _repository.deleteMyAccount();
+      await _repository.clearLocalSession();
+      pendingPhone = null;
+      pendingEmail = null;
+      pendingOtpCode = null;
+      pendingOtpChallenge = null;
+      enrollmentToken = null;
+      pendingPurpose = null;
+      blockedStatus = null;
+      successMessage = null;
+      companyName = null;
+      companyProfileId = null;
+      state = CompanyAuthState.unauthenticated;
+      _notifySessionState(SessionState.unauthenticated);
+      return true;
+    } on ApiException catch (error) {
+      errorMessage = error.message;
+      return false;
+    } catch (_) {
+      errorMessage = AppStrings.unknownError;
+      return false;
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     isSubmitting = true;
     notifyListeners();
@@ -214,13 +317,16 @@ class CompanyAuthController extends ChangeNotifier {
       pendingEmail = null;
       pendingOtpCode = null;
       pendingOtpChallenge = null;
+      enrollmentToken = null;
       pendingPurpose = null;
       blockedStatus = null;
       errorMessage = null;
       successMessage = null;
       companyName = null;
+      companyProfileId = null;
       state = CompanyAuthState.unauthenticated;
       isSubmitting = false;
+      _notifySessionState(SessionState.unauthenticated);
       notifyListeners();
     }
   }
@@ -230,11 +336,13 @@ class CompanyAuthController extends ChangeNotifier {
     pendingEmail = null;
     pendingOtpCode = null;
     pendingOtpChallenge = null;
+    enrollmentToken = null;
     pendingPurpose = null;
     blockedStatus = null;
     errorMessage = null;
     successMessage = null;
     state = CompanyAuthState.unauthenticated;
+    _notifySessionState(SessionState.unauthenticated);
     notifyListeners();
   }
 
@@ -256,7 +364,8 @@ class CompanyAuthController extends ChangeNotifier {
   }
 
   bool _applyApprovalError(ApiException error) {
-    if (error.code != 'COMPANY_NOT_APPROVED' &&
+    if (error.code != 'PENDING_APPROVAL' &&
+        error.code != 'COMPANY_NOT_APPROVED' &&
         error.code != 'ACCOUNT_NOT_APPROVED') {
       return false;
     }
@@ -264,7 +373,9 @@ class CompanyAuthController extends ChangeNotifier {
     final status = details is Map ? details['status']?.toString() : null;
     blockedStatus = status ?? 'pending_approval';
     state = _blockedState(blockedStatus!);
-    errorMessage = _messageForStatus(blockedStatus!);
+    errorMessage = state == CompanyAuthState.pendingApproval
+        ? null
+        : _messageForStatus(blockedStatus!);
     return true;
   }
 
@@ -282,6 +393,14 @@ class CompanyAuthController extends ChangeNotifier {
       'inactive' => AppStrings.companyInactiveMessage,
       _ => AppStrings.companyPendingApprovalMessage,
     };
+  }
+
+  void _notifySessionState(SessionState sessionState, {String? code}) {
+    _sessionCoordinator.notifyState(
+      sessionKey: 'company',
+      state: sessionState,
+      code: code,
+    );
   }
 }
 

@@ -1,0 +1,3 @@
+20261014120000_assignment_attendance_activity/migration.sql -text
+20261017120000_store_review_account_scope/migration.sql -text
+20261017121000_store_review_account_index/migration.sql -text

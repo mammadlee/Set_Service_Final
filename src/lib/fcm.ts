@@ -1,7 +1,9 @@
-import admin from 'firebase-admin';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getMessaging, Messaging } from 'firebase-admin/messaging';
 import { prisma } from './prisma';
 import { logger } from './logger';
 import { Role } from '../types/prisma';
+import { filterExternalDeliveryTargets } from './review-delivery-policy';
 
 export interface PushPayload {
   title: string;
@@ -9,19 +11,20 @@ export interface PushPayload {
   data?: Record<string, string | number | boolean | null | undefined>;
 }
 
-interface DeviceTokenRecord {
+export interface PushDeviceTarget {
   id: string;
   token: string;
+  is_review_account: boolean;
 }
 
-interface PushProvider {
-  sendToTokens(tokens: DeviceTokenRecord[], payload: PushPayload): Promise<void>;
+export interface PushProvider {
+  sendToTokens(tokens: PushDeviceTarget[], payload: PushPayload): Promise<void>;
 }
 
 class DisabledPushProvider implements PushProvider {
   private warned = false;
 
-  async sendToTokens(tokens: DeviceTokenRecord[]): Promise<void> {
+  async sendToTokens(tokens: PushDeviceTarget[]): Promise<void> {
     if (tokens.length === 0 || this.warned) return;
     this.warned = true;
     logger.warn('Push notifications are disabled; skipping FCM delivery');
@@ -29,9 +32,9 @@ class DisabledPushProvider implements PushProvider {
 }
 
 class FirebasePushProvider implements PushProvider {
-  constructor(private readonly messaging: admin.messaging.Messaging) {}
+  constructor(private readonly messaging: Messaging) {}
 
-  async sendToTokens(tokens: DeviceTokenRecord[], payload: PushPayload): Promise<void> {
+  async sendToTokens(tokens: PushDeviceTarget[], payload: PushPayload): Promise<void> {
     if (tokens.length === 0) return;
 
     const result = await this.messaging.sendEachForMulticast({
@@ -88,22 +91,37 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
   await sendPushToUsers([userId], payload);
 }
 
-export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
-  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
-  if (uniqueUserIds.length === 0) return;
+/**
+ * Delivers one final, non-sensitive account-state notification to targets captured
+ * in the same transaction that revoked them. This avoids reactivating a revoked
+ * device record while ensuring the committed rejection is still communicated.
+ */
+export async function sendPushToDeviceTargets(
+  targets: PushDeviceTarget[],
+  payload: PushPayload,
+): Promise<void> {
+  const uniqueTargets = [
+    ...new Map(
+      filterExternalDeliveryTargets(targets)
+        .filter((target) => Boolean(target.id) && Boolean(target.token))
+        .map((target) => [target.id, target]),
+    ).values(),
+  ];
+  if (uniqueTargets.length === 0) return;
 
   try {
-    const tokens = await prisma.deviceToken.findMany({
-      where: {
-        user_id: { in: uniqueUserIds },
-        revoked_at: null,
-        deleted_at: null,
-        user: { is_active: true, deleted_at: null },
-      },
-      select: { id: true, token: true },
+    await getPushProvider().sendToTokens(uniqueTargets, payload);
+  } catch (error) {
+    logger.warn('Direct push delivery skipped after non-fatal error', {
+      target_count: uniqueTargets.length,
+      ...pushErrorMeta(error),
     });
+  }
+}
 
-    await getPushProvider().sendToTokens(tokens, payload);
+export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<void> {
+  try {
+    await deliverPushToUsers(userIds, payload);
   } catch (error) {
     logger.warn('Push delivery skipped after non-fatal error', {
       ...pushErrorMeta(error),
@@ -111,12 +129,57 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   }
 }
 
+export async function deliverPushToUsers(
+  userIds: string[],
+  payload: PushPayload,
+  deliveryProvider?: PushProvider,
+): Promise<void> {
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+  if (uniqueUserIds.length === 0) return;
+
+  const tokens = await prisma.deviceToken.findMany({
+    where: {
+      user_id: { in: uniqueUserIds },
+      revoked_at: null,
+      deleted_at: null,
+      // External delivery is intentionally impossible for the synthetic
+      // Apple/Google review cohort, even if a call site forgets to suppress it.
+      user: { is_active: true, deleted_at: null, is_review_account: false },
+    },
+    select: {
+      id: true,
+      token: true,
+      user: { select: { is_review_account: true } },
+    },
+  });
+
+  await (deliveryProvider ?? getPushProvider()).sendToTokens(
+    tokens.map((target) => ({
+      id: target.id,
+      token: target.token,
+      is_review_account: target.user.is_review_account,
+    })),
+    payload,
+  );
+}
+
 export async function sendPushToRole(role: Role, payload: PushPayload): Promise<void> {
+  try {
+    await deliverPushToRole(role, payload);
+  } catch (error) {
+    logger.warn('Role push delivery skipped after non-fatal error', {
+      role,
+      ...pushErrorMeta(error),
+    });
+  }
+}
+
+export async function deliverPushToRole(role: Role, payload: PushPayload): Promise<void> {
   const users = await prisma.user.findMany({
-    where: { role, is_active: true, deleted_at: null },
+    where: { role, is_active: true, deleted_at: null, is_review_account: false },
     select: { id: true },
   });
-  await sendPushToUsers(users.map((user: { id: string }) => user.id), payload);
+  await deliverPushToUsers(users.map((user: { id: string }) => user.id), payload);
 }
 
 function getPushProvider(): PushProvider {
@@ -139,9 +202,9 @@ function getPushProvider(): PushProvider {
     return provider;
   }
 
-  if (admin.apps.length === 0) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert({
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
         privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
@@ -149,7 +212,7 @@ function getPushProvider(): PushProvider {
     });
   }
 
-  provider = new FirebasePushProvider(admin.messaging());
+  provider = new FirebasePushProvider(getMessaging());
   return provider;
 }
 

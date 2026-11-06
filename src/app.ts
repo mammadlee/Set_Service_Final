@@ -1,11 +1,8 @@
 import './instrument';
 import express from 'express';
-import type { Request as ExpressRequest } from 'express';
 import cors from 'cors';
 import type { CorsOptions } from 'cors';
 import helmet from 'helmet';
-import morgan from 'morgan';
-import rateLimit from 'express-rate-limit';
 import swaggerUi from 'swagger-ui-express';
 import yaml from 'js-yaml';
 import fs from 'fs';
@@ -24,14 +21,32 @@ import reportsRouter, { companyReportsRouter } from './modules/reports/reports.r
 import notificationsRouter from './modules/notifications/notifications.router';
 import adminsRouter from './modules/admins/admins.router';
 import taxonomyRouter from './modules/taxonomy/taxonomy.router';
+import publicUploadsRouter from './modules/uploads/public-uploads.router';
+import legalPagesRouter, { publicAccountDeletionRouter } from './modules/legal/legal.router';
+import accountDeletionAdminRouter from './modules/legal/account-deletion-admin.router';
+import moderationRouter from './modules/moderation/moderation.router';
 import { logger } from './lib/logger';
 import { Errors } from './lib/errors';
 import { assignCompatibilityRouter } from './modules/assignments/assignments.router';
+import { prisma } from './lib/prisma';
+import { getRedisClient, isRedisConfigured } from './lib/redis';
+import {
+  getOutboxProcessorHealth,
+  isOutboxHeartbeatFresh,
+  OUTBOX_HEARTBEAT_KEY,
+} from './lib/outbox';
+import { configureTrustProxy, requestContextMiddleware } from './middleware/request-context';
+import {
+  authRateLimitMax,
+  authTarget,
+  createRateLimitMiddleware,
+  kioskTarget,
+} from './middleware/rate-limit';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
-if (isProduction) app.set('trust proxy', 1);
+configureTrustProxy(app);
 
 const corsOptions: CorsOptions = {
   origin(origin, callback) {
@@ -41,73 +56,136 @@ const corsOptions: CorsOptions = {
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(Errors.forbidden('Origin is not allowed by CORS.', 'CORS_ORIGIN_DENIED'));
   },
-  credentials: false,
+  credentials: true,
 };
 
 app.use(helmet());
-app.use(cors(corsOptions));
-app.use(express.json({ limit: '1mb' }));
-if (!isProduction && (process.env.STORAGE_PROVIDER ?? 'local') === 'local') {
-  app.use('/uploads', express.static(path.resolve(process.env.LOCAL_UPLOAD_DIR ?? 'uploads')));
-}
-morgan.token('safe-url', (req) => {
-  const request = req as ExpressRequest;
-  return redactSensitiveUrl(request.originalUrl ?? request.url ?? '');
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), microphone=(), payment=(), usb=()');
+  next();
 });
-const httpLogFormat = isProduction
-  ? ':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'
-  : ':method :safe-url :status :response-time ms - :res[content-length]';
-
-app.use(morgan(httpLogFormat, {
-  stream: {
-    write: (message) => logger.info('http_request', { message: message.trim() }),
-  },
-}));
-
-const globalLimiter = rateLimit({
+app.use(cors(corsOptions));
+app.use(requestContextMiddleware);
+app.use(express.json({ limit: '1mb' }));
+app.use(legalPagesRouter);
+app.use('/uploads', publicUploadsRouter);
+const globalLimiter = createRateLimitMiddleware({
+  scope: 'global',
   windowMs: 15 * 60 * 1000,
   max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
+  dimensions: ['ip'],
 });
-const authLimiter = rateLimit({
+const authLimiter = createRateLimitMiddleware({
+  scope: 'auth',
   windowMs: 5 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests. Please try again later.', code: 'TOO_MANY_REQUESTS' },
+  max: authRateLimitMax(),
+  dimensions: ['ip', 'target'],
+  target: authTarget,
+});
+const publicDeletionLimiter = createRateLimitMiddleware({
+  scope: 'public_account_deletion',
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  dimensions: ['ip'],
+});
+const publicKioskLimiter = createRateLimitMiddleware({
+  scope: 'public_kiosk',
+  windowMs: 60 * 1000,
+  max: 60,
+  dimensions: ['ip', 'target'],
+  target: kioskTarget,
 });
 
 app.use(globalLimiter);
+app.use('/v1/attendance/kiosk-sessions', publicKioskLimiter);
+app.use('/v1/attendance/venue-kiosks', publicKioskLimiter);
+app.use('/v1/public/account-deletion-requests', publicDeletionLimiter);
 app.use('/v1/auth/register', authLimiter);
 app.use('/v1/auth/worker/register', authLimiter);
 app.use('/v1/auth/worker/request-otp', authLimiter);
 app.use('/v1/auth/worker/complete-registration', authLimiter);
 app.use('/v1/auth/worker/login', authLimiter);
+app.use('/v1/auth/worker/document-session', authLimiter);
 app.use('/v1/auth/worker/forgot-password', authLimiter);
 app.use('/v1/auth/worker/reset-password', authLimiter);
+app.use('/v1/auth/worker/phone-change/request', authLimiter);
+app.use('/v1/auth/worker/phone-change/v2/request', authLimiter);
+app.use('/v1/auth/worker/phone-change/confirm', authLimiter);
 app.use('/v1/auth/email-verification/request', authLimiter);
 app.use('/v1/auth/email-verification/confirm', authLimiter);
 app.use('/v1/auth/company/register', authLimiter);
 app.use('/v1/auth/company/complete-registration', authLimiter);
 app.use('/v1/auth/company/login', authLimiter);
+app.use('/v1/auth/company/web-login', authLimiter);
+app.use('/v1/auth/company/web-refresh', authLimiter);
 app.use('/v1/auth/company/forgot-password', authLimiter);
 app.use('/v1/auth/company/reset-password', authLimiter);
 app.use('/v1/auth/admin/login', authLimiter);
+app.use('/v1/auth/admin/web-login', authLimiter);
+app.use('/v1/auth/admin/web-refresh', authLimiter);
 app.use('/v1/auth/admin/forgot-password', authLimiter);
 app.use('/v1/auth/verify-otp', authLimiter);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-try {
-  const swaggerPath = path.join(__dirname, '..', 'swagger.yaml');
-  const swaggerDoc = yaml.load(fs.readFileSync(swaggerPath, 'utf8')) as object;
-  app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
-  logger.info('Swagger UI mounted', { path: '/docs' });
-} catch (e) {
-  logger.warn('swagger.yaml could not be loaded', { error: e instanceof Error ? e.message : String(e) });
+app.get('/ready', async (_req, res) => {
+  const checks: Record<'database' | 'redis' | 'outbox', boolean> = {
+    database: false,
+    redis: !isRedisConfigured(),
+    outbox: false,
+  };
+  let redis = getRedisClient();
+
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    checks.database = true;
+  } catch {
+    logger.warn('Readiness database check failed');
+  }
+
+  if (isRedisConfigured()) {
+    try {
+      checks.redis = Boolean(redis && (await redis.ping()) === 'PONG');
+    } catch {
+      logger.warn('Readiness Redis check failed');
+    }
+  }
+
+  const outboxInApi = shouldRunOutboxInApi();
+  if (outboxInApi) {
+    checks.outbox = getOutboxProcessorHealth().healthy;
+  } else if (redis && checks.redis) {
+    try {
+      checks.outbox = isOutboxHeartbeatFresh(await redis.get(OUTBOX_HEARTBEAT_KEY));
+    } catch {
+      logger.warn('Readiness outbox heartbeat check failed');
+    }
+  }
+
+  const ready = checks.database && checks.redis && checks.outbox;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not_ready',
+    checks,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+const docsEnabled = !isProduction && process.env.SWAGGER_DOCS_ENABLED !== 'false';
+if (docsEnabled) {
+  try {
+    const swaggerPath = path.join(__dirname, '..', 'swagger.yaml');
+    const swaggerDoc = yaml.load(fs.readFileSync(swaggerPath, 'utf8')) as object;
+    app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
+    logger.info('Swagger UI mounted', { path: '/docs' });
+  } catch (e) {
+    logger.warn('swagger.yaml could not be loaded', { error: e instanceof Error ? e.message : String(e) });
+  }
+} else {
+  logger.info('Swagger UI disabled', { environment: process.env.NODE_ENV ?? 'development' });
 }
 
+app.use('/v1/public', publicAccountDeletionRouter);
+app.use('/v1/admin/account-deletion-requests', accountDeletionAdminRouter);
 app.use('/v1/auth', authRouter);
 app.use('/v1/taxonomy', taxonomyRouter);
 app.use('/v1', companiesRouter);
@@ -117,6 +195,7 @@ app.use('/v1/orders', ordersRouter);
 app.use('/v1/assignments', assignmentsRouter);
 app.use('/v1/attendance', attendanceRouter);
 app.use('/v1/ratings', ratingsRouter);
+app.use('/v1/moderation', moderationRouter);
 app.use('/v1/admin/reports', reportsRouter);
 app.use('/v1/admin/admins', adminsRouter);
 app.use('/v1/company/reports', companyReportsRouter);
@@ -134,16 +213,9 @@ function parseCorsOrigins(): string[] {
     .filter(Boolean);
 }
 
-function redactSensitiveUrl(url: string): string {
-  return url
-    .replace(
-      /(\/v1\/attendance\/kiosk-sessions\/)[^/?\s]+/g,
-      '$1:kiosk_token'
-    )
-    .replace(
-      /(\/v1\/attendance\/venue-kiosks\/)[^/?\s]+/g,
-      '$1:kiosk_token'
-    )
-    .replace(/(\/kiosk\/)[^/?\s]+/g, '$1:kiosk_token')
-    .replace(/(\/qr-kiosk\/)[^/?\s]+/g, '$1:kiosk_token');
+function shouldRunOutboxInApi(): boolean {
+  const configured = process.env.OUTBOX_WORKER_ENABLED?.trim().toLowerCase();
+  if (configured === 'true') return true;
+  if (configured === 'false') return false;
+  return process.env.NODE_ENV !== 'production';
 }

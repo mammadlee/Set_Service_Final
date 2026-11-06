@@ -7,7 +7,7 @@ function resolveApiBaseUrl(): string {
 
   if (!configuredUrl) {
     if (import.meta.env.PROD) {
-      throw new Error('Şirkət paneli üçün VITE_API_BASE_URL canlı mühitdə mütləq verilməlidir.');
+      throw new Error('Müəssisə paneli üçün VITE_API_BASE_URL canlı mühitdə mütləq verilməlidir.');
     }
     return appendApiVersion(DEV_BASE_URL);
   }
@@ -17,15 +17,21 @@ function resolveApiBaseUrl(): string {
   try {
     parsed = new URL(normalized);
   } catch {
-    throw new Error('Şirkət paneli API ünvanı düzgün URL deyil.');
+    throw new Error('Müəssisə panelinin API ünvanı düzgün URL deyil.');
   }
 
   if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Şirkət paneli API ünvanı http və ya https ilə başlamalıdır.');
+    throw new Error('Müəssisə panelinin API ünvanı HTTP və ya HTTPS ilə başlamalıdır.');
   }
 
-  if (import.meta.env.PROD && isLocalhost(parsed.hostname)) {
-    throw new Error('Canlı mühitdə şirkət paneli localhost API ünvanı ilə işləyə bilməz.');
+  if (import.meta.env.PROD && parsed.protocol !== 'https:') {
+    throw new Error('Canlı mühitdə müəssisə panelinin API ünvanı HTTPS istifadə etməlidir.');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('Müəssisə panelinin API ünvanında giriş məlumatları, sorğu sətri və ya fraqment olmamalıdır.');
+  }
+  if (import.meta.env.PROD && isPrivateOrLocalHostname(parsed.hostname)) {
+    throw new Error('Canlı mühitdə müəssisə paneli localhost API ünvanı ilə işləyə bilməz.');
   }
 
   return appendApiVersion(normalized);
@@ -36,6 +42,39 @@ function appendApiVersion(baseUrl: string): string {
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
 }
 
-function isLocalhost(hostname: string): boolean {
-  return ['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'].includes(hostname);
+function isPrivateOrLocalHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (
+    hostname === 'localhost' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.localdomain')
+  ) {
+    return true;
+  }
+  if (hostname.includes(':')) {
+    return (
+      hostname === '::' ||
+      hostname === '::1' ||
+      hostname.startsWith('::ffff:') ||
+      /^(fc|fd|fe[89ab])/.test(hostname)
+    );
+  }
+
+  const octets = hostname.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [first, second] = octets;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168) ||
+    first >= 224
+  );
 }

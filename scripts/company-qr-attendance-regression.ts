@@ -1,0 +1,594 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+
+// Execute the real service, repository, signed QR and lifecycle code against an
+// in-memory Prisma adapter. No database, Redis, delivery provider or VPS is used.
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL = 'postgresql://unused:unused@127.0.0.1:1/qr_regression';
+process.env.QR_HMAC_SECRET = 'local-regression-only-qr-secret-32-characters';
+process.env.QR_TOKEN_TTL_SECONDS = '999';
+process.env.PUSH_NOTIFICATIONS_ENABLED = 'false';
+process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+process.env.KIOSK_TOKEN_ENCRYPTION_SECRET = 'local-regression-only-kiosk-secret-32-characters';
+
+type Row = Record<string, any>;
+const rows: Record<string, Row[]> = Object.fromEntries([
+  'company', 'worker', 'order', 'assignment', 'venueKiosk', 'kioskActiveSession',
+  'kioskSession', 'attendanceQrToken', 'attendanceQrUse', 'attendanceLog',
+  'notification', 'deviceToken', 'auditLog', 'orderStatusHistory', 'user', 'outboxEvent',
+].map((name) => [name, []]));
+
+function matches(row: any, where: any): boolean {
+  if (where === undefined) return true;
+  if (where === null || typeof where !== 'object' || where instanceof Date) {
+    return row instanceof Date && where instanceof Date ? row.getTime() === where.getTime() : row === where;
+  }
+  if ('in' in where && !where.in.includes(row)) return false;
+  if ('not' in where && matches(row, where.not)) return false;
+  if ('gt' in where && !(row > where.gt)) return false;
+  if ('gte' in where && !(row >= where.gte)) return false;
+  if ('lt' in where && !(row < where.lt)) return false;
+  if ('lte' in where && !(row <= where.lte)) return false;
+  if ('some' in where && (!Array.isArray(row) || !row.some((item) => matches(item, where.some)))) return false;
+  if ('none' in where && Array.isArray(row) && row.some((item) => matches(item, where.none))) return false;
+  if ('contains' in where) {
+    const source = String(row ?? '');
+    const needle = String(where.contains);
+    if (!(where.mode === 'insensitive' ? source.toLowerCase().includes(needle.toLowerCase()) : source.includes(needle))) return false;
+  }
+  if ('OR' in where && !where.OR.some((part: any) => matches(row, part))) return false;
+  if ('AND' in where && !where.AND.every((part: any) => matches(row, part))) return false;
+  return Object.entries(where).every(([key, value]) =>
+    ['in', 'not', 'gt', 'gte', 'lt', 'lte', 'some', 'none', 'contains', 'mode', 'OR', 'AND'].includes(key) || matches(row?.[key], value));
+}
+
+function attach(name: string, row: Row): Row {
+  if (name === 'order') {
+    row.company = rows.company.find((item) => item.id === row.company_id);
+    row.assignments = rows.assignment
+      .filter((item) => item.order_id === row.id)
+      .map((item) => ({
+        ...item,
+        attendance_logs: rows.attendanceLog.filter((log) => log.assignment_id === item.id),
+      }));
+    row._count = { assignments: row.assignments.length };
+  }
+  if (name === 'assignment') {
+    row.order = attach('order', rows.order.find((item) => item.id === row.order_id)!);
+    row.worker = rows.worker.find((item) => item.id === row.worker_id);
+    row.attendance_logs = rows.attendanceLog.filter((item) => item.assignment_id === row.id);
+  }
+  if (name === 'kioskSession') {
+    row.company = rows.company.find((item) => item.id === row.company_id);
+    row.order = rows.order.find((item) => item.id === row.order_id);
+    row.assignment = rows.assignment.find((item) => item.id === row.assignment_id);
+  }
+  if (name === 'kioskActiveSession') row.order = attach('order', rows.order.find((item) => item.id === row.order_id)!);
+  if (name === 'venueKiosk') {
+    row.company = rows.company.find((item) => item.id === row.company_id);
+    row.active_sessions = rows.kioskActiveSession
+      .filter((item) => item.kiosk_id === row.id && item.status === 'active' && item.revoked_at === null && item.deleted_at === null)
+      .map((item) => attach('kioskActiveSession', item));
+  }
+  if (name === 'attendanceLog') row.assignment = attach('assignment', rows.assignment.find((item) => item.id === row.assignment_id)!);
+  return row;
+}
+
+function apply(row: Row, data: Row): void {
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    row[key] = value && typeof value === 'object' && 'increment' in value ? row[key] + value.increment : value;
+  }
+}
+
+let cases = 0;
+async function rejectsCode(action: () => Promise<unknown>, code: string): Promise<void> {
+  await assert.rejects(action, (error: any) => error.code === code, code);
+  cases += 1;
+}
+
+async function main() {
+  const { prisma } = await import('../src/lib/prisma');
+  const { Prisma } = await import('@prisma/client');
+  const db = prisma as any;
+  for (const [name, table] of Object.entries(rows)) {
+    const select = (where: any) => table.map((row) => attach(name, row)).filter((row) => matches(row, where));
+    db[name].findUnique = async ({ where }: any) => select(where)[0] ?? null;
+    db[name].findFirst = async ({ where }: any = {}) => select(where)[0] ?? null;
+    db[name].findFirstOrThrow = async ({ where }: any) => {
+      const row = select(where)[0];
+      assert.ok(row, `Missing ${name}`);
+      return row;
+    };
+    db[name].findMany = async ({ where, skip = 0, take, orderBy, select: projection }: any = {}) => {
+      const selected = select(where);
+      if (orderBy?.created_at) selected.sort((a, b) => (a.created_at - b.created_at) * (orderBy.created_at === 'desc' ? -1 : 1));
+      return selected.slice(skip, take === undefined ? undefined : skip + take).map((row) => {
+        if (name === 'order' && projection?._count?.select?.assignments?.where) {
+          return { ...row, _count: { assignments: rows.assignment.filter((a) => a.order_id === row.id && matches(a, projection._count.select.assignments.where)).length } };
+        }
+        return row;
+      });
+    };
+    db[name].count = async ({ where }: any) => select(where).length;
+    db[name].create = async ({ data }: any) => {
+      data = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+      if (name === 'attendanceQrUse' && table.some((row) => row.qr_token_id === data.qr_token_id && row.worker_id === data.worker_id && row.action === data.action)) {
+        throw new Prisma.PrismaClientKnownRequestError('Duplicate QR use', { code: 'P2002', clientVersion: 'test' });
+      }
+      const row = {
+        id: crypto.randomUUID(), status: 'active', version: 1, created_at: new Date(), updated_at: new Date(),
+        deleted_at: null, revoked_at: null, expires_at: null, assignment_id: null,
+        kiosk_id: null, kiosk_session_id: null, checkin_time: null, checkout_time: null,
+        ...data,
+      };
+      if (name === 'order' && row.category_items?.create) {
+        row.category_items = row.category_items.create.map((item: Row) => ({ id: crypto.randomUUID(), notes: null, department_id: null, subdepartment_id: null, position_id: null, ...item }));
+      }
+      table.push(row);
+      return attach(name, row);
+    };
+    db[name].updateMany = async ({ where, data }: any) => {
+      const selected = select(where);
+      selected.forEach((row) => apply(row, data));
+      return { count: selected.length };
+    };
+  }
+  db.$transaction = async (callback: any) => typeof callback === 'function' ? callback(db) : Promise.all(callback);
+  db.$queryRaw = async (query: any, ...templateValues: any[]) => {
+    const strings: string[] = Array.isArray(query) ? query : query.strings;
+    const values: any[] = Array.isArray(query) ? templateValues : query.values;
+    const sql = strings.join('?');
+    const tableName = sql.match(/FROM "(\w+)"/)?.[1];
+    if (tableName === 'order_category_items') return rows.order.find((o) => o.id === values[0])?.category_items ?? [];
+    const tableMap: Record<string, string> = {
+      orders: 'order', assignments: 'assignment', venue_kiosks: 'venueKiosk',
+      workers: 'worker',
+      kiosk_active_sessions: 'kioskActiveSession', kiosk_sessions: 'kioskSession',
+      attendance_qr_tokens: 'attendanceQrToken',
+    };
+    assert.ok(tableName && tableMap[tableName], `Unexpected SQL ${sql}`);
+    const key = sql.includes('token_hash =') ? 'token_hash' : 'id';
+    const row = rows[tableMap[tableName!]].find((item) => item[key] === values[0]);
+    if (!row || (sql.includes("status = 'active'") && row.status !== 'active') ||
+      (sql.includes('revoked_at IS NULL') && row.revoked_at !== null) ||
+      (sql.includes('deleted_at IS NULL') && row.deleted_at !== null) ||
+      (sql.includes('company_id =') && row.company_id !== values[1])) return [];
+    return [{ id: row.id }];
+  };
+  const service = await import('../src/modules/attendance/attendance.service');
+  const repository = await import('../src/modules/attendance/attendance.repository');
+  const qrLib = await import('../src/lib/qr');
+  const fixedQrTime = Date.parse('2026-10-14T08:00:00.000Z');
+  const realDateNow = Date.now;
+  Date.now = () => fixedQrTime;
+  try {
+    const configuredTtlQr = qrLib.generateAttendanceQrToken({ orderId: 'ttl-order', companyId: 'ttl-company' });
+    const configuredPayload = qrLib.verifyAttendanceQrToken(configuredTtlQr.token);
+    assert.equal(configuredPayload.valid, true);
+    assert.equal(configuredPayload.valid && configuredPayload.payload.exp, Math.floor(fixedQrTime / 1000) + 300,
+      'an oversized environment TTL must be capped at 300 seconds at runtime');
+
+    const explicitTtlQr = qrLib.generateAttendanceQrToken({
+      orderId: 'ttl-order', companyId: 'ttl-company', ttlSeconds: 600,
+    });
+    const explicitPayload = qrLib.verifyAttendanceQrToken(explicitTtlQr.token);
+    assert.equal(explicitPayload.valid, true);
+    assert.equal(explicitPayload.valid && explicitPayload.payload.exp, Math.floor(fixedQrTime / 1000) + 300,
+      'an oversized explicit TTL must be capped at 300 seconds');
+    cases += 2;
+  } finally {
+    Date.now = realDateNow;
+  }
+  const companyA = { id: 'company-a', user_id: 'company-user-a', name: 'Müəssisə A', status: 'approved', deleted_at: null,
+    user: { id: 'company-user-a', name: 'Əlaqədar şəxs', phone: '+994501111111', is_active: true, deleted_at: null, is_review_account: false } };
+  const companyB = { ...companyA, id: 'company-b', user_id: 'company-user-b', name: 'Müəssisə B', user: { ...companyA.user, id: 'company-user-b' } };
+  rows.company.push(companyA, companyB);
+  const ordersService = await import('../src/modules/orders/orders.service');
+  const { CreateOrderSchema, ListOrdersQuerySchema } = await import('../src/modules/orders/orders.schema');
+  const { ListAttendanceQuerySchema } = await import('../src/modules/attendance/attendance.schema');
+  const assignmentsService = await import('../src/modules/assignments/assignments.service');
+  const { CreateAssignmentsSchema } = await import('../src/modules/assignments/assignments.schema');
+  const created = await ordersService.createOrder(companyA.user_id, 'company', CreateOrderSchema.parse({
+    title: 'Şöbə sifarişi', description: 'İş yeri üzrə ofisiant xidməti',
+    category: 'Ofisiant', required_count: 1,
+    start_datetime: new Date(Date.now() + 60_000), end_datetime: new Date(Date.now() + 3_600_000),
+    location: 'Bakı, iş yeri',
+  }));
+  const createdId = (created.response as Row).id;
+  const order = rows.order.find((item) => item.id === createdId)!;
+  assert.equal(order.status, 'published');
+  assert.equal(order.company_id, companyA.id);
+  assert.equal(order.location, 'Bakı, iş yeri');
+  assert.equal((created.response as Row).location, 'Bakı, iş yeri');
+  assert.equal(rows.outboxEvent[0].aggregate_id, order.id);
+  cases += 1;
+  const otherOrder: Row = { ...order, id: 'order-b', company_id: companyB.id };
+  rows.order.push(otherOrder);
+  const worker = { id: '10000000-0000-4000-8000-000000000001', user_id: 'worker-user-a', status: 'approved', deleted_at: null, availability: true, positions: [],
+    user: { id: 'worker-user-a', name: 'İşçi A', phone: '+994502222222', is_active: true, deleted_at: null, is_review_account: false } };
+  rows.worker.push(worker, { ...worker, id: 'worker-b', user_id: 'worker-user-b' });
+
+  const query = (scope?: 'active' | 'staffing') => ListOrdersQuerySchema.parse({ scope, limit: 100 });
+  const visible = async (role: 'company' | 'admin', scope?: 'active' | 'staffing') =>
+    (await ordersService.listOrders(role === 'company' ? companyA.user_id : 'admin-user', role, query(scope))).data;
+  assert.equal((created.response as Row).status, 'published');
+  assert.equal((created.response as Row).assignment_count, 0);
+  assert.equal((await visible('company', 'active'))[0].id, order.id);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id && o.assignment_count === 0), true);
+  assert.equal((await visible('admin')).some((o) => o.id === order.id), true);
+  assert.equal((await ordersService.listOrders(companyA.user_id, 'company', ListOrdersQuerySchema.parse({ status: 'active' }))).data.length, 0,
+    'Legacy exact active filter is not a lifecycle group; this reproduces the original selector bug.');
+  assert.equal((await visible('company', 'active')).some((o) => o.id === otherOrder.id), false);
+  assert.equal(ListOrdersQuerySchema.safeParse({ scope: 'invented' }).success, false);
+  // Instant comparison, not device/server calendar date: +04:00 and UTC are identical.
+  const endIso = order.shift_end.toISOString();
+  const offsetEnd = new Date(order.shift_end.getTime() + 4 * 3600000).toISOString().replace('Z', '+04:00');
+  assert.equal(new Date(offsetEnd).getTime(), new Date(endIso).getTime());
+  order.shift_end = new Date(offsetEnd);
+  assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), true);
+  cases += 7;
+
+  for (const status of ['draft', 'cancelled', 'completed', 'in_progress']) {
+    order.status = status;
+    assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+    assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), status === 'in_progress');
+    await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  }
+  order.status = 'published';
+  const validEnd = order.shift_end;
+  order.shift_end = new Date(Date.now() - 60000);
+  assert.equal((await visible('company', 'active')).length, 0);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  order.shift_end = validEnd;
+  await rejectsCode(() => assignmentsService.createAssignments(companyA.user_id, 'company', { order_id: order.id, worker_ids: [worker.id] }), 'ROLE_FORBIDDEN');
+
+  // Filtering precedes pagination; recent completed orders cannot crowd a new
+  // published order out of the first active/staffing page.
+  rows.order.push(...Array.from({ length: 101 }, (_, index) => ({
+    ...order, id: `history-${index}`, status: 'completed', created_at: new Date(Date.now() + index + 1),
+  })));
+  assert.equal((await visible('company', 'active')).some((o) => o.id === order.id), true);
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), true);
+  assert.equal((await ordersService.listOrders('admin-user', 'admin', ListOrdersQuerySchema.parse({
+    status: 'completed', scope: 'staffing',
+  }))).data.length, 0, 'scope cannot broaden an explicit status filter');
+  rows.order.splice(2);
+  cases += 1;
+
+  const { orderLifecycleWhere } = await import('../src/modules/orders/orders.lifecycle');
+  const boundary = new Date(order.shift_end);
+  for (const scope of ['active', 'staffing'] as const) {
+    assert.equal(matches(attach('order', order), orderLifecycleWhere(scope, new Date(boundary.getTime() - 1))), true);
+    assert.equal(matches(attach('order', order), orderLifecycleWhere(scope, boundary)), false);
+  }
+  cases += 1;
+
+  companyA.status = 'pending_approval';
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  companyA.status = 'approved';
+  companyA.user.is_active = false;
+  assert.equal((await visible('admin', 'staffing')).some((o) => o.id === order.id), false);
+  await rejectsCode(() => assignmentsService.createAssignments('admin-user', 'admin', { order_id: order.id, worker_ids: [worker.id] }), 'ORDER_NOT_ACTIVE');
+  companyA.user.is_active = true;
+
+  // A/B: a just-published own order with no assignment is eligible and gets a live QR.
+  const eligible = await service.listKioskEligibleOrders(companyA.user_id, 'company', {});
+  assert.deepEqual(eligible.data.map((item) => [item.id, item.accepted_assignment_count]), [[order.id, 0]]);
+  const kiosk = await service.createVenueKiosk(companyA.user_id, 'company', { name: 'Əsas giriş' });
+  assert.equal(new URL(kiosk.kiosk_url).origin, 'https://qr.setservice.az');
+  assert.equal(new URL(kiosk.kiosk_url).pathname, '/kiosk');
+  assert.equal(new URLSearchParams(new URL(kiosk.kiosk_url).hash.slice(1)).get('capability'), kiosk.kiosk_token);
+  const active = await service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id });
+  assert.equal(active.active_session?.order_id, order.id);
+  assert.equal(active.kiosk_url, kiosk.kiosk_url);
+
+  // Preserve the production origin guard for both newly created and already
+  // persisted kiosk capabilities. Invalid configuration must fail before any
+  // kiosk/session mutation.
+  process.env.KIOSK_PUBLIC_BASE_URL = 'https://kiosk.setservice.az';
+  const legacyResponse = (await service.listVenueKiosks(companyA.user_id, 'company', {})).data[0];
+  assert.equal(new URL(legacyResponse.kiosk_url!).host, 'kiosk.setservice.az');
+  const persistedBefore = JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]);
+  process.env.NODE_ENV = 'production';
+  try {
+    for (const invalidBase of [undefined, 'https://kiosk.setservice.az', 'http://qr.setservice.az', 'https://external.example']) {
+      if (invalidBase === undefined) delete process.env.KIOSK_PUBLIC_BASE_URL;
+      else process.env.KIOSK_PUBLIC_BASE_URL = invalidBase;
+      process.env.PUBLIC_APP_URL = 'https://qr.setservice.az';
+      await rejectsCode(() => service.createVenueKiosk(companyA.user_id, 'company', { name: 'Invalid config' }), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.deactivateVenueKiosk(companyA.user_id, 'company', kiosk.id), 'KIOSK_URL_CONFIG_INVALID');
+      await rejectsCode(() => service.disableVenueKiosk(companyA.user_id, 'company', kiosk.id), 'KIOSK_URL_CONFIG_INVALID');
+      assert.equal(JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]), persistedBefore,
+        'invalid kiosk URL config must fail before create/activation persistence');
+    }
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az/kiosk/';
+    const recovered = (await service.listVenueKiosks(companyA.user_id, 'company', {})).data[0];
+    assert.equal(recovered.kiosk_url, kiosk.kiosk_url);
+    assert.equal(recovered.id, kiosk.id);
+    assert.equal(recovered.active_session?.id, active.active_session?.id);
+    assert.equal(recovered.active_session?.order_id, order.id);
+    assert.equal(JSON.stringify([rows.venueKiosk, rows.kioskActiveSession]), persistedBefore);
+    cases += 3;
+  } finally {
+    process.env.NODE_ENV = 'test';
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+    delete process.env.PUBLIC_APP_URL;
+  }
+  await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'KIOSK_SHIFT_NOT_STARTED');
+  order.shift_start = new Date(Date.now() - 60_000);
+  otherOrder.shift_start = new Date(Date.now() - 60_000);
+  const initialQr = await service.generateKioskQrToken(kiosk.kiosk_token);
+  assert.equal(qrLib.verifyAttendanceQrToken(initialQr.token).valid, true);
+  assert.equal(initialQr.refresh_after_seconds, 30);
+  assert.ok(initialQr.expires_at instanceof Date);
+  const qrTtlSeconds = (initialQr.expires_at.getTime() - Date.now()) / 1000;
+  assert.ok(qrTtlSeconds > 29 && qrTtlSeconds <= 30, `unexpected QR TTL: ${qrTtlSeconds}`);
+  cases += 4;
+
+  // Retrying activation preserves the activation and previously issued grants.
+  const retry = await service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id });
+  assert.equal(retry.active_session?.id, active.active_session?.id);
+  assert.equal(rows.kioskActiveSession.length, 1);
+  assert.equal(rows.attendanceQrToken[0].revoked_at, null);
+  cases += 1;
+
+  // A provisioned tablet automatically opens one started shift. If two shifts
+  // overlap, it waits for an explicit, company-bound selection.
+  const autoKiosk = await service.createVenueKiosk(companyA.user_id, 'company', { name: 'Avtomatik giriş' });
+  const autoContext = await service.getKioskSession(autoKiosk.kiosk_token) as Row;
+  assert.equal(autoContext.active_session?.order_id, order.id);
+  assert.equal(autoContext.selection_required, false);
+  await service.disableVenueKiosk(companyA.user_id, 'company', autoKiosk.id);
+
+  const concurrentOrder: Row = { ...order, id: 'order-concurrent', title: 'Paralel növbə', company_id: companyA.id };
+  rows.order.push(concurrentOrder);
+  const selectionKiosk = await service.createVenueKiosk(companyA.user_id, 'company', { name: 'Seçimli giriş' });
+  const selectionContext = await service.getKioskSession(selectionKiosk.kiosk_token) as Row;
+  assert.equal(selectionContext.active_session, null);
+  assert.equal(selectionContext.selection_required, true);
+  assert.deepEqual(selectionContext.eligible_orders.map((item: Row) => item.id).sort(), [order.id, concurrentOrder.id].sort());
+  const selectedContext = await service.selectVenueKioskOrder(selectionKiosk.kiosk_token, { order_id: concurrentOrder.id });
+  assert.equal(selectedContext.active_session?.order_id, concurrentOrder.id);
+  await rejectsCode(() => service.selectVenueKioskOrder(selectionKiosk.kiosk_token, { order_id: otherOrder.id }), 'KIOSK_ORDER_NOT_FOUND');
+  await service.disableVenueKiosk(companyA.user_id, 'company', selectionKiosk.id);
+  concurrentOrder.deleted_at = new Date();
+  cases += 2;
+
+  // C and role isolation: no cross-company list, creation or activation.
+  await rejectsCode(() => service.listVenueKiosks(companyB.user_id, 'company', { company_id: companyA.id }), 'FORBIDDEN');
+  assert.equal((await service.listVenueKiosks(companyB.user_id, 'company', {})).data.length, 0);
+  await rejectsCode(() => service.createVenueKiosk(companyB.user_id, 'company', { name: 'Səhv giriş', company_id: companyA.id }), 'FORBIDDEN');
+  await rejectsCode(() => service.activateVenueKiosk(companyB.user_id, 'company', kiosk.id, { order_id: order.id }), 'FORBIDDEN');
+  await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: otherOrder.id }), 'FORBIDDEN');
+  await rejectsCode(() => service.createVenueKiosk(worker.user_id, 'worker', { name: 'Səhv giriş' }), 'FORBIDDEN');
+
+  // D/E/F: current lifecycle is enforced even when a UI/request is manipulated.
+  for (const status of ['draft', 'cancelled', 'completed']) {
+    order.status = status;
+    await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'ORDER_NOT_ACTIVE');
+    await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'KIOSK_ORDER_INACTIVE');
+    assert.equal((await service.listKioskEligibleOrders(companyA.user_id, 'company', {})).data.length, 0);
+  }
+  order.status = 'published';
+  const futureEnd = order.shift_end;
+  order.shift_end = new Date(Date.now() - 1);
+  await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'ORDER_EXPIRED');
+  await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'KIOSK_ORDER_INACTIVE');
+  await rejectsCode(() => repository.activateVenueKiosk({ kioskId: kiosk.id, companyId: companyA.id, orderId: order.id, activatedById: companyA.user_id }), 'ORDER_NOT_QR_ELIGIBLE');
+  order.shift_end = futureEnd;
+  order.deleted_at = new Date();
+  await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'ORDER_NOT_FOUND');
+  await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'KIOSK_ORDER_INACTIVE');
+  await rejectsCode(() => repository.activateVenueKiosk({ kioskId: kiosk.id, companyId: companyA.id, orderId: order.id, activatedById: companyA.user_id }), 'ORDER_NOT_QR_ELIGIBLE');
+  order.deleted_at = null;
+
+  // G: pending/rejected company cannot create, read or activate QR.
+  for (const status of ['pending_approval', 'rejected']) {
+    companyA.status = status;
+    await rejectsCode(() => service.createVenueKiosk(companyA.user_id, 'company', { name: 'Giriş' }), 'ACCOUNT_NOT_APPROVED');
+    await rejectsCode(() => service.listVenueKiosks(companyA.user_id, 'company', {}), 'ACCOUNT_NOT_APPROVED');
+    await rejectsCode(() => service.activateVenueKiosk(companyA.user_id, 'company', kiosk.id, { order_id: order.id }), 'ACCOUNT_NOT_APPROVED');
+    await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'VENUE_KIOSK_DISABLED');
+  }
+  companyA.status = 'approved';
+  companyA.user.is_active = false;
+  await rejectsCode(() => service.createVenueKiosk(companyA.user_id, 'company', { name: 'Giriş' }), 'ACCOUNT_INACTIVE');
+  await rejectsCode(() => service.listVenueKiosks(companyA.user_id, 'company', {}), 'ACCOUNT_INACTIVE');
+  await rejectsCode(() => service.getKioskSession(kiosk.kiosk_token), 'VENUE_KIOSK_DISABLED');
+  await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'VENUE_KIOSK_DISABLED');
+  await rejectsCode(() => repository.activateVenueKiosk({ kioskId: kiosk.id, companyId: companyA.id, orderId: order.id, activatedById: companyA.user_id }), 'ORDER_NOT_QR_ELIGIBLE');
+  companyA.user.is_active = true;
+
+  // I: a valid company QR conveys no worker/assignment permission.
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
+  const firstAssignment = await assignmentsService.createAssignments('admin-user', 'admin', CreateAssignmentsSchema.parse({ order_id: order.id, worker_ids: [worker.id] }));
+  const assignmentId = firstAssignment.assignments[0].id;
+  assert.equal(firstAssignment.assigned_count, 1);
+  assert.equal(firstAssignment.assignments[0].status, 'assigned');
+  assert.equal(order.status, 'assigned');
+  assert.equal((await visible('company', 'active'))[0].assignment_count, 1);
+  assert.equal(rows.kioskActiveSession[0].id, active.active_session!.id, 'QR already exists before assignment');
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
+  const accepted = await assignmentsService.acceptAssignment(assignmentId, worker.user_id, 'worker');
+  assert.equal(accepted.status, 'accepted');
+  process.env.NODE_ENV = 'production';
+  process.env.KIOSK_PUBLIC_BASE_URL = 'https://kiosk.setservice.az';
+  const sessionCountBefore = rows.kioskSession.length;
+  try {
+    await rejectsCode(() => service.createKioskSession(companyA.user_id, 'company', { assignment_id: assignmentId }), 'KIOSK_URL_CONFIG_INVALID');
+    assert.equal(rows.kioskSession.length, sessionCountBefore);
+  } finally {
+    process.env.NODE_ENV = 'test';
+    process.env.KIOSK_PUBLIC_BASE_URL = 'https://qr.setservice.az';
+  }
+  const currentShiftStart = order.shift_start;
+  order.shift_start = new Date(Date.now() + 60_000);
+  await rejectsCode(
+    () => service.generateQrToken('admin-user', 'admin', { assignment_id: assignmentId, ttl_seconds: 30 }),
+    'ASSIGNMENT_NOT_ACCEPTED',
+  );
+  const futureLegacySession = await service.createKioskSession('admin-user', 'admin', { assignment_id: assignmentId });
+  await rejectsCode(
+    () => service.generateKioskQrToken(futureLegacySession.kiosk_token),
+    'KIOSK_SHIFT_NOT_STARTED',
+  );
+  await rejectsCode(
+    () => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }),
+    'ASSIGNMENT_NOT_ACCEPTED',
+  );
+  order.shift_start = currentShiftStart;
+
+  const originalAssignmentFindMany = db.assignment.findMany;
+  let monitorOrderBy: any;
+  db.assignment.findMany = async (args: any) => {
+    monitorOrderBy = args.orderBy;
+    return originalAssignmentFindMany(args);
+  };
+  await repository.listAttendanceMonitor({ where: {}, page: 1, limit: 20, sortBy: 'checkin_time', sort: 'desc' });
+  assert.deepEqual(monitorOrderBy[0], { last_checkin_at: { sort: 'desc', nulls: 'last' } });
+  await repository.listAttendanceMonitor({ where: {}, page: 1, limit: 20, sortBy: 'updated_at', sort: 'desc' });
+  assert.deepEqual(monitorOrderBy[0], { attendance_activity_at: 'desc' });
+  db.assignment.findMany = originalAssignmentFindMany;
+  cases += 2;
+
+  const monitorQuery = (overrides: Record<string, unknown> = {}) => ListAttendanceQuerySchema.parse({ limit: 20, ...overrides });
+  const assignmentRow = rows.assignment.find((item) => item.id === assignmentId)!;
+  const monitorCutoff = new Date(Date.now() - 5_000);
+  const beforeMonitorCutoff = new Date(monitorCutoff.getTime() - 1_000);
+  const afterMonitorCutoff = new Date(monitorCutoff.getTime() + 1_000);
+  assignmentRow.updated_at = beforeMonitorCutoff;
+  assignmentRow.attendance_activity_at = afterMonitorCutoff;
+  assert.equal(
+    (await service.listAttendanceMonitor('admin', monitorQuery({ updated_since: monitorCutoff }))).data.length,
+    1,
+    'attendance projection changes must be returned by incremental polling',
+  );
+  assignmentRow.updated_at = afterMonitorCutoff;
+  assignmentRow.attendance_activity_at = beforeMonitorCutoff;
+  assert.equal(
+    (await service.listAttendanceMonitor('admin', monitorQuery({ updated_since: monitorCutoff }))).data.length,
+    1,
+    'assignment changes must be returned by incremental polling',
+  );
+  assignmentRow.updated_at = beforeMonitorCutoff;
+  assignmentRow.attendance_activity_at = beforeMonitorCutoff;
+  assert.equal(
+    (await service.listAttendanceMonitor('admin', monitorQuery({ updated_since: monitorCutoff }))).data.length,
+    0,
+    'unchanged assignments must be excluded from incremental polling',
+  );
+  assignmentRow.updated_at = new Date();
+  assignmentRow.attendance_activity_at = new Date();
+  cases += 3;
+  const beforeCheckin = await service.listAttendanceMonitor('admin', monitorQuery());
+  assert.equal(beforeCheckin.data[0].status, 'not_checked_in');
+  assert.equal(beforeCheckin.data[0].worker_name, worker.user.name);
+  assert.equal(beforeCheckin.data[0].company_name, companyA.name);
+  assert.equal((await service.listAttendanceMonitor('admin', { ...monitorQuery(), company_id: companyB.id })).data.length, 0);
+  await rejectsCode(() => service.listAttendanceMonitor('company', monitorQuery()), 'FORBIDDEN');
+  cases += 2;
+  await rejectsCode(() => service.checkIn('worker-user-b', 'worker', { qr_token: initialQr.token, assignment_id: assignmentId }), 'KIOSK_ASSIGNMENT_NOT_FOUND');
+  worker.status = 'pending_approval';
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ACCOUNT_NOT_APPROVED');
+  worker.status = 'approved';
+
+  // Lifecycle/ownership are revalidated for consumption, not just QR issuance.
+  const assignmentStatus = order.status;
+  for (const status of ['cancelled', 'completed']) {
+    order.status = status;
+    await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ASSIGNMENT_NOT_ACCEPTED');
+  }
+  order.status = assignmentStatus;
+  order.shift_end = new Date(Date.now() - 1);
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ASSIGNMENT_NOT_ACCEPTED');
+  order.shift_end = futureEnd;
+  order.deleted_at = new Date();
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ASSIGNMENT_NOT_ACCEPTED');
+  order.deleted_at = null;
+  const verifiedInitial = qrLib.verifyAttendanceQrToken(initialQr.token);
+  assert.equal(verifiedInitial.valid, true);
+  if (!verifiedInitial.valid) throw new Error('Expected valid test QR');
+  companyA.user.is_active = false;
+  const inactiveCompanyCheckin = await repository.createCheckInWithAudit({
+    assignmentId, workerId: worker.id, actorId: worker.user_id, actorRole: 'worker',
+    qr: {
+      tokenHash: qrLib.hashQrToken(initialQr.token), nonce: verifiedInitial.payload.nonce,
+      orderId: order.id, companyId: companyA.id, kioskId: kiosk.id, kioskSessionId: active.active_session!.id,
+    },
+  });
+  assert.equal(inactiveCompanyCheckin.kind, 'assignment_not_accepted');
+  cases += 1;
+  companyA.user.is_active = true;
+
+  // Persisted revocation is checked during consumption even for a correctly signed token.
+  const revokedQr = await service.generateKioskQrToken(kiosk.kiosk_token);
+  rows.attendanceQrToken.find((item) => item.token_hash === qrLib.hashQrToken(revokedQr.token))!.revoked_at = new Date();
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: revokedQr.token }), 'QR_TOKEN_REVOKED');
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: `${initialQr.token}tampered` }), 'QR_TOKEN_INVALID');
+  const actualNow = Date.now;
+  const expiredQr = qrLib.generateAttendanceQrToken({ orderId: order.id, companyId: companyA.id, ttlSeconds: 1 });
+  Date.now = () => actualNow() + 2_000;
+  try { await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: expiredQr.token }), 'QR_TOKEN_EXPIRED'); }
+  finally { Date.now = actualNow; }
+
+  // H: company-created order QR works after acceptance, then prevents duplicate scans.
+  const checkin = await service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token });
+  assert.equal(checkin.assignment_id, assignmentId);
+  assert.equal(order.status, 'in_progress');
+  assert.equal(rows.attendanceQrUse.length, 1);
+  assert.equal((await service.listAttendanceMonitor('admin', monitorQuery({ status: 'currently_working' }))).data[0].status, 'currently_working');
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: initialQr.token }), 'ATTENDANCE_ALREADY_CHECKED_IN');
+
+  // An ended session with an open log remains checkout-only when the next
+  // shift starts. The tablet sees both choices and can explicitly switch back
+  // to finish the old attendance instead of silently losing checkout access.
+  order.shift_end = new Date(Date.now() - 1);
+  const nextOrder: Row = {
+    ...order,
+    id: 'order-next-shift',
+    title: 'Növbəti aktiv növbə',
+    status: 'published',
+    shift_start: new Date(Date.now() - 1),
+    shift_end: new Date(Date.now() + 3_600_000),
+    deleted_at: null,
+  };
+  rows.order.push(nextOrder);
+  const checkoutChoice = await service.getKioskSession(kiosk.kiosk_token) as Row;
+  assert.equal(checkoutChoice.checkout_only, true);
+  assert.equal(checkoutChoice.active_session.order_id, order.id);
+  assert.deepEqual(
+    checkoutChoice.eligible_orders.map((item: Row) => [item.id, item.checkout_only]).sort(),
+    [[order.id, true], [nextOrder.id, false]].sort(),
+  );
+  assert.equal((await service.selectVenueKioskOrder(kiosk.kiosk_token, { order_id: nextOrder.id })).active_session?.order_id, nextOrder.id);
+  assert.equal((await service.selectVenueKioskOrder(kiosk.kiosk_token, { order_id: order.id })).active_session?.order_id, order.id);
+  nextOrder.deleted_at = new Date();
+  const checkoutQr = await service.generateKioskQrToken(kiosk.kiosk_token);
+  const checkout = await service.checkOut(worker.user_id, 'worker', { qr_token: checkoutQr.token });
+  assert.ok(checkout.checkout_time);
+  assert.equal(order.status, 'completed');
+  assert.equal((await service.listAttendanceMonitor('admin', monitorQuery({ status: 'completed' }))).data[0].status, 'completed');
+  assert.equal(rows.attendanceQrUse.length, 2);
+  assert.equal((await service.listAttendance(companyA.user_id, 'company', { page: 1, limit: 20, sort: 'desc', sort_by: 'created_at' })).data.length, 1);
+  assert.equal((await service.listAttendance(companyB.user_id, 'company', { page: 1, limit: 20, sort: 'desc', sort_by: 'created_at' })).data.length, 0);
+  cases += 1;
+  await rejectsCode(() => service.generateKioskQrToken(kiosk.kiosk_token), 'KIOSK_ORDER_INACTIVE');
+
+  // J: admin management still works; physical displays remain independently supported.
+  const adminKiosk = await service.createVenueKiosk('admin-user', 'admin', { company_id: companyB.id, name: 'İkinci giriş' });
+  const adminActive = await service.activateVenueKiosk('admin-user', 'admin', adminKiosk.id, { order_id: otherOrder.id });
+  assert.equal(adminActive.active_session?.order_id, otherOrder.id);
+  assert.ok((await service.generateKioskQrToken(adminKiosk.kiosk_token)).token);
+  await service.disableVenueKiosk('admin-user', 'admin', adminKiosk.id);
+  await rejectsCode(() => service.getKioskSession(adminKiosk.kiosk_token), 'VENUE_KIOSK_DISABLED');
+  await rejectsCode(() => service.generateKioskQrToken(adminKiosk.kiosk_token), 'VENUE_KIOSK_DISABLED');
+  cases += 1;
+
+  console.log(`company QR/attendance behavioral regression: OK (${cases} cases; real service/repository, in-memory Prisma; no live DB)`);
+}
+
+main().catch((error) => { console.error(error); process.exitCode = 1; });

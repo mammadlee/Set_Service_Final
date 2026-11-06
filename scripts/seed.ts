@@ -3,29 +3,32 @@ import 'dotenv/config';
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const { TAXONOMY_SEED } = require('../src/modules/taxonomy/taxonomy.seed');
+const {
+  assertSeedAllowed,
+  resolveSeedPassword,
+  safeSeedErrorName,
+} = require('../src/lib/seed-safety');
+assertSeedAllowed();
+
 const prisma = new PrismaClient();
 
-const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@setservice.az';
-const ADMIN_PASSWORD = seedPassword('SEED_ADMIN_PASSWORD');
-const COMPANY_EMAIL = process.env.SEED_COMPANY_EMAIL ?? 'company@setservice.az';
-const COMPANY_PASSWORD = seedPassword('SEED_COMPANY_PASSWORD');
-const WORKER_PASSWORD = seedPassword('SEED_WORKER_PASSWORD');
-const OPS_ADMIN_EMAIL = process.env.SEED_OPS_ADMIN_EMAIL ?? 'ops@setservice.az';
-const REPORTS_ADMIN_EMAIL = process.env.SEED_REPORTS_ADMIN_EMAIL ?? 'reports@setservice.az';
-const RESTRICTED_ADMIN_PASSWORD = process.env.SEED_RESTRICTED_ADMIN_PASSWORD?.trim() || ADMIN_PASSWORD;
+const seedIdentifier = (envName: string, fallback: string) =>
+  process.env[envName]?.trim() || fallback;
 
-const OPS_ADMIN_PERMISSIONS = [
-  'view_dashboard',
-  'view_workers',
-  'manage_workers',
-  'view_orders',
-  'view_assignments',
-  'manage_assignments',
-  'view_attendance',
-  'view_notifications',
-];
+const ADMIN_EMAIL = seedIdentifier('SEED_ADMIN_EMAIL', 'admin@setservice.az').toLowerCase();
+const ADMIN_PASSWORD = resolveSeedPassword('SEED_ADMIN_PASSWORD');
+const COMPANY_PASSWORD = resolveSeedPassword('SEED_COMPANY_PASSWORD');
+const WORKER_PASSWORD = resolveSeedPassword('SEED_WORKER_PASSWORD');
+const REPORTS_ADMIN_EMAIL = seedIdentifier(
+  'SEED_REPORTS_ADMIN_EMAIL',
+  'reports@setservice.az',
+).toLowerCase();
+const COMPANY_EMAIL = seedIdentifier(
+  'SEED_COMPANY_EMAIL',
+  'company@setservice.az',
+).toLowerCase();
+const RESTRICTED_ADMIN_PASSWORD = resolveSeedPassword('SEED_RESTRICTED_ADMIN_PASSWORD');
 
 const REPORTS_ADMIN_PERMISSIONS = [
   'view_dashboard',
@@ -36,8 +39,9 @@ const REPORTS_ADMIN_PERMISSIONS = [
 ];
 
 async function main() {
-  console.log('Seed starting...\n');
+  console.log('Seed starting.');
   const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+  const restrictedAdminPasswordHash = await bcrypt.hash(RESTRICTED_ADMIN_PASSWORD, 12);
   const companyPasswordHash = await bcrypt.hash(COMPANY_PASSWORD, 12);
   const workerPasswordHash = await bcrypt.hash(WORKER_PASSWORD, 12);
 
@@ -45,8 +49,6 @@ async function main() {
     where: { phone: '+994700000001' },
     update: {
       email: ADMIN_EMAIL,
-      password_hash: adminPasswordHash,
-      password_set_at: new Date(),
       role: 'super_admin',
       name: 'Super Admin',
       is_active: true,
@@ -65,64 +67,60 @@ async function main() {
     update: { permissions: ['*'] },
     create: { user_id: admin.id, permissions: ['*'] },
   });
-  console.log('Super admin:', admin.phone);
-
-  await seedRestrictedAdmin({
-    phone: '+994700000101',
-    email: OPS_ADMIN_EMAIL,
-    name: 'Operations Admin',
-    permissions: OPS_ADMIN_PERMISSIONS,
-    password_hash: adminPasswordHash,
-  });
+  console.log('Super admin seed reconciled.');
 
   await seedRestrictedAdmin({
     phone: '+994700000102',
     email: REPORTS_ADMIN_EMAIL,
     name: 'Reports Admin',
     permissions: REPORTS_ADMIN_PERMISSIONS,
-    password_hash: adminPasswordHash,
+    password_hash: restrictedAdminPasswordHash,
   });
 
   await seedTaxonomy();
 
   const companyUser = await prisma.user.upsert({
-    where: { phone: '+994700000002' },
+    where: { phone: '+994700000007' },
     update: {
       email: COMPANY_EMAIL,
-      password_hash: companyPasswordHash,
-      password_set_at: new Date(),
       role: 'company',
-      name: 'Hilton Baku Əməliyyat Meneceri',
+      name: 'Local Seed Company Manager',
       is_active: true,
+      deleted_at: null,
     },
     create: {
-      phone: '+994700000002',
+      phone: '+994700000007',
       email: COMPANY_EMAIL,
       password_hash: companyPasswordHash,
       password_set_at: new Date(),
       role: 'company',
-      name: 'Hilton Baku Əməliyyat Meneceri',
+      name: 'Local Seed Company Manager',
     },
   });
 
   const company = await prisma.company.upsert({
     where: { user_id: companyUser.id },
-    update: { name: 'Hilton Baku', status: 'approved', approved_at: new Date() },
+    update: {
+      name: 'Local Seed Company',
+      status: 'approved',
+      approved_at: new Date(),
+      deleted_at: null,
+    },
     create: {
       user_id: companyUser.id,
-      name: 'Hilton Baku',
+      name: 'Local Seed Company',
       status: 'approved',
       approved_at: new Date(),
     },
   });
-  console.log('Approved company:', companyUser.phone);
+  console.log('Company seed reconciled.');
 
   await seedWorker({
-    phone: '+994700000003',
-    name: 'Elvin Məmmədov',
-    position: 'Ofisiant',
+    phone: '+994700000006',
+    name: 'Approved Seed Worker',
+    position: 'Event Service Worker',
     status: 'approved',
-    skills: [{ name: 'Servis', level: 4 }, { name: 'Qonaq qarşılama', level: 3 }],
+    skills: [{ name: 'Guest service', level: 4 }, { name: 'Event setup', level: 3 }],
     languages: ['Azərbaycan', 'English'],
     password_hash: workerPasswordHash,
     position_slug: 'waiter-waitress',
@@ -156,19 +154,28 @@ async function main() {
     include: { subdepartment: true },
   });
 
-  const order = await prisma.order.create({
+  const existingSeedOrder = await prisma.order.findFirst({
+    where: {
+      company_id: company.id,
+      title: { startsWith: 'Local seed event service' },
+    },
+    select: { id: true },
+  });
+
+  if (!existingSeedOrder) {
+    await prisma.order.create({
     data: {
       company_id: company.id,
-      title: 'Four Seasons Baku banket xidməti',
-      description: 'Axşam tədbiri üçün premium servis və zal dəstəyi.',
+      title: 'Local seed event service',
+      description: 'Local-only synthetic order used by development and CI smoke tests.',
       category: waiterPosition?.name_az ?? 'Ofisiant',
       shift_start: new Date(Date.now() + 24 * 60 * 60 * 1000),
       shift_end: new Date(Date.now() + 36 * 60 * 60 * 1000),
       required_count: 2,
       required_skills: ['Servis', 'Qonaq qarşılama'],
-      location: 'Hilton Baku, Bakı',
+      location: 'Synthetic Test Venue',
       pay_rate: 18,
-      notes: 'Banket növbəsi; klassik uniforma tələb olunur',
+      notes: 'Synthetic local seed fixture.',
       status: 'active',
       category_items: {
         create: {
@@ -177,30 +184,15 @@ async function main() {
           subdepartment_id: waiterPosition?.subdepartment_id,
           position_id: waiterPosition?.id,
           required_count: 2,
-          notes: 'Banket novbesi; klassik uniforma teleb olunur',
+          notes: 'Synthetic local seed fixture.',
         },
       },
     },
-  });
-  console.log('Active order:', order.id);
+    });
+  }
+  console.log('Order seed reconciled.');
 
-  console.log('\nSeed completed.');
-  console.log('OTP kodu:', process.env.OTP_TEST_CODE ?? '123456');
-  console.log(`Admin:    ${ADMIN_EMAIL} / ${passwordSource('SEED_ADMIN_PASSWORD', ADMIN_PASSWORD)}`);
-  console.log(`Ops:      ${OPS_ADMIN_EMAIL} / ${passwordSource('SEED_RESTRICTED_ADMIN_PASSWORD', RESTRICTED_ADMIN_PASSWORD)}`);
-  console.log(`Reports:  ${REPORTS_ADMIN_EMAIL} / ${passwordSource('SEED_RESTRICTED_ADMIN_PASSWORD', RESTRICTED_ADMIN_PASSWORD)}`);
-  console.log(`Company:  ${COMPANY_EMAIL} / ${passwordSource('SEED_COMPANY_PASSWORD', COMPANY_PASSWORD)}`);
-  console.log('Workers:  +994700000003 approved, +994700000004 pending, +994700000005 rejected');
-}
-
-function seedPassword(envName: string): string {
-  const provided = process.env[envName]?.trim();
-  if (provided) return provided;
-  return `${crypto.randomBytes(18).toString('base64url')}Aa1!`;
-}
-
-function passwordSource(envName: string, generated: string): string {
-  return process.env[envName]?.trim() ? '(from env)' : generated;
+  console.log('Seed completed without printing credentials.');
 }
 
 async function seedRestrictedAdmin(input: {
@@ -209,16 +201,22 @@ async function seedRestrictedAdmin(input: {
   name: string;
   permissions: string[];
   password_hash: string;
+  reconcile_password?: boolean;
 }) {
   const user = await prisma.user.upsert({
     where: { phone: input.phone },
     update: {
       email: input.email,
-      password_hash: input.password_hash,
-      password_set_at: new Date(),
       role: 'admin',
       name: input.name,
       is_active: true,
+      ...(input.reconcile_password
+        ? {
+            password_hash: input.password_hash,
+            password_set_at: new Date(),
+            deleted_at: null,
+          }
+        : {}),
     },
     create: {
       phone: input.phone,
@@ -236,7 +234,7 @@ async function seedRestrictedAdmin(input: {
     update: { permissions: input.permissions },
     create: { user_id: user.id, permissions: input.permissions },
   });
-  console.log('Restricted admin:', input.email);
+  console.log('Restricted admin seed reconciled.');
 }
 
 async function seedTaxonomy() {
@@ -296,7 +294,7 @@ async function seedTaxonomy() {
   }
 
   const positionCount = await prisma.position.count({ where: { status: 'active' } });
-  console.log('Taxonomy positions:', positionCount);
+  console.log('Taxonomy seed reconciled.', { position_count: positionCount });
 }
 
 async function seedWorker(input: {
@@ -307,6 +305,7 @@ async function seedWorker(input: {
   skills: Array<Record<string, unknown>>;
   languages: string[];
   password_hash: string;
+  reconcile_password?: boolean;
   reject_reason?: string;
   position_slug?: string;
 }) {
@@ -315,9 +314,14 @@ async function seedWorker(input: {
     update: {
       role: 'worker',
       name: input.name,
-      password_hash: input.password_hash,
-      password_set_at: new Date(),
       is_active: true,
+      ...(input.reconcile_password
+        ? {
+            password_hash: input.password_hash,
+            password_set_at: new Date(),
+            deleted_at: null,
+          }
+        : {}),
     },
     create: {
       phone: input.phone,
@@ -337,6 +341,7 @@ async function seedWorker(input: {
       languages: input.languages,
       reject_reason: input.reject_reason ?? null,
       approved_at: input.status === 'approved' ? new Date() : null,
+      ...(input.reconcile_password ? { deleted_at: null } : {}),
     },
     create: {
       user_id: user.id,
@@ -370,9 +375,12 @@ async function seedWorker(input: {
       });
     }
   }
-  console.log('Worker:', input.phone, input.status);
+  console.log('Worker seed reconciled.', { status: input.status });
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
+  .catch((e) => {
+    console.error('Seed failed.', { error_type: safeSeedErrorName(e) });
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());

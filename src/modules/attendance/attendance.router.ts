@@ -12,53 +12,156 @@ import {
   GenerateQrTokenSchema,
   KioskSessionIdParamsSchema,
   KioskTokenParamsSchema,
+  ListKioskEligibleOrdersQuerySchema,
   ListVenueKiosksQuerySchema,
+  SelectVenueKioskOrderSchema,
   VenueKioskIdParamsSchema,
   ListAttendanceQuerySchema,
 } from './attendance.schema';
 import * as Service from './attendance.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
+const legacyKioskPathsEnabled = process.env.NODE_ENV !== 'production';
 
 // Public token-protected kiosk endpoints. These do not require admin/company
 // credentials on venue tablets.
-router.get('/kiosk-sessions/:token', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/kiosk-sessions/context', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.getKioskSession(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.getKioskSession(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.post('/kiosk-sessions/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/kiosk-sessions/qr-token', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.generateKioskQrToken(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.generateKioskQrToken(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.get('/venue-kiosks/:token', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/venue-kiosks/context', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.getKioskSession(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.getKioskSession(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
 
-router.post('/venue-kiosks/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/venue-kiosks/qr-token', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { token } = KioskTokenParamsSchema.parse(req.params);
-    res.json(await Service.generateKioskQrToken(token));
+    setKioskResponseHeaders(res);
+    res.json(await Service.generateKioskQrToken(readKioskCapability(req)));
   } catch (e) {
     next(e);
   }
 });
+
+router.post(
+  '/venue-kiosks/select-order',
+  validate(SelectVenueKioskOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      res.json(await Service.selectVenueKioskOrder(readKioskCapability(req), req.body));
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// Local-only migration bridge for kiosk links issued before capability headers
+// were introduced. These routes are not registered in production, keeping raw
+// capabilities out of the production API route surface and application logs.
+// LOCAL_ONLY_KIOSK_LEGACY_START
+if (legacyKioskPathsEnabled) {
+  router.get('/kiosk-sessions/:token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.getKioskSession(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.post('/kiosk-sessions/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.generateKioskQrToken(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.get('/venue-kiosks/:token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.getKioskSession(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  router.post('/venue-kiosks/:token/qr-token', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      setKioskResponseHeaders(res);
+      const { token } = KioskTokenParamsSchema.parse(req.params);
+      res.setHeader('Deprecation', 'true');
+      res.json(await Service.generateKioskQrToken(token));
+    } catch (e) {
+      next(e);
+    }
+  });
+}
+// LOCAL_ONLY_KIOSK_LEGACY_END
 
 router.use(requireAuth);
+
+router.get(
+  '/venue-kiosks/companies',
+  requireRoleOrPermission('manage_kiosks'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await Service.listVenueKioskCompanies(
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.get(
+  '/venue-kiosks/eligible-orders',
+  requireRoleOrPermission('manage_kiosks', 'company'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = ListKioskEligibleOrdersQuerySchema.parse(req.query);
+      res.json(await Service.listKioskEligibleOrders(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 router.get(
   '/venue-kiosks',
@@ -67,7 +170,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListVenueKiosksQuerySchema.parse(req.query);
-      res.json(await Service.listVenueKiosks(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listVenueKiosks(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -81,7 +189,12 @@ router.post(
   validate(CreateVenueKioskSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createVenueKiosk(req.user!.sub, req.user!.role, req.body));
+      res.status(201).json(await Service.createVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -96,7 +209,13 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.activateVenueKiosk(req.user!.sub, req.user!.role, id, req.body));
+      res.json(await Service.activateVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -110,7 +229,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.deactivateVenueKiosk(req.user!.sub, req.user!.role, id));
+      res.json(await Service.deactivateVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -124,7 +248,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = VenueKioskIdParamsSchema.parse(req.params);
-      res.json(await Service.disableVenueKiosk(req.user!.sub, req.user!.role, id));
+      res.json(await Service.disableVenueKiosk(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -139,7 +268,12 @@ router.post(
   validate(CreateKioskSessionSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createKioskSession(req.user!.sub, req.user!.role, req.body));
+      res.status(201).json(await Service.createKioskSession(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -154,7 +288,12 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = KioskSessionIdParamsSchema.parse(req.params);
-      await Service.revokeKioskSession(req.user!.sub, req.user!.role, id);
+      await Service.revokeKioskSession(
+        req.user!.sub,
+        req.user!.role,
+        id,
+        isReviewScopedRequest(req),
+      );
       res.status(204).send();
     } catch (e) {
       next(e);
@@ -170,7 +309,12 @@ router.post(
   validate(GenerateQrTokenSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.json(await Service.generateQrToken(req.user!.sub, req.user!.role, req.body));
+      res.json(await Service.generateQrToken(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -209,13 +353,41 @@ router.post(
 
 // GET /attendance
 router.get(
+  '/monitor',
+  requireRoleOrPermission('view_attendance'),
+  requireApprovedAccount,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const query = ListAttendanceQuerySchema.parse({
+        ...req.query,
+        sort_by: req.query.sort_by ?? 'updated_at',
+      });
+      res.setHeader('Cache-Control', 'no-store, private');
+      res.json(await Service.listAttendanceMonitor(
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// GET /attendance
+router.get(
   '/',
   requireRoleOrPermission('view_attendance', 'company', 'worker'),
   requireApprovedAccount,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListAttendanceQuerySchema.parse(req.query);
-      res.json(await Service.listAttendance(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listAttendance(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -230,7 +402,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = AttendanceIdParamsSchema.parse(req.params);
-      res.json(await Service.getAttendance(id, req.user!.sub, req.user!.role));
+      res.json(await Service.getAttendance(
+        id,
+        req.user!.sub,
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -238,3 +415,15 @@ router.get(
 );
 
 export default router;
+
+function readKioskCapability(req: Request): string {
+  return KioskTokenParamsSchema.parse({
+    token: req.get('x-kiosk-capability'),
+  }).token;
+}
+
+function setKioskResponseHeaders(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}

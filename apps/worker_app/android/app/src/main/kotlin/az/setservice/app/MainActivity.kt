@@ -1,4 +1,4 @@
-package az.setservice.worker_app
+package az.setservice.app
 
 import io.flutter.embedding.android.FlutterActivity
 
