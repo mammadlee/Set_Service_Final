@@ -61,6 +61,11 @@ for (const [image, expected] of expectedCommands) {
       if (process.version !== 'v24.22.0') throw new Error('unexpected Node version: ' + process.version);
       if (!process.versions.openssl.startsWith('3.')) throw new Error('OpenSSL 3 is required');
       if (process.getuid() !== 65532 || process.getgid() !== 65532) throw new Error('unexpected uid/gid');
+      const zlibStatus = fs.readFileSync('/var/lib/dpkg/status.d/zlib1g', 'utf8');
+      if (!zlibStatus.includes('Version: 1:1.3.dfsg+really1.3.1-1+deb13u1')) throw new Error('Debian zlib security update is required');
+      if (fs.readlinkSync('/usr/lib/x86_64-linux-gnu/libz.so.1') !== 'libz.so.1.3.1') throw new Error('unexpected libz SONAME link');
+      const zlibHash = require('node:crypto').createHash('sha256').update(fs.readFileSync('/usr/lib/x86_64-linux-gnu/libz.so.1.3.1')).digest('hex');
+      if (zlibHash !== '6c13931760210e8b391b63a337dfe4071346c4ad6e3827694edb7b6989bb16dd') throw new Error('zlib package metadata must match the reviewed fixed library bytes');
       for (const path of ['/bin/sh', '/usr/local/bin/npm', '/usr/local/bin/npx', '/usr/bin/psql']) {
         if (fs.existsSync(path)) throw new Error(path + ' must not be present');
       }

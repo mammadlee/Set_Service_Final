@@ -27,7 +27,33 @@ RUN npm run build \
 FROM build AS production-dependencies
 RUN npm prune --omit=dev
 
+# DSA-6613-1: authenticated Debian 13 security backport, pending distroless rebuild.
+# Extract the reviewed package without executing maintainer scripts. See docs/runtime-zlib-security-update.md.
+FROM build AS runtime-security-package
+WORKDIR /security-update
+ADD --checksum=sha256:8c27c342230503b73dfde629642c3b352e87b554e06d60cf58772f236a305ceb https://security.debian.org/debian-security/pool/updates/main/z/zlib/zlib1g_1.3.dfsg+really1.3.1-1+deb13u1_amd64.deb ./zlib1g.deb
+RUN set -eu; \
+    test "$(dpkg --print-architecture)" = amd64; \
+    test "$(dpkg-deb -f zlib1g.deb Package)" = zlib1g; \
+    test "$(dpkg-deb -f zlib1g.deb Version)" = '1:1.3.dfsg+really1.3.1-1+deb13u1'; \
+    test "$(dpkg-deb -f zlib1g.deb Architecture)" = amd64; \
+    dpkg-deb --extract zlib1g.deb root; \
+    dpkg-deb --control zlib1g.deb control; \
+    printf '%s\n' usr/lib/x86_64-linux-gnu/libz.so.1.3.1 usr/share/doc/zlib1g/changelog.Debian.gz usr/share/doc/zlib1g/changelog.gz usr/share/doc/zlib1g/copyright | LC_ALL=C sort > files.expected; \
+    find root -type f -printf '%P\n' | LC_ALL=C sort > files.actual; \
+    diff -u files.expected files.actual; \
+    test "$(find root -type l -printf '%P\n')" = usr/lib/x86_64-linux-gnu/libz.so.1; \
+    test "$(readlink root/usr/lib/x86_64-linux-gnu/libz.so.1)" = libz.so.1.3.1; \
+    test -z "$(find root ! -type f ! -type d ! -type l -print)"; \
+    test -z "$(find root -perm /6000 -print)"; \
+    echo '6c13931760210e8b391b63a337dfe4071346c4ad6e3827694edb7b6989bb16dd  root/usr/lib/x86_64-linux-gnu/libz.so.1.3.1' | sha256sum -c -; \
+    (cd root && md5sum -c ../control/md5sums); \
+    mkdir -p root/var/lib/dpkg/status.d; \
+    { printf 'Status: install ok installed\n'; cat control/control; } > root/var/lib/dpkg/status.d/zlib1g; \
+    cp control/md5sums root/var/lib/dpkg/status.d/zlib1g.md5sums
+
 FROM ${RUNTIME_BASE_IMAGE} AS app-runtime-base
+COPY --from=runtime-security-package /security-update/root/ /
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000

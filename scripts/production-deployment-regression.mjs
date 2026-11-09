@@ -103,6 +103,11 @@ assert.doesNotMatch(envTemplate, /https:\/\/[a-f0-9]{24,}\.r2\.cloudflarestorage
 
 assert.match(dockerfile, /^ARG NODE_BASE_IMAGE$/m);
 assert.match(dockerfile, /^ARG RUNTIME_BASE_IMAGE$/m);
+assert.match(dockerfile, /FROM build AS runtime-security-package/);
+assert.match(dockerfile, /ADD --checksum=sha256:8c27c342230503b73dfde629642c3b352e87b554e06d60cf58772f236a305ceb https:\/\/security\.debian\.org\/debian-security\/pool\/updates\/main\/z\/zlib\/zlib1g_1\.3\.dfsg\+really1\.3\.1-1\+deb13u1_amd64\.deb/);
+assert.match(dockerfile, /FROM \$\{RUNTIME_BASE_IMAGE\} AS app-runtime-base\nCOPY --from=runtime-security-package \/security-update\/root\/ \//);
+assert.match(dockerfile, /6c13931760210e8b391b63a337dfe4071346c4ad6e3827694edb7b6989bb16dd/);
+assert.match(dockerfile, /root\/var\/lib\/dpkg\/status\.d\/zlib1g\.md5sums/);
 assert.match(dockerfile, /FROM runtime-common AS api/);
 assert.match(dockerfile, /FROM runtime-common AS outbox-worker/);
 assert.match(dockerfile, /FROM app-runtime-base AS migration/);
