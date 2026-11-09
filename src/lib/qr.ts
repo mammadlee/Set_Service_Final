@@ -3,6 +3,7 @@ import crypto from 'crypto';
 const SECRET = process.env.QR_HMAC_SECRET;
 const FALLBACK_TTL_SECONDS = 5 * 60;
 export const MAX_QR_TOKEN_TTL_SECONDS = 5 * 60;
+export const QR_TOKEN_CLOCK_SKEW_SECONDS = 30;
 const DEFAULT_TTL_SECONDS = parsePositiveTtl(process.env.QR_TOKEN_TTL_SECONDS, FALLBACK_TTL_SECONDS);
 
 export type AttendanceQrPayload = {
@@ -11,6 +12,7 @@ export type AttendanceQrPayload = {
   company_id: string;
   kiosk_id?: string;
   kiosk_session_id?: string;
+  iat: number;
   exp: number;
   nonce: string;
 };
@@ -27,11 +29,15 @@ export function generateAttendanceQrToken(input: {
   kioskSessionId?: string;
   ttlSeconds?: number;
 }): { token: string; expiresAt: Date; nonce: string } {
-  const ttlSeconds = sanitizeTtl(input.ttlSeconds ?? DEFAULT_TTL_SECONDS);
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const ttlSeconds = input.ttlSeconds === undefined
+    ? DEFAULT_TTL_SECONDS
+    : requireValidTtl(input.ttlSeconds);
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + ttlSeconds;
   const payload: AttendanceQrPayload = {
     order_id: input.orderId,
     company_id: input.companyId,
+    iat,
     exp,
     nonce: crypto.randomBytes(12).toString('hex'),
   };
@@ -51,8 +57,13 @@ export function generateAttendanceQrToken(input: {
 
 export function verifyAttendanceQrToken(token: string): QrVerificationResult {
   try {
-    const [payloadPart, signature] = token.split('.');
-    if (!payloadPart || !signature) return { valid: false };
+    if (typeof token !== 'string') return { valid: false };
+    const parts = token.split('.');
+    if (parts.length !== 2) return { valid: false };
+    const [payloadPart, signature] = parts;
+    if (!isCanonicalBase64Url(payloadPart) || !isCanonicalBase64Url(signature)) {
+      return { valid: false };
+    }
 
     const expectedSignature = sign(payloadPart);
     if (!safeEqual(signature, expectedSignature)) return { valid: false };
@@ -63,8 +74,17 @@ export function verifyAttendanceQrToken(token: string): QrVerificationResult {
     }
     const payload = parsed;
 
-    if (payload.exp <= Math.floor(Date.now() / 1000)) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (payload.exp <= nowSeconds) {
       return { valid: false, expired: true };
+    }
+    if (
+      payload.iat > nowSeconds + QR_TOKEN_CLOCK_SKEW_SECONDS ||
+      payload.exp - payload.iat < 1 ||
+      payload.exp - payload.iat > MAX_QR_TOKEN_TTL_SECONDS ||
+      payload.exp > nowSeconds + MAX_QR_TOKEN_TTL_SECONDS + QR_TOKEN_CLOCK_SKEW_SECONDS
+    ) {
+      return { valid: false };
     }
 
     return { valid: true, payload };
@@ -80,6 +100,7 @@ function isAttendanceQrPayload(value: unknown): value is AttendanceQrPayload {
     typeof payload.order_id !== 'string' || payload.order_id.length === 0 ||
     typeof payload.company_id !== 'string' || payload.company_id.length === 0 ||
     typeof payload.nonce !== 'string' || payload.nonce.length < 16 ||
+    typeof payload.iat !== 'number' || !Number.isSafeInteger(payload.iat) || payload.iat <= 0 ||
     typeof payload.exp !== 'number' || !Number.isSafeInteger(payload.exp) || payload.exp <= 0
   ) {
     return false;
@@ -110,19 +131,30 @@ function sign(payloadPart: string): string {
 
 function parsePositiveTtl(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
-  return sanitizeTtl(Number(value), fallback);
+  return normalizeTtl(Number(value)) ?? fallback;
 }
 
-function sanitizeTtl(value: number, fallback = FALLBACK_TTL_SECONDS): number {
-  const normalizedFallback = normalizeTtl(fallback) ?? FALLBACK_TTL_SECONDS;
-  return normalizeTtl(value) ?? normalizedFallback;
+function requireValidTtl(value: number): number {
+  const normalized = normalizeTtl(value);
+  if (normalized === null) {
+    throw new RangeError(`Attendance QR TTL must be an integer from 1 through ${MAX_QR_TOKEN_TTL_SECONDS} seconds.`);
+  }
+  return normalized;
 }
 
 function normalizeTtl(value: number): number | null {
-  if (!Number.isFinite(value)) return null;
-  const wholeSeconds = Math.floor(value);
-  if (wholeSeconds < 1) return null;
-  return Math.min(wholeSeconds, MAX_QR_TOKEN_TTL_SECONDS);
+  if (!Number.isInteger(value)) return null;
+  if (value < 1 || value > MAX_QR_TOKEN_TTL_SECONDS) return null;
+  return value;
+}
+
+function isCanonicalBase64Url(value: string): boolean {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return false;
+  try {
+    return Buffer.from(value, 'base64url').toString('base64url') === value;
+  } catch {
+    return false;
+  }
 }
 
 function safeEqual(a: string, b: string): boolean {
