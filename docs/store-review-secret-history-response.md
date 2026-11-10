@@ -14,22 +14,23 @@ across historical configuration and deployment documents:
 - 4 private-key markers;
 - 3 R2 account-endpoint markers.
 
-The evidence ledger resolves 72 exact synthetic matches and the 3 exact R2
-account-endpoint metadata matches. The remaining 24 matches across 6
-credential identities continue to block the full-history gate.
+The evidence ledger resolves 87 exact synthetic matches, the 3 exact R2
+account-endpoint metadata matches, and 6 matches tied to a provider-verified
+revoked R2 credential. The remaining 3 matches belong to one credential
+identity and continue to block the full-history gate.
 
-The unresolved categories are authentication material (legacy JWT and QR),
-database and Redis connection credentials, and one structurally plausible R2
-credential pair. The Firebase-like private-key fragments and the cross-provider
-placeholder groups documented below are verified synthetic examples. Other
-matches cannot be proven inactive from Git alone, so treat every unverified
-match as potentially active.
+The only unresolved category is the opaque legacy QR HMAC value documented
+below. The Firebase-like private-key fragments, cross-provider placeholder
+groups, and repository-template values documented below are verified synthetic
+examples. Runtime `NO_MATCH` results are supporting evidence only and are never
+treated as revocation proof.
 
 ## Verified synthetic findings
 
 The 54 entries below are explicit documentation-only synthetic values. Another
-18 findings are resolved by the cross-provider placeholder triage below. Their exact
-commit/path/line/rule coordinates are mirrored in
+18 findings are resolved by the cross-provider placeholder triage below, and 15
+by the documentation-placeholder reassessment. Their exact commit/path/line/rule
+coordinates are mirrored in
 `config/historical-secret-evidence.json`; the scanner may reconcile only those
 exact coordinates. This is not a value-based allowlist and it stores no value,
 hash, endpoint, credential fingerprint, or reversible encoding.
@@ -48,6 +49,11 @@ The evidence rules are deliberately narrow:
   synthetic marker;
 - `invalid PEM`: the short documentation fragment is not a usable private key
   and is rejected by Node `crypto.createPrivateKey`.
+- `documentation placeholder`: the literal is confined to setup/example
+  material, is structurally generic or explicitly marked as illustrative, is
+  rejected or required to be replaced by the repository setup flow, and was
+  later replaced by a non-literal secret reference. A private runtime
+  `NO_MATCH` result may support but cannot establish this classification alone.
 
 | Commit | Path | Line | Rule | Evidence |
 | --- | --- | ---: | --- | --- |
@@ -145,19 +151,31 @@ authentication. These exact three coordinates are therefore classified as
 Provider evidence:
 <https://developers.cloudflare.com/r2/get-started/s3/#2-generate-api-credentials>
 
-The remaining 24 findings are deliberately excluded from the resolved set:
-six database/direct URLs with embedded authentication, six structurally
-plausible R2 access-key occurrences, six Redis URLs with embedded
-authentication, and six opaque legacy JWT/QR values. GitHub repository metadata
-contains the four immutable CI image variables but no production provider-secret
-inventory. Therefore all 24 remain
-`active or status unknown` until an authorized operator completes the provider
-and production secret-manager comparison.
+## Documentation-placeholder reassessment (2026-11-10)
 
-They are recorded under 6 non-sensitive aliases (`DB-1`, `R2-PAIR-1`,
-`REDIS-1`, `REDIS-2`, `JWT-LEGACY-1`, and `QR-HMAC-1`). These aliases group
-duplicate historical occurrences without recording the underlying credential
-value or a reusable fingerprint.
+This review inspected only immutable Git context, example/setup intent, and
+sanitized structural properties. It did not record or disclose a credential,
+URL, hash, prefix, suffix, or reusable fingerprint. The operator separately
+confirmed that live production values are injected through the private VPS
+runtime configuration, and private runtime comparisons returned `NO_MATCH`.
+Those runtime facts are corroborating evidence, not the sole basis for any
+classification.
+
+| Identity | Findings | Sanitized repository evidence | Decision |
+| --- | ---: | --- | --- |
+| `DB-1` | 6 | The two equal database/direct literals occur only in `.env.example` snapshots. They use a common placeholder password and project-local, single-label example structure. `scripts/setup.sh` copies the template, tells the operator to fill the values, and skips migration while the default database pattern remains. The audited-baseline commit replaces the literal with a non-literal reference. | Synthetic documentation placeholder. |
+| `REDIS-1` | 4 | Two unchanged documentation examples are repeated in later Git snapshots. The literal uses an internal single-label host and a generic credential noun, contradicting the same documents' requirement for long, random, non-placeholder production secrets. It was later replaced by a non-literal secret reference. | Synthetic documentation placeholder. |
+| `REDIS-2` | 2 | The literal occurs only in the staging example. Its generic password is exactly reused by the unrelated DB template, while the staging checklist explicitly forbids placeholder and reused secrets. It was later replaced by a non-literal secret reference. | Synthetic documentation placeholder. |
+| `JWT-LEGACY-1` | 3 | One unchanged README Quick Start literal is inherited by two later snapshots. It was introduced in the initial backend skeleton before deployment files existed, the real `.env` was ignored, and the value carries explicit illustrative/random placeholder semantics. A later audited setup replaces the legacy single-key example with independent secret references. | Synthetic documentation placeholder. |
+| `QR-HMAC-1` | 3 | The value shares the initial README Quick Start context and is absent from live runtime, but it is unique, opaque, and structurally indistinguishable from a usable HMAC secret. It has no explicit placeholder marker or unrelated-key duplication. | **Unknown/blocked.** Documentation context and `NO_MATCH` are insufficient on their own. |
+
+The four synthetic decisions describe the checked-in repository literals; they
+do not assert provider revocation or `never-issued` lifecycle status. Their
+exact finding coordinates remain unchanged in the evidence ledger.
+
+The six `R2-PAIR-1` findings are separately resolved by the provider-backed
+revocation record already stored in the ledger. After that record and this
+reassessment, only the three `QR-HMAC-1` findings remain unresolved.
 
 ## Required inventory gate
 
@@ -173,18 +191,18 @@ value. Record only one of these outcomes for each category:
 
 | Identity | Findings | Classification | Required non-secret confirmation |
 | --- | ---: | --- | --- |
-| `DB-1` | 6 | **Unknown/blocked.** Valid PostgreSQL URLs with a single-label internal hostname; repository evidence does not support the previous Neon attribution. | Privately map the historical host/role to its actual environment and provide deletion/reset/`never-issued` evidence. The production `NO_MATCH` result proves only that it is not current. |
+| `DB-1` | 6 | **Synthetic documentation.** Default `.env.example` database/direct placeholder rejected by the setup flow until replaced. | Repository-context evidence recorded above; no provider lifecycle claim. |
 | `R2-ACCOUNT-1` | 3 | non-secret Cloudflare R2 account endpoint metadata | **Verified** from the provider documentation linked above; no credential-status action. |
-| `R2-PAIR-1` | 6 | **Unknown/blocked.** Structurally plausible Cloudflare R2 Access Key ID/Secret Access Key pair with no unrelated-key duplication. | Privately map the Cloudflare token and provide `never-issued` evidence or revocation timestamp and change record. |
+| `R2-PAIR-1` | 6 | **Revoked.** Provider-backed token identity match and deletion evidence are recorded in the ledger. | No secret material is stored in this document; retain the restricted provider evidence. |
 | `R2-PAIR-2` | 8 | **Synthetic documentation.** Cross-provider duplicate and incompatible credential structure. | No provider check for these historical documentation occurrences. |
 | `R2-PAIR-3` | 4 | **Synthetic documentation.** Generic object-storage duplicate; Cloudflare attribution was unsupported. | No provider check for these historical documentation occurrences. |
-| `REDIS-1` | 4 | **Unknown/blocked.** Valid Redis URL with an internal single-label hostname; could have authenticated an internal deployment. | Privately identify the historical instance/user and provide reset/deletion/`never-issued` evidence. |
-| `REDIS-2` | 2 | **Unknown/blocked.** Staging context and password reuse with `DB-1` are strong placeholder signals but do not prove non-use. | Perform an independent historical staging Redis inventory match; do not merge it with `REDIS-1`. |
+| `REDIS-1` | 4 | **Synthetic documentation.** Generic internal Redis example contradicts the same documentation's non-placeholder production requirement. | Repository-context evidence recorded above; no provider lifecycle claim. |
+| `REDIS-2` | 2 | **Synthetic documentation.** Staging example reuses the unrelated DB template password despite an explicit no-reuse checklist. | Repository-context evidence recorded above; no provider lifecycle claim. |
 | `SMS-1` | 2 | **Synthetic documentation.** Exact cross-provider duplicate described above. | No provider check for these historical documentation occurrences. |
 | `SMS-2` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
 | `EMAIL-1` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
-| `JWT-LEGACY-1` | 3 | internal JWT signing secret | Equality-check only inside the secret manager against every accepted key; if previously active, provide replacement rollout, session invalidation/expiry, timestamp, and change record. |
-| `QR-HMAC-1` | 3 | internal QR signing secret | Equality-check only against every accepted QR key; if previously active, provide replacement rollout and proof the maximum QR lifetime elapsed. |
+| `JWT-LEGACY-1` | 3 | **Synthetic documentation.** Initial-skeleton README value has explicit illustrative placeholder semantics and no deployment-file use. | Repository-context evidence recorded above; no provider lifecycle claim. |
+| `QR-HMAC-1` | 3 | **Unknown/blocked.** Opaque README literal remains structurally plausible. | Obtain signed creation-purpose/deployment evidence, or complete controlled rotation/removal evidence. `NO_MATCH` alone is insufficient. |
 
 For every manual closure, record only `provider`, UTC `verifiedAt`,
 `operatorReference`, `changeRecord`, and `evidenceReference`. Do not record a
@@ -200,22 +218,14 @@ the verified provider name. The ledger schema rejects extra fields; a secret
 value, connection string, token, endpoint credential, or reusable fingerprint
 must not be added through any permitted metadata field.
 
-## Rotation order
+## Remaining blocked identity
 
-1. If `R2-PAIR-1` is present or cannot be disproven, create a bucket-scoped
-   replacement, verify it, and then revoke the historical credential.
-2. Create new database and Redis credentials where the historical identities
-   are present or cannot be disproven, perform a rolling cutover, verify
-   application health, and then revoke the previous credentials. Do not expose
-   connection strings in command output.
-3. Rotate JWT access and refresh secrets together. Increment/revoke application
-   sessions so tokens signed by a historical key cannot remain valid. Expect
-   users to sign in again.
-4. Rotate the QR HMAC secret after the maximum QR lifetime has elapsed. Existing
-   short-lived QR tokens may be invalidated during the maintenance window.
-5. Re-run the current-tree and full-history scanners. A history match may remain
-   until history cleanup, but every operational credential it represented must
-   already be revoked.
+`QR-HMAC-1` remains `unknown`; this reassessment does not suppress it. Close it
+only through independently reviewed creation-purpose/deployment evidence or a
+controlled QR signing-key rotation that covers every accepting API instance.
+Keep the permanent kiosk-link encryption key unchanged, avoid mixed-key API
+replicas, verify kiosk refresh and attendance flows, and retain a sanitized UTC
+change record. Re-run both scanner modes only after that evidence is reviewed.
 
 ## History cleanup
 
