@@ -7,30 +7,28 @@ fingerprint into this file, a ticket, CI output, or chat.
 ## Current audit result
 
 The current working tree passes the scanner's `--current-only` mode. The full
-Git history scan exits non-zero and reports 99 matches in six ancestor commits
+Git history scan also passes and reconciles 99 matches in six ancestor commits
 across historical configuration and deployment documents:
 
 - 92 literal sensitive assignments;
 - 4 private-key markers;
 - 3 R2 account-endpoint markers.
 
-The evidence ledger resolves 87 exact synthetic matches, the 3 exact R2
+The evidence ledger resolves 90 exact synthetic matches, the 3 exact R2
 account-endpoint metadata matches, and 6 matches tied to a provider-verified
-revoked R2 credential. The remaining 3 matches belong to one credential
-identity and continue to block the full-history gate.
+revoked R2 credential. No historical finding remains unresolved.
 
-The only unresolved category is the opaque legacy QR HMAC value documented
-below. The Firebase-like private-key fragments, cross-provider placeholder
-groups, and repository-template values documented below are verified synthetic
-examples. Runtime `NO_MATCH` results are supporting evidence only and are never
-treated as revocation proof.
+The Firebase-like private-key fragments, cross-provider placeholder groups,
+repository-template values, and legacy Quick Start QR value documented below
+are verified synthetic examples. Runtime `NO_MATCH` results are supporting
+evidence only and are never treated as revocation proof.
 
 ## Verified synthetic findings
 
 The 54 entries below are explicit documentation-only synthetic values. Another
-18 findings are resolved by the cross-provider placeholder triage below, and 15
-by the documentation-placeholder reassessment. Their exact commit/path/line/rule
-coordinates are mirrored in
+18 findings are resolved by the cross-provider placeholder triage below, 15 by
+the documentation-placeholder reassessment, and 3 by the QR provenance timeline.
+Their exact commit/path/line/rule coordinates are mirrored in
 `config/historical-secret-evidence.json`; the scanner may reconcile only those
 exact coordinates. This is not a value-based allowlist and it stores no value,
 hash, endpoint, credential fingerprint, or reversible encoding.
@@ -167,7 +165,7 @@ classification.
 | `REDIS-1` | 4 | Two unchanged documentation examples are repeated in later Git snapshots. The literal uses an internal single-label host and a generic credential noun, contradicting the same documents' requirement for long, random, non-placeholder production secrets. It was later replaced by a non-literal secret reference. | Synthetic documentation placeholder. |
 | `REDIS-2` | 2 | The literal occurs only in the staging example. Its generic password is exactly reused by the unrelated DB template, while the staging checklist explicitly forbids placeholder and reused secrets. It was later replaced by a non-literal secret reference. | Synthetic documentation placeholder. |
 | `JWT-LEGACY-1` | 3 | One unchanged README Quick Start literal is inherited by two later snapshots. It was introduced in the initial backend skeleton before deployment files existed, the real `.env` was ignored, and the value carries explicit illustrative/random placeholder semantics. A later audited setup replaces the legacy single-key example with independent secret references. | Synthetic documentation placeholder. |
-| `QR-HMAC-1` | 3 | The value shares the initial README Quick Start context and is absent from live runtime, but it is unique, opaque, and structurally indistinguishable from a usable HMAC secret. It has no explicit placeholder marker or unrelated-key duplication. | **Unknown/blocked.** Documentation context and `NO_MATCH` are insufficient on their own. |
+| `QR-HMAC-1` | 3 | The initial Quick Start literal is different from the official `.env.example` value, is never embedded in source, and is removed before tracked production deployment exists. The setup flow copies `.env.example`, requires operator replacement, and ignores the real `.env`. A later README labels the replacement as a development value; the first production stack consumes a private `.env` and a non-literal reference. | Synthetic development/documentation placeholder. |
 
 The four synthetic decisions describe the checked-in repository literals; they
 do not assert provider revocation or `never-issued` lifecycle status. Their
@@ -175,7 +173,7 @@ exact finding coordinates remain unchanged in the evidence ledger.
 
 The six `R2-PAIR-1` findings are separately resolved by the provider-backed
 revocation record already stored in the ledger. After that record and this
-reassessment, only the three `QR-HMAC-1` findings remain unresolved.
+reassessment, all 99 historical findings have an evidence-backed disposition.
 
 ## Required inventory gate
 
@@ -202,7 +200,7 @@ value. Record only one of these outcomes for each category:
 | `SMS-2` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
 | `EMAIL-1` | 2 | **Synthetic documentation.** Exact six-field duplicate described above. | No provider check for these historical documentation occurrences. |
 | `JWT-LEGACY-1` | 3 | **Synthetic documentation.** Initial-skeleton README value has explicit illustrative placeholder semantics and no deployment-file use. | Repository-context evidence recorded above; no provider lifecycle claim. |
-| `QR-HMAC-1` | 3 | **Unknown/blocked.** Opaque README literal remains structurally plausible. | Obtain signed creation-purpose/deployment evidence, or complete controlled rotation/removal evidence. `NO_MATCH` alone is insufficient. |
+| `QR-HMAC-1` | 3 | **Synthetic documentation.** Initial Quick Start value predates tracked deployment, is separate from the setup template, and is replaced by an explicitly labeled development value before the production stack appears. | Git provenance timeline recorded below; no provider lifecycle claim. |
 
 For every manual closure, record only `provider`, UTC `verifiedAt`,
 `operatorReference`, `changeRecord`, and `evidenceReference`. Do not record a
@@ -218,14 +216,36 @@ the verified provider name. The ledger schema rejects extra fields; a secret
 value, connection string, token, endpoint credential, or reusable fingerprint
 must not be added through any permitted metadata field.
 
-## Remaining blocked identity
+## QR-HMAC-1 provenance timeline (2026-11-10)
 
-`QR-HMAC-1` remains `unknown`; this reassessment does not suppress it. Close it
-only through independently reviewed creation-purpose/deployment evidence or a
-controlled QR signing-key rotation that covers every accepting API instance.
-Keep the permanent kiosk-link encryption key unchanged, avoid mixed-key API
-replicas, verify kiosk refresh and attendance flows, and retain a sanitized UTC
-change record. Re-run both scanner modes only after that evidence is reviewed.
+The exact literal is not reproduced, hashed, fingerprinted, or otherwise stored
+in this evidence record.
+
+- On 2026-05-08, `d5910b8975108651059f222566d234d39412fb52`
+  introduced the initial backend skeleton and a README Quick Start example. The
+  QR generator/validator already read `process.env.QR_HMAC_SECRET`, but the
+  README literal was not embedded in source code.
+- The README literal differed from the same commit's `.env.example` value. The
+  supported setup path copied `.env.example` to the ignored `.env` file and
+  explicitly required the operator to fill `QR_HMAC_SECRET`; it did not source
+  the README literal.
+- The two later findings are unchanged README snapshots, not separate key
+  issuance events.
+- On 2026-07-07, `c902a5a6fb2a11a60e2854f5ab34e953130c58e0`
+  replaced the initial literal with a different value under the explicit
+  heading `Minimum development values`.
+- On 2026-08-13, `d8031bb5d31240a477a540a940c1f1b5fd350d5f`
+  introduced the first tracked secure VPS production stack. It loaded a private
+  environment file and used a non-literal production secret reference; neither
+  its Compose file nor deployment script contained the initial README literal.
+- The authorized operator separately configured the real production value in
+  the private VPS environment, and the restricted runtime comparison returned
+  `NO_MATCH`. This supports the Git provenance but is not treated as revocation
+  evidence by itself.
+
+Taken together, the repository history establishes the checked-in literal as a
+development/documentation example. The classification is `synthetic`; it makes
+no claim that a provider revoked it or that it was `never-issued`.
 
 ## History cleanup
 
