@@ -169,13 +169,11 @@ async function main() {
     assert.equal(configuredPayload.valid && configuredPayload.payload.exp, Math.floor(fixedQrTime / 1000) + 300,
       'an oversized environment TTL must be capped at 300 seconds at runtime');
 
-    const explicitTtlQr = qrLib.generateAttendanceQrToken({
-      orderId: 'ttl-order', companyId: 'ttl-company', ttlSeconds: 600,
-    });
-    const explicitPayload = qrLib.verifyAttendanceQrToken(explicitTtlQr.token);
-    assert.equal(explicitPayload.valid, true);
-    assert.equal(explicitPayload.valid && explicitPayload.payload.exp, Math.floor(fixedQrTime / 1000) + 300,
-      'an oversized explicit TTL must be capped at 300 seconds');
+    assert.throws(
+      () => qrLib.generateAttendanceQrToken({ orderId: 'ttl-order', companyId: 'ttl-company', ttlSeconds: 600 }),
+      RangeError,
+      'an oversized explicit TTL must be rejected',
+    );
     cases += 2;
   } finally {
     Date.now = realDateNow;
@@ -529,6 +527,13 @@ async function main() {
   rows.attendanceQrToken.find((item) => item.token_hash === qrLib.hashQrToken(revokedQr.token))!.revoked_at = new Date();
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: revokedQr.token }), 'QR_TOKEN_REVOKED');
   await rejectsCode(() => service.checkIn(worker.user_id, 'worker', { qr_token: `${initialQr.token}tampered` }), 'QR_TOKEN_INVALID');
+  const usesBeforeMutatedCheckin = rows.attendanceQrUse.length;
+  await rejectsCode(() => service.checkIn(worker.user_id, 'worker', {
+    qr_token: `${initialQr.token}.replay-mutation`,
+  }), 'QR_TOKEN_INVALID');
+  assert.equal(rows.attendanceQrUse.length, usesBeforeMutatedCheckin,
+    'a token-format mutation must be rejected before replay state is written');
+  cases += 1;
   const actualNow = Date.now;
   const expiredQr = qrLib.generateAttendanceQrToken({ orderId: order.id, companyId: companyA.id, ttlSeconds: 1 });
   Date.now = () => actualNow() + 2_000;
@@ -568,6 +573,13 @@ async function main() {
   assert.equal((await service.selectVenueKioskOrder(kiosk.kiosk_token, { order_id: order.id })).active_session?.order_id, order.id);
   nextOrder.deleted_at = new Date();
   const checkoutQr = await service.generateKioskQrToken(kiosk.kiosk_token);
+  const usesBeforeMutatedCheckout = rows.attendanceQrUse.length;
+  await rejectsCode(() => service.checkOut(worker.user_id, 'worker', {
+    qr_token: `${checkoutQr.token}.replay-mutation`,
+  }), 'QR_TOKEN_INVALID');
+  assert.equal(rows.attendanceQrUse.length, usesBeforeMutatedCheckout,
+    'a mutated checkout token must not consume the registered QR grant');
+  cases += 1;
   const checkout = await service.checkOut(worker.user_id, 'worker', { qr_token: checkoutQr.token });
   assert.ok(checkout.checkout_time);
   assert.equal(order.status, 'completed');
