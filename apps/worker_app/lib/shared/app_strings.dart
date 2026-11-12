@@ -34,6 +34,10 @@ class AppStrings {
       'Serverdə xəta baş verdi. Bir az sonra yenidən cəhd edin.';
   static const corsDenied = 'Bu tətbiqdən API-yə girişə icazə verilmir.';
   static const configErrorTitle = 'Konfiqurasiya xətası';
+  static const configErrorEnvironmentMissing =
+      'Canlı versiya üçün APP_ENV mütləq verilməlidir.';
+  static const configErrorEnvironmentInvalid =
+      'APP_ENV etibarlı tətbiq mühiti olmalıdır.';
   static const configErrorBaseUrlMissing =
       'Canlı versiya üçün BASE_URL mütləq verilməlidir.';
   static const configErrorBaseUrlInvalid =
@@ -42,6 +46,8 @@ class AppStrings {
       'Canlı versiya localhost və ya emulator ünvanı ilə işləməməlidir. Canlı API ünvanını verin.';
   static const configErrorBaseUrlInsecure =
       'Canlı versiyada API ünvanı yalnız HTTPS istifadə etməlidir.';
+  static const configErrorEnvironmentBaseUrlMismatch =
+      'APP_ENV və BASE_URL eyni təsdiqlənmiş mühitə aid olmalıdır.';
   static const kioskUrlBlocked = 'Etibarsız QR linkinin açılması bloklandı.';
 
   static const roleSelectionTitle = 'SET Service-ə xoş gəlmisiniz';

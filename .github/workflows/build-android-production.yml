@@ -1,0 +1,298 @@
+name: Build signed Android production AAB
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact 40-character release commit SHA selected for this run
+        required: true
+        type: string
+      confirmation:
+        description: Type BUILD_SIGNED_ANDROID_PRODUCTION_AAB
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-production-aab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-request:
+    name: Validate production AAB request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require exact selected SHA and confirmation
+        shell: bash
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::release_sha must be an exact lowercase 40-character commit SHA."
+            exit 1
+          fi
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/heads/codex/final-store-release-preparation) ;;
+            *)
+              echo "::error::Production AAB builds are restricted to the approved release branches."
+              exit 1
+              ;;
+          esac
+          if [[ "$EXPECTED_RELEASE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::The approved release SHA must equal the selected workflow ref HEAD."
+            exit 1
+          fi
+          if [[ "$RELEASE_CONFIRMATION" != "BUILD_SIGNED_ANDROID_PRODUCTION_AAB" ]]; then
+            echo "::error::The production AAB confirmation phrase is incorrect."
+            exit 1
+          fi
+
+  build-production-aab:
+    name: Signed Android production AAB
+    needs: validate-request
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: android-production-release
+    env:
+      APP_ENV: production
+      BASE_URL: ${{ vars.PRODUCTION_API_BASE_URL }}
+      ANDROID_UPLOAD_CERT_SHA256: ${{ vars.ANDROID_UPLOAD_CERT_SHA256 }}
+      ANDROID_FIREBASE_PROJECT_ID: ${{ vars.ANDROID_FIREBASE_PROJECT_ID }}
+
+    steps:
+      - name: Checkout exact approved release SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify checked-out release SHA
+        shell: bash
+        env:
+          EXPECTED_RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_RELEASE_SHA"
+          test -z "$(git status --short)"
+
+      - name: Setup Node.js for release validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.0
+
+      - name: Setup Java 17 for Gradle 8.12
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: 3.32.6
+          cache: true
+
+      - name: Pin Flutter Android JDK to 17
+        run: flutter config --jdk-dir="$JAVA_HOME"
+
+      - name: Require protected production release variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUIRED_RELEASE_VALUES=(
+            BASE_URL
+            ANDROID_UPLOAD_CERT_SHA256
+            ANDROID_FIREBASE_PROJECT_ID
+          )
+          MISSING_RELEASE_VALUES=()
+          for name in "${REQUIRED_RELEASE_VALUES[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              MISSING_RELEASE_VALUES+=("$name")
+            fi
+          done
+          if (( ${#MISSING_RELEASE_VALUES[@]} > 0 )); then
+            printf '::error::Missing required protected Android production configuration: %s\n' \
+              "$(IFS=,; echo "${MISSING_RELEASE_VALUES[*]}")"
+            exit 1
+          fi
+
+          node scripts/validate-web-env.mjs worker-production
+          grep -Fx 'version: 1.0.0+15' apps/worker_app/pubspec.yaml >/dev/null
+          grep -F 'applicationId = "az.setservice.app"' \
+            apps/worker_app/android/app/build.gradle.kts >/dev/null
+
+      - name: Install Flutter dependencies
+        working-directory: apps/worker_app
+        run: flutter pub get
+
+      - name: Install checksum-pinned bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly bundletool_url="https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"
+          readonly bundletool_sha256="a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
+          readonly bundletool_path="$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "$bundletool_url" --output "$bundletool_path"
+          printf '%s  %s\n' "$bundletool_sha256" "$bundletool_path" | sha256sum --check --strict
+
+      - name: Build and verify signed production AAB
+        working-directory: apps/worker_app
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          REQUIRED_SECRET_VALUES=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+            ANDROID_GOOGLE_SERVICES_JSON_BASE64
+          )
+          for name in "${REQUIRED_SECRET_VALUES[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::A required Android production secret is unavailable."
+              exit 1
+            fi
+          done
+
+          KEYSTORE_PATH="$RUNNER_TEMP/setservice-production-release.jks"
+          KEY_CERT_PATH="$RUNNER_TEMP/setservice-upload-cert.der"
+          BUNDLETOOL_PATH="$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+          BUNDLE_MANIFEST_PATH="$RUNNER_TEMP/setservice-production-manifest.xml"
+          GOOGLE_SERVICES_PATH="$PWD/android/app/google-services.json"
+          AAB_PATH="$PWD/build/app/outputs/bundle/release/app-release.aab"
+          RECEIPT_PATH="$PWD/build/app/outputs/bundle/release/android-production-aab.sha256.txt"
+
+          cleanup_release_files() {
+            rm -f -- \
+              "$KEYSTORE_PATH" \
+              "$KEY_CERT_PATH" \
+              "$BUNDLE_MANIFEST_PATH" \
+              "$GOOGLE_SERVICES_PATH"
+          }
+          trap cleanup_release_files EXIT
+          umask 077
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" \
+            | base64 --decode > "$GOOGLE_SERVICES_PATH"
+          test -s "$KEYSTORE_PATH"
+          test -s "$GOOGLE_SERVICES_PATH"
+          test -s "$BUNDLETOOL_PATH"
+
+          keytool -list \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            >/dev/null
+          keytool -exportcert \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -file "$KEY_CERT_PATH" \
+            >/dev/null
+
+          normalize_fingerprint() {
+            tr '[:lower:]' '[:upper:]' | tr -d ':[:space:]'
+          }
+          EXPECTED_CERT="$(printf '%s' "$ANDROID_UPLOAD_CERT_SHA256" | normalize_fingerprint)"
+          if [[ ! "$EXPECTED_CERT" =~ ^[A-F0-9]{64}$ ]]; then
+            echo "::error::ANDROID_UPLOAD_CERT_SHA256 must contain one SHA-256 certificate fingerprint."
+            exit 1
+          fi
+          KEY_CERT="$(openssl x509 -inform DER -in "$KEY_CERT_PATH" \
+            -noout -fingerprint -sha256 | cut -d= -f2 | normalize_fingerprint)"
+          if [[ "$KEY_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "::error::The keystore certificate is not the approved Google Play upload certificate."
+            exit 1
+          fi
+
+          node - "$GOOGLE_SERVICES_PATH" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const configPath = process.argv[2];
+          const config = JSON.parse(readFileSync(configPath, 'utf8'));
+          const projectId = config?.project_info?.project_id;
+          const packages = Array.isArray(config?.client)
+            ? config.client.map(
+                (client) => client?.client_info?.android_client_info?.package_name,
+              )
+            : [];
+          if (projectId !== process.env.ANDROID_FIREBASE_PROJECT_ID) {
+            throw new Error('google-services.json does not match the approved Firebase project.');
+          }
+          if (!packages.includes('az.setservice.app')) {
+            throw new Error('google-services.json does not contain az.setservice.app.');
+          }
+          NODE
+
+          export ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH"
+          flutter build appbundle --release \
+            --dart-define=APP_ENV=production \
+            --dart-define=BASE_URL="$BASE_URL"
+
+          test -s "$AAB_PATH"
+          jarsigner -verify -strict \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
+            "$AAB_PATH" >/dev/null
+          AAB_CERT="$(keytool -printcert -jarfile "$AAB_PATH" \
+            | awk -F': ' '/SHA256:/{print $2; exit}' | normalize_fingerprint)"
+          if [[ "$AAB_CERT" != "$EXPECTED_CERT" ]]; then
+            echo "::error::The completed AAB signer is not the approved Google Play upload certificate."
+            exit 1
+          fi
+
+          java -jar "$BUNDLETOOL_PATH" validate --bundle="$AAB_PATH" >/dev/null
+          java -jar "$BUNDLETOOL_PATH" dump manifest \
+            --bundle="$AAB_PATH" \
+            --module=base \
+            > "$BUNDLE_MANIFEST_PATH"
+          node - "$BUNDLE_MANIFEST_PATH" <<'NODE'
+          const { readFileSync } = require('node:fs');
+          const manifest = readFileSync(process.argv[2], 'utf8');
+          const readAttribute = (name) => {
+            const match = manifest.match(new RegExp(`(?:\\s|<)${name}="([^"]+)"`));
+            return match?.[1];
+          };
+          if (readAttribute('package') !== 'az.setservice.app') {
+            throw new Error('The completed AAB application ID is not az.setservice.app.');
+          }
+          if (readAttribute('android:versionCode') !== '15') {
+            throw new Error('The completed AAB versionCode is not 15.');
+          }
+          if (readAttribute('android:versionName') !== '1.0.0') {
+            throw new Error('The completed AAB versionName is not 1.0.0.');
+          }
+          NODE
+
+          AAB_SHA256="$(sha256sum "$AAB_PATH" | awk '{print $1}')"
+          {
+            echo "release_sha=$GITHUB_SHA"
+            echo "version=1.0.0+15"
+            echo "application_id=az.setservice.app"
+            echo "aab_sha256=$AAB_SHA256"
+          } > "$RECEIPT_PATH"
+
+      - name: Upload verified production AAB and receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: setservice-worker-production-aab-${{ github.sha }}
+          path: |
+            apps/worker_app/build/app/outputs/bundle/release/app-release.aab
+            apps/worker_app/build/app/outputs/bundle/release/android-production-aab.sha256.txt
+          if-no-files-found: error
+          retention-days: 7

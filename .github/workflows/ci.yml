@@ -759,19 +759,29 @@ jobs:
         working-directory: apps/worker_app
         run: flutter test
 
+      - name: Validate isolated worker CI API configuration
+        working-directory: apps/worker_app
+        env:
+          APP_ENV: ci
+          BASE_URL: https://api.invalid
+        run: node ../../scripts/validate-web-env.mjs worker-ci
+
       - name: Build Flutter web release
         working-directory: apps/worker_app
         run: >-
           flutter build web --release
-          --dart-define=APP_ENV=staging
-          --dart-define=BASE_URL=https://api.ci.setservice.az
+          --dart-define=APP_ENV=ci
+          --dart-define=BASE_URL=https://api.invalid
 
       - name: Build debug APK
         working-directory: apps/worker_app
         # This is a CI smoke artifact, not the Play release bundle. Restrict it
         # to the production Android ABI so packaging does not depend on the
         # runner's deprecated x86 Android toolchain.
-        run: flutter build apk --debug --target-platform android-arm64
+        run: >-
+          flutter build apk --debug --target-platform android-arm64
+          --dart-define=APP_ENV=ci
+          --dart-define=BASE_URL=https://api.invalid
 
       - name: Verify Android release signing fails closed without credentials
         working-directory: apps/worker_app
@@ -784,8 +794,8 @@ jobs:
             -u ANDROID_KEY_ALIAS \
             -u ANDROID_KEY_PASSWORD \
             flutter build appbundle --release \
-              --dart-define=APP_ENV=staging \
-              --dart-define=BASE_URL=https://api.ci.setservice.az \
+              --dart-define=APP_ENV=ci \
+              --dart-define=BASE_URL=https://api.invalid \
               > release-signing-check.log 2>&1
           then
             echo "Unsigned release build unexpectedly succeeded."
@@ -793,97 +803,13 @@ jobs:
           fi
           grep -q "Release signing is not configured" release-signing-check.log
 
-      - name: Build required signed staging Android AAB
-        if: github.event_name != 'pull_request'
-        working-directory: apps/worker_app
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON_BASE64 }}
-          STAGING_API_BASE_URL: ${{ secrets.STAGING_API_BASE_URL }}
-        run: |
-          set -euo pipefail
-          REQUIRED_RELEASE_VALUES=(
-            ANDROID_KEYSTORE_BASE64
-            ANDROID_KEYSTORE_PASSWORD
-            ANDROID_KEY_ALIAS
-            ANDROID_KEY_PASSWORD
-            ANDROID_GOOGLE_SERVICES_JSON_BASE64
-            STAGING_API_BASE_URL
-          )
-          MISSING_RELEASE_VALUES=()
-          for name in "${REQUIRED_RELEASE_VALUES[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              MISSING_RELEASE_VALUES+=("$name")
-            fi
-          done
-          if (( ${#MISSING_RELEASE_VALUES[@]} > 0 )); then
-            printf '::error::Missing required Android release configuration: %s\n' \
-              "$(IFS=,; echo "${MISSING_RELEASE_VALUES[*]}")"
-            exit 1
-          fi
-
-          node ../../scripts/validate-web-env.mjs worker
-
-          KEYSTORE_PATH="$RUNNER_TEMP/setservice-release.jks"
-          GOOGLE_SERVICES_PATH="$PWD/android/app/google-services.json"
-          cleanup_release_files() {
-            rm -f -- "$KEYSTORE_PATH" "$GOOGLE_SERVICES_PATH"
-          }
-          trap cleanup_release_files EXIT
-          umask 077
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON_BASE64" \
-            | base64 --decode > "$GOOGLE_SERVICES_PATH"
-          test -s "$KEYSTORE_PATH"
-          test -s "$GOOGLE_SERVICES_PATH"
-          keytool -list \
-            -keystore "$KEYSTORE_PATH" \
-            -storepass "$ANDROID_KEYSTORE_PASSWORD" \
-            -alias "$ANDROID_KEY_ALIAS" \
-            >/dev/null
-          node - "$GOOGLE_SERVICES_PATH" <<'NODE'
-          const { readFileSync } = require('node:fs');
-          const configPath = process.argv[2];
-          const config = JSON.parse(readFileSync(configPath, 'utf8'));
-          const projectId = config?.project_info?.project_id;
-          const packages = Array.isArray(config?.client)
-            ? config.client.map(
-                (client) => client?.client_info?.android_client_info?.package_name,
-              )
-            : [];
-          if (typeof projectId !== 'string' || projectId.trim().length === 0) {
-            throw new Error('google-services.json is missing project_info.project_id.');
-          }
-          if (!packages.includes('az.setservice.app')) {
-            throw new Error(
-              'google-services.json does not contain az.setservice.app.',
-            );
-          }
-          NODE
-          export ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH"
-          flutter build appbundle --release \
-            --dart-define=APP_ENV=staging \
-            --dart-define=BASE_URL="$STAGING_API_BASE_URL"
-
-      - name: Upload signed staging AAB
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: setservice-worker-staging-aab-${{ github.sha }}
-          path: apps/worker_app/build/app/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 14
-
   worker-ios:
     name: Worker iOS unsigned release gate
     runs-on: macos-26
     timeout-minutes: 30
     env:
-      STAGING_API_BASE_URL: ${{ github.event_name == 'pull_request' && 'https://api.ci.setservice.az' || secrets.STAGING_API_BASE_URL }}
+      APP_ENV: ci
+      BASE_URL: https://api.invalid
 
     steps:
       - name: Checkout
@@ -923,11 +849,11 @@ jobs:
 
       - name: Validate iOS release API configuration
         working-directory: apps/worker_app
-        run: node ../../scripts/validate-web-env.mjs worker
+        run: node ../../scripts/validate-web-env.mjs worker-ci
 
       - name: Build unsigned iOS release
         working-directory: apps/worker_app
         run: >-
           flutter build ios --release --no-codesign
-          --dart-define=APP_ENV=staging
-          --dart-define=BASE_URL="$STAGING_API_BASE_URL"
+          --dart-define=APP_ENV=ci
+          --dart-define=BASE_URL=https://api.invalid

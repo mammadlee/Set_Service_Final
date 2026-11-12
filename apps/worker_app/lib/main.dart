@@ -112,10 +112,16 @@ class _ConfigErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = switch (issue) {
+      AppConfigIssue.missingEnvironment =>
+        AppStrings.configErrorEnvironmentMissing,
+      AppConfigIssue.invalidEnvironment =>
+        AppStrings.configErrorEnvironmentInvalid,
       AppConfigIssue.missingBaseUrl => AppStrings.configErrorBaseUrlMissing,
       AppConfigIssue.invalidBaseUrl => AppStrings.configErrorBaseUrlInvalid,
       AppConfigIssue.localBaseUrl => AppStrings.configErrorBaseUrlLocal,
       AppConfigIssue.insecureBaseUrl => AppStrings.configErrorBaseUrlInsecure,
+      AppConfigIssue.environmentBaseUrlMismatch =>
+        AppStrings.configErrorEnvironmentBaseUrlMismatch,
     };
 
     return Scaffold(

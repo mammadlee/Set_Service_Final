@@ -8,8 +8,14 @@ const TARGETS = {
   ],
   company: [['VITE_API_BASE_URL', 'Company API']],
   kiosk: [['VITE_API_BASE_URL', 'QR kiosk API']],
-  worker: [['STAGING_API_BASE_URL', 'Worker app staging API']],
 };
+
+const WORKER_BUILD_MODES = new Set(['ci', 'staging', 'production']);
+const WORKER_CI_BASE_URL = 'https://api.invalid';
+const WORKER_PRODUCTION_BASE_URLS = new Set([
+  'https://api.setservice.az',
+  'https://api.setservice.az/v1',
+]);
 
 export function validateReleaseEnvironment(target, environment = process.env) {
   const requiredVariables = TARGETS[target];
@@ -22,6 +28,65 @@ export function validateReleaseEnvironment(target, environment = process.env) {
     validated[name] = validateProductionUrl(environment[name], name, label);
   }
   return validated;
+}
+
+export function validateWorkerBuildEnvironment(mode, environment = process.env) {
+  if (!WORKER_BUILD_MODES.has(mode)) {
+    throw new Error(`Unknown worker build environment: ${mode}`);
+  }
+
+  const appEnvironment = environment.APP_ENV?.trim();
+  if (appEnvironment !== mode) {
+    throw new Error(`APP_ENV must be exactly ${mode} for the worker ${mode} build.`);
+  }
+
+  if (mode === 'ci') {
+    const baseUrl = normalizeAbsoluteUrl(environment.BASE_URL, 'BASE_URL');
+    if (baseUrl !== WORKER_CI_BASE_URL) {
+      throw new Error(
+        `BASE_URL must be exactly ${WORKER_CI_BASE_URL} for the isolated worker CI build.`,
+      );
+    }
+    return { APP_ENV: appEnvironment, BASE_URL: baseUrl };
+  }
+
+  const baseUrl = validateProductionUrl(
+    environment.BASE_URL,
+    'BASE_URL',
+    `Worker app ${mode} API`,
+  );
+  const isProductionUrl = WORKER_PRODUCTION_BASE_URLS.has(baseUrl);
+  const usesProductionHost = new URL(baseUrl).hostname.toLowerCase() === 'api.setservice.az';
+
+  if (mode === 'production' && !isProductionUrl) {
+    throw new Error(
+      'BASE_URL must be the approved SET Service production API for a worker production build.',
+    );
+  }
+  if (mode === 'staging' && usesProductionHost) {
+    throw new Error('A worker staging build must not use the production API hostname.');
+  }
+
+  return { APP_ENV: appEnvironment, BASE_URL: baseUrl };
+}
+
+function normalizeAbsoluteUrl(rawValue, variableName) {
+  const value = rawValue?.trim();
+  if (!value) {
+    throw new Error(`${variableName} is required.`);
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${variableName} must be an absolute URL.`);
+  }
+
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${variableName} must not contain credentials, a query string, or a fragment.`);
+  }
+  return parsed.toString().replace(/\/+$/, '');
 }
 
 export function validateProductionUrl(rawValue, variableName, label = variableName) {
@@ -127,7 +192,10 @@ const isDirectExecution =
 if (isDirectExecution) {
   const target = process.argv[2];
   try {
-    const validated = validateReleaseEnvironment(target);
+    const workerMode = target?.match(/^worker-(ci|staging|production)$/)?.[1];
+    const validated = workerMode
+      ? validateWorkerBuildEnvironment(workerMode)
+      : validateReleaseEnvironment(target);
     console.log(`Validated ${target} release environment: ${Object.keys(validated).join(', ')}`);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

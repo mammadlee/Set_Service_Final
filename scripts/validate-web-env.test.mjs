@@ -4,6 +4,7 @@ import {
   isPrivateOrLocalHostname,
   validateProductionUrl,
   validateReleaseEnvironment,
+  validateWorkerBuildEnvironment,
 } from './validate-web-env.mjs';
 
 test('all web targets require their production variables', () => {
@@ -14,7 +15,84 @@ test('all web targets require their production variables', () => {
   );
   assert.throws(() => validateReleaseEnvironment('company', {}), /VITE_API_BASE_URL is required/);
   assert.throws(() => validateReleaseEnvironment('kiosk', {}), /VITE_API_BASE_URL is required/);
-  assert.throws(() => validateReleaseEnvironment('worker', {}), /STAGING_API_BASE_URL is required/);
+});
+
+test('worker CI builds are pinned to an explicit non-routable endpoint', () => {
+  assert.deepEqual(
+    validateWorkerBuildEnvironment('ci', {
+      APP_ENV: 'ci',
+      BASE_URL: 'https://api.invalid/',
+    }),
+    { APP_ENV: 'ci', BASE_URL: 'https://api.invalid' },
+  );
+  assert.throws(
+    () => validateWorkerBuildEnvironment('ci', { APP_ENV: 'ci', BASE_URL: 'https://api.setservice.az' }),
+    /must be exactly https:\/\/api\.invalid/,
+  );
+  assert.throws(
+    () => validateWorkerBuildEnvironment('ci', { APP_ENV: 'staging', BASE_URL: 'https://api.invalid' }),
+    /APP_ENV must be exactly ci/,
+  );
+});
+
+test('worker production builds accept only the approved production API', () => {
+  for (const baseUrl of [
+    'https://api.setservice.az',
+    'https://api.setservice.az/',
+    'https://api.setservice.az/v1',
+    'https://api.setservice.az/v1/',
+  ]) {
+    const validated = validateWorkerBuildEnvironment('production', {
+      APP_ENV: 'production',
+      BASE_URL: baseUrl,
+    });
+    assert.match(validated.BASE_URL, /^https:\/\/api\.setservice\.az(?:\/v1)?$/);
+  }
+
+  for (const baseUrl of [
+    'https://staging-api.setservice.az',
+    'https://api.setservice.az/v2',
+    'https://api.setservice.az:8443/v1',
+  ]) {
+    assert.throws(
+      () => validateWorkerBuildEnvironment('production', {
+        APP_ENV: 'production',
+        BASE_URL: baseUrl,
+      }),
+      /approved SET Service production API/,
+    );
+  }
+});
+
+test('worker staging builds reject the production API and missing configuration', () => {
+  assert.deepEqual(
+    validateWorkerBuildEnvironment('staging', {
+      APP_ENV: 'staging',
+      BASE_URL: 'https://staging-api.setservice.az/v1/',
+    }),
+    { APP_ENV: 'staging', BASE_URL: 'https://staging-api.setservice.az/v1' },
+  );
+  for (const baseUrl of [
+    'https://api.setservice.az/v1',
+    'https://api.setservice.az/staging',
+    'https://api.setservice.az:8443/v1',
+  ]) {
+    assert.throws(
+      () => validateWorkerBuildEnvironment('staging', {
+        APP_ENV: 'staging',
+        BASE_URL: baseUrl,
+      }),
+      /must not use the production API hostname/,
+    );
+  }
+  assert.throws(
+    () => validateWorkerBuildEnvironment('staging', { APP_ENV: 'staging' }),
+    /BASE_URL is required/,
+  );
+  assert.throws(
+    () => validateWorkerBuildEnvironment('production', { BASE_URL: 'https://api.setservice.az' }),
+    /APP_ENV must be exactly production/,
+  );
 });
 
 test('production URLs must use HTTPS and contain no credentials or URL metadata', () => {
@@ -107,13 +185,9 @@ test('valid public HTTPS endpoints are accepted for every target', () => {
   const kiosk = validateReleaseEnvironment('kiosk', {
     VITE_API_BASE_URL: 'https://api.setservice.az/v1',
   });
-  const worker = validateReleaseEnvironment('worker', {
-    STAGING_API_BASE_URL: 'https://api.setservice.az/v1',
-  });
 
   assert.equal(admin.VITE_API_BASE_URL, 'https://api.setservice.az');
   assert.equal(admin.VITE_KIOSK_BASE_URL, 'https://qr.setservice.az');
   assert.equal(company.VITE_API_BASE_URL, 'https://api.setservice.az/v1');
   assert.equal(kiosk.VITE_API_BASE_URL, 'https://api.setservice.az/v1');
-  assert.equal(worker.STAGING_API_BASE_URL, 'https://api.setservice.az/v1');
 });
