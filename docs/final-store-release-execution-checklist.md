@@ -39,11 +39,16 @@ the final reviewed immutable value.
 
 - [ ] After explicit approval, push `<RELEASE_SHA>` and open the reviewed pull
   request. Require all CI gates and verify the remote SHA before merge.
-- [ ] Before a `main`/`master` push, configure the existing protected Android
-  release values (`ANDROID_KEYSTORE_BASE64`, keystore/key passwords and alias,
-  `ANDROID_GOOGLE_SERVICES_JSON_BASE64`, and `STAGING_API_BASE_URL`) through
-  GitHub Actions secrets. They were absent during the read-only audit; pull
-  requests skip the signed-AAB step, while a post-merge push requires it.
+- [ ] Create the protected `android-production-release` GitHub Environment with
+  a required reviewer. Scope the existing Android keystore/password/alias and
+  production Firebase JSON secrets to that environment. Configure the public
+  `PRODUCTION_API_BASE_URL`, approved upload-certificate SHA-256 and expected
+  Firebase project ID as environment variables. Do not configure a staging URL
+  to point at production.
+- [ ] After the normal CI gates pass, manually dispatch
+  `build-android-production.yml` from the exact approved release SHA and enter
+  its confirmation phrase. Verify the signed AAB receipt; the workflow creates
+  an artifact only and never uploads to Google Play.
 
 ## 3. Build and publish five immutable images
 

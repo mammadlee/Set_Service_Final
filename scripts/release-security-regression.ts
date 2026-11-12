@@ -191,7 +191,12 @@ function testOutboxHealthContract(): void {
 function testCiWorkflow(): void {
   const workflowText = read('.github/workflows/ci.yml');
   const workflow = yaml.load(workflowText) as Workflow;
+  const androidReleaseWorkflowText = read(
+    '.github/workflows/build-android-production.yml',
+  );
+  const androidReleaseWorkflow = yaml.load(androidReleaseWorkflowText) as Workflow;
   assert.equal(workflow.permissions?.contents, 'read');
+  assert.equal(androidReleaseWorkflow.permissions?.contents, 'read');
 
   const steps = Object.values(workflow.jobs ?? {}).flatMap((job) => job.steps ?? []);
   const checkoutSteps = steps.filter((step) => step.uses?.startsWith('actions/checkout@'));
@@ -234,9 +239,19 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /vars\.PRODUCTION_KIOSK_BASE_URL/);
   assert.match(workflowText, /Verify Android release signing fails closed without credentials/);
   assert.match(workflowText, /grep -q "Release signing is not configured"/);
-  assert.match(workflowText, /Build required signed staging Android AAB/);
-  assert.match(workflowText, /Missing required Android release configuration/);
+  assert.doesNotMatch(workflowText, /Build required signed staging Android AAB/);
+  assert.doesNotMatch(workflowText, /Upload signed staging AAB/);
+  assert.doesNotMatch(workflowText, /STAGING_API_BASE_URL/);
   assert.doesNotMatch(workflowText, /built=false|Signed AAB skipped/);
+  assert.match(workflowText, /node \.\.\/\.\.\/scripts\/validate-web-env\.mjs worker-ci/);
+  assert.ok(
+    (workflowText.match(/--dart-define=APP_ENV=ci/g) ?? []).length >= 4,
+    'every worker CI build must explicitly use the isolated CI environment',
+  );
+  assert.ok(
+    (workflowText.match(/--dart-define=BASE_URL=https:\/\/api\.invalid/g) ?? []).length >= 4,
+    'every worker CI build must use the reserved non-routable API URL',
+  );
   assert.match(workflowText, /flutter build web --release/);
   assert.match(
     workflowText,
@@ -246,12 +261,72 @@ function testCiWorkflow(): void {
   assert.match(workflowText, /flutter build ios --release --no-codesign/);
   assert.equal((workflowText.match(/flutter-version: 3\.32\.6/g) ?? []).length, 2);
   assert.doesNotMatch(workflowText, /channel:\s+stable/);
-  assert.match(workflowText, /ANDROID_KEYSTORE_BASE64: \$\{\{ secrets\.ANDROID_KEYSTORE_BASE64 \}\}/);
+  assert.doesNotMatch(workflowText, /secrets\.ANDROID_KEYSTORE_BASE64/);
+  assert.doesNotMatch(workflowText, /secrets\.ANDROID_GOOGLE_SERVICES_JSON_BASE64/);
+
+  assert.match(androidReleaseWorkflowText, /^\s*workflow_dispatch:\s*$/m);
+  assert.doesNotMatch(androidReleaseWorkflowText, /^\s+(?:push|pull_request):\s*$/m);
+  assert.match(androidReleaseWorkflowText, /environment: android-production-release/);
+  assert.match(androidReleaseWorkflowText, /BUILD_SIGNED_ANDROID_PRODUCTION_AAB/);
+  assert.match(androidReleaseWorkflowText, /\^\[a-f0-9\]\{40\}\$/);
   assert.match(
-    workflowText,
+    androidReleaseWorkflowText,
+    /refs\/heads\/main\|refs\/heads\/codex\/final-store-release-preparation/,
+  );
+  assert.match(androidReleaseWorkflowText, /"\$EXPECTED_RELEASE_SHA" != "\$GITHUB_SHA"/);
+  assert.match(
+    androidReleaseWorkflowText,
+    /build-production-aab:[\s\S]*needs: validate-request[\s\S]*environment: android-production-release/,
+  );
+  assert.match(androidReleaseWorkflowText, /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(androidReleaseWorkflowText, /APP_ENV: production/);
+  assert.match(androidReleaseWorkflowText, /BASE_URL: \$\{\{ vars\.PRODUCTION_API_BASE_URL \}\}/);
+  assert.match(androidReleaseWorkflowText, /ANDROID_UPLOAD_CERT_SHA256: \$\{\{ vars\.ANDROID_UPLOAD_CERT_SHA256 \}\}/);
+  assert.match(androidReleaseWorkflowText, /ANDROID_FIREBASE_PROJECT_ID: \$\{\{ vars\.ANDROID_FIREBASE_PROJECT_ID \}\}/);
+  assert.match(androidReleaseWorkflowText, /version: 1\.0\.0\+15/);
+  assert.match(androidReleaseWorkflowText, /applicationId = "az\.setservice\.app"/);
+  assert.match(androidReleaseWorkflowText, /node scripts\/validate-web-env\.mjs worker-production/);
+  assert.match(androidReleaseWorkflowText, /flutter build appbundle --release/);
+  assert.match(androidReleaseWorkflowText, /--dart-define=APP_ENV=production/);
+  assert.match(androidReleaseWorkflowText, /jarsigner -verify -strict/);
+  assert.match(
+    androidReleaseWorkflowText,
+    /jarsigner -verify -strict[\s\S]*-keystore "\$KEYSTORE_PATH"[\s\S]*-storepass "\$ANDROID_KEYSTORE_PASSWORD"/,
+  );
+  assert.match(androidReleaseWorkflowText, /keytool -printcert -jarfile/);
+  assert.match(
+    androidReleaseWorkflowText,
+    /bundletool-all-1\.18\.3\.jar[\s\S]*a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29/,
+  );
+  assert.match(androidReleaseWorkflowText, /sha256sum --check --strict/);
+  assert.match(androidReleaseWorkflowText, /validate --bundle="\$AAB_PATH"/);
+  assert.match(androidReleaseWorkflowText, /dump manifest[\s\S]*--module=base/);
+  assert.match(androidReleaseWorkflowText, /android:versionCode'\) !== '15'/);
+  assert.match(androidReleaseWorkflowText, /android:versionName'\) !== '1\.0\.0'/);
+  assert.match(androidReleaseWorkflowText, /aab_sha256=/);
+  assert.doesNotMatch(androidReleaseWorkflowText, /(?:google-github-actions\/upload-google-play|play\/upload|service_account)/i);
+  assert.match(
+    androidReleaseWorkflowText,
+    /name: Build and verify signed production AAB[\s\S]*env:[\s\S]*ANDROID_KEYSTORE_BASE64: \$\{\{ secrets\.ANDROID_KEYSTORE_BASE64 \}\}/,
+  );
+  assert.match(androidReleaseWorkflowText, /ANDROID_KEYSTORE_BASE64: \$\{\{ secrets\.ANDROID_KEYSTORE_BASE64 \}\}/);
+  assert.match(
+    androidReleaseWorkflowText,
     /ANDROID_GOOGLE_SERVICES_JSON_BASE64: \$\{\{ secrets\.ANDROID_GOOGLE_SERVICES_JSON_BASE64 \}\}/,
   );
-  assert.match(workflowText, /node \.\.\/\.\.\/scripts\/validate-web-env\.mjs worker/);
+  assert.equal(
+    (androidReleaseWorkflowText.match(/secrets\.ANDROID_KEYSTORE_BASE64/g) ?? []).length,
+    1,
+    'the signing keystore secret must be scoped only to the build step',
+  );
+  const androidReleaseSteps = Object.values(androidReleaseWorkflow.jobs ?? {}).flatMap(
+    (job) => job.steps ?? [],
+  );
+  const unpinnedAndroidReleaseActions = androidReleaseSteps
+    .map((step) => step.uses)
+    .filter((uses): uses is string => Boolean(uses))
+    .filter((uses) => !/@[a-f0-9]{40}(?:\s|$)/i.test(uses));
+  assert.deepEqual(unpinnedAndroidReleaseActions, []);
   assert.match(workflowText, /NODE_BASE_IMAGE: \$\{\{ vars\.NODE_BASE_IMAGE \}\}/);
   assert.match(workflowText, /RUNTIME_BASE_IMAGE: \$\{\{ vars\.RUNTIME_BASE_IMAGE \}\}/);
   assert.match(workflowText, /POSTGRES_CI_IMAGE: \$\{\{ vars\.POSTGRES_CI_IMAGE \}\}/);

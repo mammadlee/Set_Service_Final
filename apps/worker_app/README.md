@@ -166,12 +166,16 @@ Core validation commands:
 ```bash
 flutter analyze
 flutter test
-flutter build web --release --dart-define=APP_ENV=staging --dart-define=BASE_URL="$STAGING_API_BASE_URL"
+flutter build web --release --dart-define=APP_ENV=ci --dart-define=BASE_URL=https://api.invalid
 ```
 
 Release builds additionally require the native Firebase files and signing
 credentials described in `../../DEPLOYMENT_CHECKLIST.md`; Android release
-signing deliberately fails closed when credentials are absent.
+signing deliberately fails closed when credentials are absent. The signed
+production AAB is built only by the protected, manually dispatched
+`build-android-production.yml` workflow. A distributable staging AAB remains
+blocked until a separate staging API/database and Android application identity
+exist; a staging build must never use the production API.
 
 ## Remaining platform/infrastructure work
 
