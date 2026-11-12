@@ -288,6 +288,19 @@ function testCiWorkflow(): void {
   assert.match(androidReleaseWorkflowText, /node scripts\/validate-web-env\.mjs worker-production/);
   assert.match(androidReleaseWorkflowText, /flutter build appbundle --release/);
   assert.match(androidReleaseWorkflowText, /--dart-define=APP_ENV=production/);
+  assert.match(
+    androidReleaseWorkflowText,
+    /--dart-define=ENABLE_PUSH_NOTIFICATIONS=true/,
+  );
+  assert.equal(
+    (
+      androidReleaseWorkflowText.match(
+        /--dart-define=ENABLE_PUSH_NOTIFICATIONS=true/g,
+      ) ?? []
+    ).length,
+    1,
+    'the production AAB must enable push notifications exactly once',
+  );
   assert.match(androidReleaseWorkflowText, /jarsigner -verify -strict/);
   assert.match(
     androidReleaseWorkflowText,

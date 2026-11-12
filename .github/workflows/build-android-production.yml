@@ -242,7 +242,8 @@ jobs:
           export ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH"
           flutter build appbundle --release \
             --dart-define=APP_ENV=production \
-            --dart-define=BASE_URL="$BASE_URL"
+            --dart-define=BASE_URL="$BASE_URL" \
+            --dart-define=ENABLE_PUSH_NOTIFICATIONS=true
 
           test -s "$AAB_PATH"
           jarsigner -verify -strict \
