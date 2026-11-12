@@ -6,7 +6,7 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { formatDateTime, formatUnknown } from '../../shared/utils/format';
-import type { AttendanceLog } from '../../shared/api/types';
+import { attendancePosition, attendanceStatus, attendanceStatusLabel, formatAttendanceDuration } from './attendance.display';
 import { attendanceService } from './attendance.service';
 
 export function AttendanceDetailPage() {
@@ -34,10 +34,11 @@ export function AttendanceDetailPage() {
               <dt>{appStrings.attendance.workerPhone}</dt><dd>{attendance.data.assignment.worker.phone}</dd>
               <dt>{appStrings.attendance.order}</dt><dd>{attendance.data.assignment.order.title}</dd>
               <dt>{appStrings.attendance.company}</dt><dd>{attendance.data.assignment.order.company.name}</dd>
-              <dt>{appStrings.attendance.assignment}</dt><dd>{attendance.data.assignment_id}</dd>
+              <dt>Vəzifə</dt><dd>{attendancePosition(attendance.data)}</dd>
+              <dt>Davamiyyət statusu</dt><dd>{attendanceStatusLabel(attendanceStatus(attendance.data))}</dd>
               <dt>{appStrings.attendance.checkIn}</dt><dd>{formatDateTime(attendance.data.checkin_time)}</dd>
-              <dt>{appStrings.attendance.checkOut}</dt><dd>{formatDateTime(attendance.data.checkout_time)}</dd>
-              <dt>{appStrings.attendance.duration}</dt><dd>{formatDuration(attendance.data.duration_minutes)}</dd>
+              <dt>{appStrings.attendance.checkOut}</dt><dd>{attendance.data.checkout_time ? formatDateTime(attendance.data.checkout_time) : 'Çıxış edilməyib'}</dd>
+              <dt>{appStrings.attendance.duration}</dt><dd>{formatAttendanceDuration(attendance.data.duration_minutes)}</dd>
             </dl>
           </div>
 
@@ -56,16 +57,4 @@ export function AttendanceDetailPage() {
       ) : null}
     </>
   );
-}
-
-function formatDuration(minutes?: number | null) {
-  return minutes === null || minutes === undefined
-    ? appStrings.notAvailable
-    : `${minutes} ${appStrings.attendance.minutes}`;
-}
-
-function attendanceStatus(record: AttendanceLog): 'waiting' | 'checked_in' | 'completed' {
-  if (record.checkout_time) return 'completed';
-  if (record.checkin_time) return 'checked_in';
-  return 'waiting';
 }

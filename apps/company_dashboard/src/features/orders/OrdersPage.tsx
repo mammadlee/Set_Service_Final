@@ -562,7 +562,7 @@ function validateOrderForm(form: typeof emptyForm) {
   if (form.category_items.length < 1) return appStrings.orders.invalidCategory;
   const positionIds = new Set<string>();
   for (const item of form.category_items) {
-    if (!item.department_id || !item.subdepartment_id || !item.position_id) return "Şöbə, Departament və Vəzifə seçilməlidir.";
+    if (!item.department_id || !item.subdepartment_id || !item.position_id) return "Şöbə, departament və vəzifə seçilməlidir.";
     if (positionIds.has(item.position_id)) return appStrings.orders.duplicateCategory;
     positionIds.add(item.position_id);
     if (!Number.isFinite(item.required_count) || item.required_count <= 0) return appStrings.orders.invalidCount;

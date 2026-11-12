@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../core/network/api_exception.dart';
@@ -8,10 +9,11 @@ import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/premium_components.dart';
 import '../../../../shared/widgets/status_pill.dart';
+import '../../../../shared/widgets/worker_avatar.dart';
 import '../../../assignments/data/assignment_repository.dart';
 import '../../../assignments/data/models/assignment.dart';
 import '../../../auth/data/models/auth_models.dart';
-import '../../../worker/data/worker_repository.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
 
 class WorkerDashboardScreen extends StatefulWidget {
   const WorkerDashboardScreen({super.key});
@@ -30,9 +32,8 @@ class _WorkerDashboardScreenState extends State<WorkerDashboardScreen> {
   }
 
   Future<_DashboardData> _load() async {
-    final workerRepository = context.read<WorkerRepository>();
     final assignmentRepository = context.read<AssignmentRepository>();
-    final workerFuture = workerRepository.getMe();
+    final workerFuture = context.read<AuthController>().refreshWorkerProfile();
     final assignmentsFuture = assignmentRepository.listAssignments();
     final worker = await workerFuture;
     final assignments = await assignmentsFuture;
@@ -76,23 +77,13 @@ class _WorkerDashboardScreenState extends State<WorkerDashboardScreen> {
           }
 
           final data = snapshot.data!;
-          return RefreshIndicator(
+          final auth = context.watch<AuthController>();
+          final worker = auth.worker ?? data.worker;
+          return WorkerDashboardContent(
+            worker: worker,
+            photoRevision: auth.workerPhotoRevision,
+            assignments: data.assignments,
             onRefresh: _refresh,
-            child: ListView(
-              children: [
-                PremiumEntrance(child: _GreetingCard(worker: data.worker)),
-                const SizedBox(height: 16),
-                PremiumEntrance(
-                  delay: const Duration(milliseconds: 90),
-                  child: _SummaryGrid(assignments: data.assignments),
-                ),
-                const SizedBox(height: 18),
-                PremiumEntrance(
-                  delay: const Duration(milliseconds: 190),
-                  child: _NextJobCard(assignments: data.assignments),
-                ),
-              ],
-            ),
           );
         },
       ),
@@ -100,139 +91,216 @@ class _WorkerDashboardScreenState extends State<WorkerDashboardScreen> {
   }
 }
 
-class _GreetingCard extends StatelessWidget {
-  const _GreetingCard({required this.worker});
+class WorkerDashboardContent extends StatelessWidget {
+  const WorkerDashboardContent({
+    required this.worker,
+    required this.assignments,
+    required this.onRefresh,
+    this.photoRevision = 0,
+    super.key,
+  });
 
   final WorkerMe worker;
+  final List<Assignment> assignments;
+  final RefreshCallback onRefresh;
+  final int photoRevision;
 
   @override
   Widget build(BuildContext context) {
-    final cleanName = worker.name.trim();
-    final firstName = cleanName.isEmpty
-        ? AppStrings.worker
-        : cleanName.split(RegExp(r'\s+')).first;
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: BrandColors.primaryBurgundy,
-        borderRadius: BorderRadius.circular(28),
-      ),
-      child: Stack(
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         children: [
-          Positioned.fill(
-            child: Center(
-              child: Text(
-                'SET',
-                style: TextStyle(
-                  color: BrandColors.accentGold.withValues(alpha: 0.18),
-                  fontFamily: 'serif',
-                  fontSize: 112,
-                  height: 0.8,
-                ),
-              ),
+          PremiumEntrance(
+            child: WorkerIdentityCard(
+              worker: worker,
+              photoRevision: photoRevision,
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    radius: 42,
-                    backgroundColor: BrandColors.white.withValues(alpha: 0.2),
-                    backgroundImage: worker.profilePhotoUrl == null
-                        ? null
-                        : NetworkImage(worker.profilePhotoUrl!),
-                    child: worker.profilePhotoUrl == null
-                        ? const Icon(
-                            Icons.person_outline,
-                            color: BrandColors.white,
-                            size: 42,
-                          )
-                        : null,
-                  ),
-                  const Spacer(),
-                  StatusPill(status: worker.status),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Salam, $firstName 👋',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: BrandColors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                worker.position?.isNotEmpty == true
-                    ? worker.position!
-                    : AppStrings.worker,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: BrandColors.accentGold,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.verified_outlined,
-                      value: worker.availability ? 'Əlçatan' : 'Məşğul',
-                    ),
-                  ),
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.book_outlined,
-                      value: _workerClassLabel(worker.workerClass),
-                    ),
-                  ),
-                  Expanded(
-                    child: _WorkerHeroStat(
-                      icon: Icons.star_outline_rounded,
-                      value: worker.ratingAverage.toStringAsFixed(1),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          const SizedBox(height: 16),
+          PremiumEntrance(
+            delay: const Duration(milliseconds: 90),
+            child: _SummaryGrid(assignments: assignments),
+          ),
+          const SizedBox(height: 18),
+          PremiumEntrance(
+            delay: const Duration(milliseconds: 190),
+            child: _NextJobCard(assignments: assignments),
           ),
         ],
       ),
     );
   }
-
-  String _workerClassLabel(String? value) {
-    if (value == null || value.isEmpty) return AppStrings.classNotSelected;
-    return '$value sinif işçi';
-  }
 }
 
-class _WorkerHeroStat extends StatelessWidget {
-  const _WorkerHeroStat({required this.icon, required this.value});
+class WorkerIdentityCard extends StatelessWidget {
+  const WorkerIdentityCard({
+    required this.worker,
+    this.photoRevision = 0,
+    super.key,
+  });
 
-  final IconData icon;
-  final String value;
+  final WorkerMe worker;
+  final int photoRevision;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Icon(icon, color: BrandColors.white, size: 24),
-        const SizedBox(height: 6),
-        Text(
-          value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: BrandColors.white,
-            fontWeight: FontWeight.w600,
-            fontSize: 12,
+    final cleanName = worker.name.trim();
+    final displayName = cleanName.isEmpty ? AppStrings.worker : cleanName;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 340;
+        final avatarRadius = compact ? 34.0 : 39.0;
+        final position = worker.positions.isNotEmpty
+            ? worker.positions.join(', ')
+            : worker.position?.trim().isNotEmpty == true
+            ? worker.position!.trim()
+            : AppStrings.worker;
+
+        return Container(
+          key: const ValueKey('worker-dashboard-identity'),
+          padding: EdgeInsets.all(compact ? 16 : 20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [BrandColors.primaryBurgundy, BrandColors.deepBurgundy],
+            ),
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(
+              color: BrandColors.accentGold.withValues(alpha: 0.48),
+            ),
           ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  WorkerAvatar(
+                    radius: avatarRadius,
+                    name: displayName,
+                    photoUrl: worker.profilePhotoUrl,
+                    cacheRevision: photoRevision,
+                    backgroundColor: BrandColors.white.withValues(alpha: 0.16),
+                    foregroundColor: BrandColors.white,
+                    borderColor: BrandColors.accentGold,
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Xoş gəldiniz',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: BrandColors.white.withValues(
+                                  alpha: 0.82,
+                                ),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          displayName,
+                          style: Theme.of(context).textTheme.headlineSmall
+                              ?.copyWith(
+                                color: BrandColors.white,
+                                fontWeight: FontWeight.w800,
+                                height: 1.08,
+                              ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          position,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: BrandColors.accentGold,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  StatusPill(status: worker.status),
+                  _IdentityFact(
+                    icon: worker.availability
+                        ? Icons.check_circle_outline
+                        : Icons.schedule_outlined,
+                    label: worker.availability ? 'Əlçatan' : 'Məşğul',
+                  ),
+                  _IdentityFact(
+                    icon: Icons.workspace_premium_outlined,
+                    label: _workerClassLabel(worker.workerClass),
+                  ),
+                  _IdentityFact(
+                    icon: Icons.star_outline_rounded,
+                    label:
+                        '${worker.ratingAverage.toStringAsFixed(1)} (${worker.ratingCount})',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _workerClassLabel(String? value) {
+    if (value == null || value.isEmpty) return AppStrings.classNotSelected;
+    return '$value sinif';
+  }
+}
+
+class _IdentityFact extends StatelessWidget {
+  const _IdentityFact({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 34),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: BrandColors.white.withValues(alpha: 0.11),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: BrandColors.accentGold.withValues(alpha: 0.3),
         ),
-      ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: BrandColors.white, size: 15),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              softWrap: true,
+              style: const TextStyle(
+                color: BrandColors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+                height: 1.15,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -254,47 +322,153 @@ class _SummaryGrid extends StatelessWidget {
         .where((item) => item.status == 'completed')
         .length;
 
-    return Column(
-      children: [
-        _CompactStatCard(label: 'Yeni işlər', value: '$assigned'),
-        const SizedBox(height: 12),
-        _CompactStatCard(label: 'Qəbul edilən işlər', value: '$accepted'),
-        const SizedBox(height: 12),
-        _CompactStatCard(label: 'Tamamlanmış işlər', value: '$completed'),
-      ],
+    final newJobs = _CompactStatCard(
+      label: 'Yeni işlər',
+      value: '$assigned',
+      icon: Icons.mark_email_unread_outlined,
+    );
+    final acceptedJobs = _CompactStatCard(
+      label: 'Qəbul edilən',
+      value: '$accepted',
+      icon: Icons.task_alt_outlined,
+    );
+    final completedJobs = _CompactStatCard(
+      label: 'Tamamlanmış işlər',
+      value: '$completed',
+      icon: Icons.verified_outlined,
+      horizontal: true,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 320) {
+          return Column(
+            children: [
+              newJobs,
+              const SizedBox(height: 10),
+              acceptedJobs,
+              const SizedBox(height: 10),
+              completedJobs,
+            ],
+          );
+        }
+        return Column(
+          children: [
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: newJobs),
+                  const SizedBox(width: 10),
+                  Expanded(child: acceptedJobs),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            completedJobs,
+          ],
+        );
+      },
     );
   }
 }
 
 class _CompactStatCard extends StatelessWidget {
-  const _CompactStatCard({required this.label, required this.value});
+  const _CompactStatCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.horizontal = false,
+  });
 
   final String label;
   final String value;
+  final IconData icon;
+  final bool horizontal;
 
   @override
   Widget build(BuildContext context) {
     return PremiumCard(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: Colors.black,
-                fontWeight: FontWeight.w600,
-              ),
+      padding: const EdgeInsets.all(15),
+      child: horizontal
+          ? Row(
+              children: [
+                _StatIcon(icon: icon),
+                const SizedBox(width: 12),
+                Expanded(child: _StatLabel(label: label)),
+                const SizedBox(width: 10),
+                _StatValue(value: value),
+              ],
+            )
+          : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _StatIcon(icon: icon),
+                    const Spacer(),
+                    _StatValue(value: value),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _StatLabel(label: label),
+              ],
             ),
-          ),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Colors.black,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
+    );
+  }
+}
+
+class _StatIcon extends StatelessWidget {
+  const _StatIcon({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: BrandColors.primaryBurgundy.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, color: BrandColors.primaryBurgundy, size: 20),
+    );
+  }
+}
+
+class _StatLabel extends StatelessWidget {
+  const _StatLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      softWrap: true,
+      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+        color: BrandColors.darkText,
+        fontWeight: FontWeight.w700,
+        height: 1.2,
+      ),
+    );
+  }
+}
+
+class _StatValue extends StatelessWidget {
+  const _StatValue({required this.value});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value,
+      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+        color: BrandColors.primaryBurgundy,
+        fontWeight: FontWeight.w900,
       ),
     );
   }
@@ -307,6 +481,7 @@ class _NextJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dateFormat = DateFormat('dd.MM.yyyy, HH:mm');
     final active =
         assignments
             .where(
@@ -334,51 +509,105 @@ class _NextJobCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Gələcək iş',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    color: Colors.black,
-                    fontWeight: FontWeight.w600,
-                  ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 360;
+              final title = Text(
+                'Gələcək iş',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w600,
                 ),
-              ),
-              StatusPill(status: next.status),
-            ],
+              );
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    title,
+                    const SizedBox(height: 8),
+                    StatusPill(status: next.status),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: title),
+                  const SizedBox(width: 10),
+                  Flexible(child: StatusPill(status: next.status)),
+                ],
+              );
+            },
           ),
           const SizedBox(height: 12),
           Text(
-            next.order.company.name,
+            next.order.title.trim().isEmpty ? 'Sifariş' : next.order.title,
+            softWrap: true,
             style: Theme.of(context).textTheme.headlineMedium?.copyWith(
               color: BrandColors.darkText,
               fontWeight: FontWeight.w800,
+              height: 1.15,
             ),
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              const Icon(
-                Icons.room_service_outlined,
-                color: BrandColors.primaryBurgundy,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  next.category.isNotEmpty
-                      ? next.category
-                      : next.order.category,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: BrandColors.primaryBurgundy,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
+          _NextJobMetaRow(
+            icon: Icons.room_service_outlined,
+            text: next.category.isNotEmpty
+                ? next.category
+                : next.order.category,
           ),
+          const SizedBox(height: 8),
+          _NextJobMetaRow(
+            icon: Icons.business_outlined,
+            text: next.order.company.name,
+          ),
+          if (next.order.location.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _NextJobMetaRow(
+              icon: Icons.place_outlined,
+              text: next.order.location,
+            ),
+          ],
+          if (next.order.startDatetime != null) ...[
+            const SizedBox(height: 8),
+            _NextJobMetaRow(
+              icon: Icons.schedule_outlined,
+              text: dateFormat.format(next.order.startDatetime!),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _NextJobMetaRow extends StatelessWidget {
+  const _NextJobMetaRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, size: 20, color: BrandColors.primaryBurgundy),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text.trim().isEmpty ? '-' : text,
+            softWrap: true,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: BrandColors.primaryBurgundy,
+              fontWeight: FontWeight.w600,
+              height: 1.3,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

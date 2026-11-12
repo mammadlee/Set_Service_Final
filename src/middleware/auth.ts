@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyToken, JwtPayload } from '../lib/jwt';
+import { verifyAccessToken, verifyRegistrationToken, JwtPayload } from '../lib/jwt';
 import { Errors } from '../lib/errors';
 import { prisma } from '../lib/prisma';
+import { updateRequestContext } from '../lib/request-context';
+import { enforceActorRateLimit } from './rate-limit';
 
-// Express Request-ə user əlavə edirik
 declare global {
   namespace Express {
     interface Request {
@@ -20,10 +21,16 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
 
   const token = header.slice(7);
   try {
-    const payload = verifyToken(token);
+    const payload = verifyAccessToken(token);
     void assertSessionCurrent(payload)
-      .then(() => {
+      .then(async (session) => {
         req.user = payload;
+        updateRequestContext({
+          actor_id: payload.sub,
+          role: payload.role,
+          tenant_id: session.tenant_id,
+        });
+        await enforceActorRateLimit(req, _res);
         next();
       })
       .catch(next);
@@ -32,14 +39,49 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
   }
 }
 
-async function assertSessionCurrent(payload: JwtPayload): Promise<void> {
+/**
+ * Narrow authentication for post-OTP registration steps. Registration tokens
+ * are deliberately rejected by requireAuth and may only reach routes that opt
+ * into this middleware (private document upload and email verification).
+ */
+export function requireEnrollmentAuth(req: Request, res: Response, next: NextFunction): void {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) {
+    return next(Errors.unauthorized());
+  }
+
+  const token = header.slice(7);
+  let payload: JwtPayload;
+  try {
+    try {
+      payload = verifyAccessToken(token);
+    } catch {
+      payload = verifyRegistrationToken(token);
+    }
+  } catch {
+    return next(Errors.unauthorized('Qeydiyyat sessiyası etibarsızdır və ya müddəti bitib.', 'ENROLLMENT_TOKEN_INVALID'));
+  }
+
+  void assertEnrollmentSessionCurrent(payload)
+    .then(async (session) => {
+      req.user = payload;
+      updateRequestContext({ actor_id: payload.sub, role: payload.role, tenant_id: session.tenant_id });
+      await enforceActorRateLimit(req, res);
+      next();
+    })
+    .catch(next);
+}
+
+async function assertSessionCurrent(payload: JwtPayload): Promise<{ tenant_id?: string }> {
   const user = await prisma.user.findUnique({
     where: { id: payload.sub },
     select: {
       role: true,
       is_active: true,
       deleted_at: true,
-      password_set_at: true,
+      session_version: true,
+      worker: { select: { status: true, deleted_at: true } },
+      company: { select: { id: true, status: true, deleted_at: true } },
     },
   });
 
@@ -51,10 +93,64 @@ async function assertSessionCurrent(payload: JwtPayload): Promise<void> {
     throw Errors.unauthorized('Sessiya yenilənməlidir.', 'SESSION_INVALID');
   }
 
-  if (user.password_set_at && payload.iat) {
-    const issuedAtMs = payload.iat * 1000;
-    if (issuedAtMs < user.password_set_at.getTime() - 1000) {
-      throw Errors.unauthorized('Sessiya yenilənməlidir.', 'SESSION_REVOKED');
-    }
+  if (payload.session_version !== user.session_version) {
+    throw Errors.unauthorized('Sessiya ləğv edilib.', 'SESSION_REVOKED');
   }
+
+  if (user.role === 'worker' && (
+    !user.worker
+    || user.worker.deleted_at
+    || user.worker.status !== 'approved'
+  )) {
+    throw Errors.forbidden('İşçi hesabı aktiv deyil.', 'WORKER_NOT_APPROVED', {
+      status: user.worker?.status ?? 'deleted',
+    });
+  }
+
+  if (user.role === 'company' && (
+    !user.company
+    || user.company.deleted_at
+    || user.company.status !== 'approved'
+  )) {
+    throw Errors.forbidden('Müəssisə hesabı aktiv deyil.', 'COMPANY_NOT_APPROVED', {
+      status: user.company?.status ?? 'deleted',
+    });
+  }
+
+  return {
+    tenant_id: user.role === 'company' ? user.company?.id : undefined,
+  };
+}
+
+async function assertEnrollmentSessionCurrent(payload: JwtPayload): Promise<{ tenant_id?: string }> {
+  const user = await prisma.user.findUnique({
+    where: { id: payload.sub },
+    select: {
+      role: true,
+      is_active: true,
+      deleted_at: true,
+      password_set_at: true,
+      session_version: true,
+      worker: { select: { status: true, deleted_at: true } },
+      company: { select: { id: true, status: true, deleted_at: true } },
+    },
+  });
+  if (!user || !user.is_active || user.deleted_at || !user.password_set_at) {
+    throw Errors.forbidden('Qeydiyyat sessiyası aktiv deyil.', 'ENROLLMENT_SESSION_INACTIVE');
+  }
+  if (user.role !== payload.role || payload.session_version !== user.session_version) {
+    throw Errors.unauthorized('Qeydiyyat sessiyası yenilənməlidir.', 'ENROLLMENT_SESSION_INVALID');
+  }
+  if (user.role === 'worker') {
+    if (!user.worker || user.worker.deleted_at || !['pending_approval', 'approved'].includes(user.worker.status)) {
+      throw Errors.forbidden('İşçi qeydiyyatı sənəd qəbul etmir.', 'WORKER_ENROLLMENT_CLOSED');
+    }
+  } else if (user.role === 'company') {
+    if (!user.company || user.company.deleted_at || !['pending_approval', 'approved'].includes(user.company.status)) {
+      throw Errors.forbidden('Müəssisə qeydiyyatı sənəd qəbul etmir.', 'COMPANY_ENROLLMENT_CLOSED');
+    }
+  } else {
+    throw Errors.forbidden('Bu rol üçün qeydiyyat sessiyası mövcud deyil.', 'ENROLLMENT_ROLE_INVALID');
+  }
+  return { tenant_id: user.role === 'company' ? user.company?.id : undefined };
 }

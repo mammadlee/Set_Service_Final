@@ -2,12 +2,20 @@ openapi: 3.0.3
 
 info:
   title: SET Service API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     SET Service REST API for Worker, Company, Super Admin, and restricted Admin roles.
 
     Core worker flow:
     Worker registers -> verifies OTP -> becomes pending_approval -> super admin or permitted admin approves or rejects -> approved worker can log in and receive tokens.
+
+    Contract-wide observability and authentication rules:
+    - Every HTTP response includes `X-Request-ID` and `X-Correlation-ID`.
+    - Clients may send either header using 8-128 characters from `[A-Za-z0-9._:-]`; invalid values are replaced server-side.
+    - Error bodies include the effective `request_id`; the correlation identifier remains in the response header.
+    - `BearerAuth` accepts access tokens only. Refresh tokens are valid only in the documented refresh/logout request bodies.
+    - OTP request success means the request was accepted for delivery; it does not prove arrival at the handset or mailbox.
+    - Interactive Swagger UI is disabled in production and should be exposed only in controlled non-production environments.
 
 servers:
   - url: http://localhost:3000/v1
@@ -15,12 +23,105 @@ servers:
   - url: https://api.setservice.az/v1
     description: Production
 
+security: []
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: JWT access token
+      description: Short-lived SET Service JWT access token. Refresh tokens are rejected by authenticated API middleware.
+
+  headers:
+    XRequestId:
+      description: Effective request identifier used in structured logs and error responses.
+      schema: { $ref: '#/components/schemas/RequestId' }
+    XCorrelationId:
+      description: Correlation identifier propagated across related requests; defaults to the request identifier.
+      schema: { $ref: '#/components/schemas/RequestId' }
+    RateLimitLimit:
+      description: Maximum requests allowed in the current server window.
+      schema: { type: integer, minimum: 1 }
+    RateLimitRemaining:
+      description: Requests remaining in the current server window.
+      schema: { type: integer, minimum: 0 }
+    RateLimitReset:
+      description: Seconds until the current server rate-limit window resets.
+      schema: { type: integer, minimum: 0 }
+    RetryAfter:
+      description: Seconds the client should wait before retrying.
+      schema: { type: integer, minimum: 0 }
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Authentication credentials are missing, invalid, expired, revoked, or of the wrong token type.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: The authenticated account or permission set cannot perform this operation.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: The resource is absent or intentionally hidden from this caller.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: The request conflicts with current resource or idempotency state.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Gone:
+      description: The operation or capability is intentionally disabled, expired, or no longer available.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: A rate limit or OTP abuse-control threshold was exceeded.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+        RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+        RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+        RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: A required dependency, durable queue, scanner, or rate-limit store is unavailable.
+      headers:
+        X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+        X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   parameters:
     Page:
@@ -33,13 +134,61 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   schemas:
+    RequestId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: '^[A-Za-z0-9._:-]+$'
+      example: 7fa22d18-6e54-4c33-8154-9f68f8e2f84b
+
     Error:
       type: object
+      required: [error, code, request_id, timestamp]
       properties:
         error: { type: string, example: Worker is not approved for login. }
         code: { type: string, example: WORKER_NOT_APPROVED }
-        details: { type: object, nullable: true, example: { status: pending_approval } }
+        details:
+          description: Domain-error metadata, or field errors for request validation.
+          nullable: true
+          oneOf:
+            - type: object
+              additionalProperties: true
+              example: { status: pending_approval }
+            - type: array
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field: { type: string, example: phone }
+                  message: { type: string, example: Telefon nömrəsi E.164 formatında olmalıdır. }
+        request_id: { $ref: '#/components/schemas/RequestId' }
         timestamp: { type: string, format: date-time }
+
+    DateOrDateTime:
+      description: A calendar date (`YYYY-MM-DD`) interpreted in the configured application time zone, or an RFC 3339 date-time whose explicit offset is preserved.
+      oneOf:
+        - type: string
+          format: date
+        - type: string
+          format: date-time
+
+    OtpRequestAcceptedResponse:
+      type: object
+      required: [otp_sent, retry_after_seconds]
+      properties:
+        otp_sent:
+          type: boolean
+          enum: [true]
+          description: Generic anti-enumeration acknowledgement that the delivery request was accepted.
+        purpose:
+          type: string
+          nullable: true
+          description: OTP purpose when it is safe to return it.
+        message:
+          type: string
+          nullable: true
+          description: Generic anti-enumeration message.
+        retry_after_seconds: { type: integer, minimum: 1, example: 60 }
 
     PaginationMeta:
       type: object
@@ -65,6 +214,15 @@ components:
       enum: [pending_approval, approved, rejected, suspended, inactive]
       example: approved
 
+    OrderStatus:
+      type: string
+      description: |
+        Order lifecycle. `active` is retained for legacy records. New transitions use
+        `published -> partially_assigned -> assigned -> in_progress -> completed`;
+        `completed` and `cancelled` are terminal.
+      enum: [draft, active, published, partially_assigned, assigned, in_progress, completed, cancelled]
+      example: published
+
     Skill:
       oneOf:
         - type: string
@@ -74,17 +232,94 @@ components:
             name: { type: string, example: waiter }
             level: { type: integer, minimum: 1, maximum: 5, example: 4 }
 
-    Document:
+    CompanyDocument:
       type: object
-      required: [type, url]
+      description: Safe metadata for a private company document. Object keys and permanent URLs are never returned.
+      required: [type, available, status, scan_status]
       properties:
-        type: { type: string, example: health_certificate }
-        url: { type: string, format: uri, example: https://cdn.example.com/documents/passport.pdf }
-        name: { type: string, example: Health certificate.pdf }
-        mime_type: { type: string, example: application/pdf }
+        type: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+        name: { type: string, example: registration-certificate.pdf }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
         size_bytes: { type: integer, example: 248000 }
         uploaded_at: { type: string, format: date-time }
+        status: { type: string, enum: [ready, legacy] }
+        scan_status: { type: string, enum: [clean, unscanned] }
+        available:
+          type: boolean
+          description: True only when the private key belongs to this company and the document is ready with a clean scan result.
+
+    WorkerDocumentMetadata:
+      type: object
+      description: Safe metadata for a private worker document. Object keys and permanent public URLs are never returned.
+      required: [type, company_visible, available, status, scan_status]
+      properties:
+        type: { type: string, enum: [health_certificate, criminal_record, cv] }
+        name: { type: string, example: Health-certificate.pdf }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        size_bytes: { type: integer, minimum: 1, maximum: 5242880 }
+        uploaded_at: { type: string, format: date-time }
         company_visible: { type: boolean, example: true }
+        status: { type: string, enum: [ready, legacy] }
+        scan_status: { type: string, enum: [clean, unscanned] }
+        available:
+          type: boolean
+          description: True only when the private key belongs to this worker and the document is ready with a clean scan result.
+        url:
+          type: string
+          example: /v1/workers/00000000-0000-4000-8000-000000000000/documents/health_certificate/download
+          description: Authenticated authorization endpoint; never a permanent object URL.
+        download_url:
+          type: string
+          description: Alias of `url` retained for client compatibility.
+
+    WorkerDocumentDeletionResponse:
+      type: object
+      required: [status, worker_id, document_type, deleted_at]
+      properties:
+        status: { type: string, enum: [deleted] }
+        worker_id: { type: string, format: uuid }
+        document_type: { type: string, enum: [health_certificate, criminal_record, cv] }
+        deleted_at: { type: string, format: date-time }
+
+    WorkerAccountDeletionRequest:
+      type: object
+      required: [confirm]
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          enum: [true]
+          description: Explicit confirmation that the authenticated worker wants the account deletion request applied.
+
+    WorkerAccountDeletionResponse:
+      type: object
+      required: [request_id, worker_id, status, account_state, effective_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        worker_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        account_state: { type: string, enum: [inactive] }
+        effective_at: { type: string, format: date-time }
+
+    CompanyAccountDeletionRequest:
+      type: object
+      required: [confirm]
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+          enum: [true]
+          description: Explicit confirmation that the authenticated company wants the account deletion request applied.
+
+    CompanyAccountDeletionResponse:
+      type: object
+      required: [request_id, company_id, status, account_state, effective_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        status: { type: string, enum: [accepted] }
+        account_state: { type: string, enum: [inactive] }
+        effective_at: { type: string, format: date-time }
 
     WorkExperience:
       type: object
@@ -108,10 +343,6 @@ components:
           type: array
           items: { type: string }
           example: [az, en]
-        documents:
-          type: array
-          items: { $ref: '#/components/schemas/Document' }
-
     CompanyRegisterRequest:
       type: object
       required: [name, contact_name, email, phone]
@@ -120,10 +351,28 @@ components:
         contact_name: { type: string, example: Nigar Aliyeva }
         email: { type: string, format: email, example: company@setservice.az }
         phone: { type: string, example: "+994501234568" }
-        docs_url: { type: string, format: uri }
-        documents:
-          type: array
-          items: { $ref: '#/components/schemas/Document' }
+
+    CompanyEnrollmentStartResponse:
+      type: object
+      description: Short-lived company enrollment session. No User or Company record exists yet.
+      required: [enrollment_token, status, otp_sent, retry_after_seconds]
+      properties:
+        enrollment_token:
+          type: string
+          description: Opaque token for the current in-app enrollment flow. It expires automatically and cannot authenticate protected company APIs.
+        status: { type: string, enum: [phone_otp_pending] }
+        otp_sent: { type: boolean }
+        retry_after_seconds: { type: integer, minimum: 1 }
+
+    CompanyRegistrationFinalizedResponse:
+      type: object
+      required: [user_id, company_id, company_name, status]
+      properties:
+        user_id: { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        company_name: { type: string }
+        status: { type: string, enum: [pending_approval] }
+        message: { type: string }
 
     RequestOtpRequest:
       type: object
@@ -166,10 +415,10 @@ components:
 
     CompleteCompanyRegistrationRequest:
       type: object
-      required: [email, password]
-      description: Provide either otp_code for legacy direct completion or otp_challenge returned by /auth/verify-otp.
+      required: [enrollment_token, password]
+      description: Atomically creates the User and Company only after phone OTP verification and password creation. Email verification and company documents are not required.
       properties:
-        email: { type: string, format: email, example: company@setservice.az }
+        enrollment_token: { type: string }
         otp_code:
           type: string
           example: "123456"
@@ -204,8 +453,23 @@ components:
     WorkerPhoneChangeRequest:
       type: object
       required: [phone]
+      additionalProperties: false
       properties:
         phone: { type: string, example: "+994501234569" }
+
+    WorkerPhoneChangeV2Request:
+      type: object
+      required: [phone, current_password]
+      additionalProperties: false
+      properties:
+        phone: { type: string, example: "+994501234569" }
+        current_password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 128
+          writeOnly: true
+          example: <current-worker-password>
 
     WorkerPhoneChangeConfirmRequest:
       type: object
@@ -213,6 +477,21 @@ components:
       properties:
         phone: { type: string, example: "+994501234569" }
         otp_code: { type: string, example: "123456" }
+
+    WorkerPhoneChangeResponse:
+      type: object
+      required: [phone_changed, phone, already_applied, session_preserved, user]
+      properties:
+        phone_changed: { type: boolean, example: true }
+        phone: { type: string, example: "+994501234569", description: Canonical E.164 phone number persisted for the worker. }
+        already_applied: { type: boolean, example: false, description: True when a retry observes that the verified change was already committed. }
+        session_preserved: { type: boolean, example: true, description: Existing authenticated sessions remain valid after this identity update. }
+        user:
+          type: object
+          required: [id, phone]
+          properties:
+            id: { type: string, format: uuid }
+            phone: { type: string, example: "+994501234569" }
 
     EmailVerificationRequest:
       type: object
@@ -340,6 +619,35 @@ components:
                 id: { type: string, format: uuid }
                 status: { $ref: '#/components/schemas/CompanyStatus' }
 
+    WebSessionResponse:
+      type: object
+      required: [access_token, user]
+      description: |
+        Browser-session response. The rotating refresh token is never exposed to JavaScript;
+        it is delivered only through a role-scoped HttpOnly cookie.
+      properties:
+        access_token:
+          type: string
+          description: Short-lived bearer access token. Keep it in memory only.
+        user:
+          type: object
+          required: [id, role]
+          properties:
+            id: { type: string, format: uuid }
+            phone: { type: string, nullable: true }
+            email: { type: string, format: email, nullable: true }
+            role: { type: string, enum: [super_admin, admin, company] }
+            name: { type: string }
+            permissions:
+              type: array
+              items: { $ref: '#/components/schemas/AdminPermission' }
+            company:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                status: { $ref: '#/components/schemas/CompanyStatus' }
+
     AdminPermission:
       type: string
       description: Manage permissions are normalized with required view permissions. `manage_workers` implies `view_workers`; `manage_companies` implies `view_companies`; `manage_assignments` implies `view_assignments`, `view_orders`, and `view_workers`; `manage_kiosks` implies `view_orders` and `view_assignments`.
@@ -414,7 +722,7 @@ components:
           items: { type: string }
         documents:
           type: array
-          items: { $ref: '#/components/schemas/Document' }
+          items: { $ref: '#/components/schemas/WorkerDocumentMetadata' }
         work_history_summary: { type: string, nullable: true }
         work_history:
           type: array
@@ -461,7 +769,7 @@ components:
         documents:
           type: array
           description: Only company-visible documents are returned.
-          items: { $ref: '#/components/schemas/Document' }
+          items: { $ref: '#/components/schemas/WorkerDocumentMetadata' }
         work_history_summary: { type: string, nullable: true }
         work_history:
           type: array
@@ -529,10 +837,16 @@ components:
         contact_name: { type: string }
         phone: { type: string }
         email: { type: string, format: email, nullable: true }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        pending_email: { type: string, format: email, nullable: true }
+        email_verified: { type: boolean }
         status: { $ref: '#/components/schemas/CompanyStatus' }
-        docs_url: { type: string, nullable: true }
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/CompanyDocument' }
         reject_reason: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     RejectRequest:
       type: object
@@ -555,6 +869,15 @@ components:
         metadata: { type: object }
         read_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
+
+    NotificationListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
 
     TaxonomySummary:
       type: object
@@ -623,6 +946,19 @@ components:
 
     Order:
       type: object
+      required:
+        - id
+        - company_id
+        - title
+        - description
+        - required_count
+        - start_datetime
+        - end_datetime
+        - location
+        - status
+        - version
+        - created_at
+        - updated_at
       properties:
         id: { type: string, format: uuid }
         company_id: { type: string, format: uuid }
@@ -651,11 +987,25 @@ components:
         location: { type: string, example: Grand Hotel Baku, Baku }
         pay_rate: { type: number, nullable: true, example: 18.5 }
         notes: { type: string, nullable: true, example: Formal dress required. }
-        status: { type: string, enum: [draft, active, completed, cancelled] }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        version:
+          type: integer
+          minimum: 1
+          description: Monotonic optimistic-concurrency version. Send it as `expected_version` for cancellation.
+          example: 1
         assignment_count: { type: integer, example: 0 }
         rating_count: { type: integer, example: 0 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    OrderListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
 
     UpdateWorkerFocTrainingRequest:
       type: object
@@ -725,8 +1075,16 @@ components:
 
     CancelOrderRequest:
       type: object
+      additionalProperties: false
       properties:
         reason: { type: string, maxLength: 500, example: Client cancelled the event. }
+        expected_version:
+          type: integer
+          minimum: 1
+          description: |
+            Optional for legacy clients but strongly recommended. A stale value returns
+            `409 ORDER_VERSION_CONFLICT` without applying cancellation side effects.
+          example: 3
 
     AssignmentStatus:
       type: string
@@ -741,20 +1099,58 @@ components:
         worker_id: { type: string, format: uuid }
         status: { $ref: '#/components/schemas/AssignmentStatus' }
         order_category_item_id: { type: string, format: uuid, nullable: true }
+        position_id: { type: string, format: uuid, nullable: true }
         category: { type: string, nullable: true, example: waiter }
         category_item:
           allOf:
             - $ref: '#/components/schemas/OrderCategoryItem'
           nullable: true
+        position:
+          allOf:
+            - $ref: '#/components/schemas/TaxonomyPosition'
+          nullable: true
+        assigned_position:
+          allOf:
+            - $ref: '#/components/schemas/TaxonomyPosition'
+          nullable: true
         assigned_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        assigned_by:
+          type: object
+          nullable: true
+          description: Present only for admin and super_admin viewers; omitted from company and worker responses.
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string, example: Admin User }
+        warnings:
+          type: array
+          description: Non-blocking business warnings. A profession mismatch never changes the worker profile.
+          items:
+            type: object
+            properties:
+              code: { type: string, enum: [WORKER_POSITION_MISMATCH] }
+              message: { type: string }
+              worker_id: { type: string, format: uuid }
+              position_id: { type: string, format: uuid }
+        attendance:
+          type: object
+          properties:
+            id: { type: string, format: uuid, nullable: true }
+            status:
+              type: string
+              enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete]
+            checkin_time: { type: string, format: date-time, nullable: true }
+            checkout_time: { type: string, format: date-time, nullable: true }
+            duration_minutes: { type: integer, nullable: true }
+            created_at: { type: string, format: date-time, nullable: true }
+            updated_at: { type: string, format: date-time, nullable: true }
         order:
           type: object
           properties:
             id: { type: string, format: uuid }
             title: { type: string, example: Banquet service shift }
             category: { type: string, example: hospitality }
-            status: { type: string, enum: [draft, active, completed, cancelled], example: active }
+            status: { $ref: '#/components/schemas/OrderStatus' }
             required_count: { type: integer, example: 4 }
             category_items:
               type: array
@@ -762,6 +1158,14 @@ components:
             start_datetime: { type: string, format: date-time, example: "2030-01-15T10:00:00.000Z" }
             end_datetime: { type: string, format: date-time, example: "2030-01-15T18:00:00.000Z" }
             location: { type: string, example: Grand Hotel Baku, Baku }
+            company:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                status: { $ref: '#/components/schemas/CompanyStatus' }
+                contact_name: { type: string }
+                phone: { type: string }
         worker:
           type: object
           properties:
@@ -770,11 +1174,21 @@ components:
             phone: { type: string, example: "+994501234567" }
             status: { $ref: '#/components/schemas/WorkerStatus' }
             availability: { type: boolean, example: true }
-            position: { type: string, example: Waiter }
+            position: { type: string, nullable: true, example: Waiter }
+            profile_photo_url: { type: string, format: uri, nullable: true }
+            position_ids:
+              type: array
+              items: { type: string, format: uuid }
+            positions:
+              type: array
+              items: { $ref: '#/components/schemas/TaxonomyPosition' }
 
     CreateAssignmentsRequest:
       type: object
       required: [order_id]
+      anyOf:
+        - required: [worker_ids]
+        - required: [assignments]
       description: |
         Legacy mode: worker_ids plus optional category or order_category_item_id.
         Preferred mode: assignments array, where each worker can target a category item.
@@ -787,6 +1201,7 @@ components:
           items: { type: string, format: uuid }
         category: { type: string, example: waiter }
         order_category_item_id: { type: string, format: uuid, example: "{{order_category_item_id}}" }
+        position_id: { type: string, format: uuid, example: "{{position_id}}" }
         assignments:
           type: array
           minItems: 1
@@ -798,6 +1213,63 @@ components:
               worker_id: { type: string, format: uuid, example: "{{worker_id_1}}" }
               category: { type: string, example: waiter }
               order_category_item_id: { type: string, format: uuid, example: "{{order_category_item_id}}" }
+              position_id: { type: string, format: uuid, example: "{{position_id}}" }
+
+    CreateAssignmentsResponse:
+      type: object
+      required: [assigned_count, assignments, warnings]
+      properties:
+        assigned_count: { type: integer, minimum: 1 }
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/Assignment' }
+        warnings:
+          type: array
+          items:
+            type: object
+            required: [code, message, worker_id, position_id]
+            properties:
+              code: { type: string, enum: [WORKER_POSITION_MISMATCH] }
+              message: { type: string }
+              worker_id: { type: string, format: uuid }
+              position_id: { type: string, format: uuid }
+
+    AssignmentListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Assignment' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+
+    BulkAssignmentsResponse:
+      type: object
+      required: [order_id, requested_count, assigned_count, failed_count, results]
+      properties:
+        order_id: { type: string, format: uuid }
+        requested_count: { type: integer, minimum: 1 }
+        assigned_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        results:
+          type: array
+          items:
+            type: object
+            required: [worker_id, status, warnings]
+            properties:
+              worker_id: { type: string, format: uuid }
+              status: { type: string, enum: [assigned, failed] }
+              assignment: { $ref: '#/components/schemas/Assignment' }
+              warnings:
+                type: array
+                items: { type: object, additionalProperties: true }
+              error:
+                type: object
+                properties:
+                  code: { type: string, example: ORDER_CAPACITY_EXCEEDED }
+                  message: { type: string }
+                  status_code: { type: integer }
+                  details: { type: object, additionalProperties: true }
 
     CancelAssignmentRequest:
       type: object
@@ -849,6 +1321,42 @@ components:
         order_id: { type: string, format: uuid, example: "{{order_id}}" }
         expires_at: { type: string, format: date-time, nullable: true }
 
+    SelectVenueKioskOrderRequest:
+      type: object
+      required: [order_id]
+      properties:
+        order_id: { type: string, format: uuid, example: "{{order_id}}" }
+
+    KioskEligibleOrder:
+      type: object
+      required: [id, title, status, company_id, company, start_datetime, end_datetime, location, accepted_assignment_count]
+      properties:
+        id: { type: string, format: uuid, example: "{{order_id}}" }
+        title: { type: string, example: "Hilton Baku banket xidməti" }
+        status:
+          type: string
+          enum: [active, published, partially_assigned, assigned, in_progress]
+        company_id: { type: string, format: uuid, example: "{{company_id}}" }
+        company:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string, format: uuid, example: "{{company_id}}" }
+            name: { type: string, example: "Hilton Baku" }
+        start_datetime: { type: string, format: date-time }
+        end_datetime: { type: string, format: date-time }
+        location: { type: string, example: "Hilton Baku, Bakı" }
+        accepted_assignment_count: { type: integer, minimum: 0, example: 4 }
+
+    VenueKioskCompany:
+      type: object
+      description: Approved company with an active, non-deleted account that can own a persistent venue kiosk.
+      required: [id, name, status]
+      properties:
+        id: { type: string, format: uuid, example: "{{company_id}}" }
+        name: { type: string, example: "Hilton Baku" }
+        status: { type: string, enum: [approved] }
+
     VenueKioskActiveSession:
       type: object
       properties:
@@ -863,7 +1371,7 @@ components:
         shift_start: { type: string, format: date-time, nullable: true }
         shift_end: { type: string, format: date-time, nullable: true }
 
-    VenueKiosk:
+    VenueKioskPublicContext:
       type: object
       properties:
         id: { type: string, format: uuid, example: "{{venue_kiosk_id}}" }
@@ -875,12 +1383,46 @@ components:
         location_label: { type: string, nullable: true, example: "Lobby / əsas giriş" }
         status: { type: string, enum: [active, disabled], example: active }
         kiosk_status: { type: string, enum: [active, disabled], example: active }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
         refresh_interval_seconds: { type: integer, example: 30 }
-        kiosk_url: { type: string, example: "/kiosk/{{venue_kiosk_token}}" }
+        qr_available: { type: boolean, description: True when the selected shift can issue a short-lived QR. }
+        checkout_only: { type: boolean, description: True for a recently ended shift retained only for outstanding check-outs. }
+        selection_required: { type: boolean, description: True when the tablet must select among simultaneous eligible shifts. }
+        eligible_orders:
+          type: array
+          items:
+            type: object
+            required: [id, title, company_id, shift_start, shift_end, checkout_only]
+            properties:
+              id: { type: string, format: uuid }
+              title: { type: string }
+              status: { $ref: '#/components/schemas/OrderStatus' }
+              company_id: { type: string, format: uuid }
+              location: { type: string, nullable: true }
+              shift_start: { type: string, format: date-time }
+              shift_end: { type: string, format: date-time }
+              checkout_only: { type: boolean }
         active_session:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/VenueKioskActiveSession'
+        order_id: { type: string, format: uuid, nullable: true }
+        order_title: { type: string, nullable: true }
+        location: { type: string, nullable: true }
+        shift_start: { type: string, format: date-time, nullable: true }
+        shift_end: { type: string, format: date-time, nullable: true }
+
+    VenueKiosk:
+      allOf:
+        - $ref: '#/components/schemas/VenueKioskPublicContext'
+        - type: object
+          properties:
+            kiosk_url:
+              type: string
+              description: Authenticated management link. The capability is carried only in the URL fragment.
+              example: "/kiosk#capability={{venue_kiosk_token}}"
 
     VenueKioskCreateResponse:
       allOf:
@@ -922,12 +1464,24 @@ components:
               example: "{{kiosk_token}}"
             kiosk_url:
               type: string
-              example: "/kiosk/{{kiosk_token}}"
+              description: The capability remains only in the URL fragment so a dedicated kiosk can reload or restore the page. URL fragments are not sent in HTTP requests or referrers, and the kiosk does not copy it into browser storage.
+              example: "/kiosk#capability={{kiosk_token}}"
 
     KioskQrTokenResponse:
       allOf:
         - $ref: '#/components/schemas/KioskSession'
         - type: object
+          properties:
+            token: { type: string, example: "{{attendance_qr_token}}" }
+            expires_at: { type: string, format: date-time }
+            refresh_after_seconds: { type: integer, example: 30 }
+            kiosk_expires_at: { type: string, format: date-time, nullable: true }
+
+    VenueKioskQrTokenResponse:
+      allOf:
+        - $ref: '#/components/schemas/VenueKioskPublicContext'
+        - type: object
+          required: [token, expires_at, refresh_after_seconds, kiosk_expires_at]
           properties:
             token: { type: string, example: "{{attendance_qr_token}}" }
             expires_at: { type: string, format: date-time }
@@ -970,15 +1524,38 @@ components:
         checkin_time: { type: string, format: date-time, nullable: true }
         checkout_time: { type: string, format: date-time, nullable: true }
         duration_minutes: { type: integer, nullable: true, example: 480 }
-        checkin_location: { $ref: '#/components/schemas/Location' }
-        checkout_location: { $ref: '#/components/schemas/Location' }
+        status: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        attendance_status: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        worker_name: { type: string, example: Ali Hasanov }
+        company_name: { type: string, example: Grand Hotel Baku }
+        order_title: { type: string, example: Banquet service shift }
+        job_position: { type: string, nullable: true, example: Ofisiant }
+        checkin_location:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Location'
+        checkout_location:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Location'
         checkin_notes: { type: string, nullable: true }
         checkout_notes: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
         assignment:
           type: object
           properties:
             id: { type: string, format: uuid }
             status: { $ref: '#/components/schemas/AssignmentStatus' }
+            assigned_category: { type: string, nullable: true }
+            position:
+              type: object
+              nullable: true
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                name_az: { type: string }
+                name_en: { type: string, nullable: true }
             worker:
               type: object
               properties:
@@ -993,7 +1570,7 @@ components:
               properties:
                 id: { type: string, format: uuid }
                 title: { type: string, example: Banquet service shift }
-                status: { type: string, enum: [draft, active, completed, cancelled], example: active }
+                status: { $ref: '#/components/schemas/OrderStatus' }
                 company:
                   type: object
                   properties:
@@ -1009,7 +1586,239 @@ components:
         meta:
           $ref: '#/components/schemas/PaginationMeta'
 
+    AttendanceMonitorItem:
+      type: object
+      required:
+        - id
+        - attendance_id
+        - assignment_id
+        - status
+        - attendance_status
+        - checkin_time
+        - checkout_time
+        - duration_minutes
+        - updated_at
+        - assigned_at
+        - worker_name
+        - company_name
+        - order_title
+        - job_position
+        - assignment
+      properties:
+        id: { type: string, format: uuid, nullable: true }
+        attendance_id: { type: string, format: uuid, nullable: true }
+        assignment_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        attendance_status: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        checkin_time: { type: string, format: date-time, nullable: true }
+        checkout_time: { type: string, format: date-time, nullable: true }
+        duration_minutes: { type: integer, nullable: true, minimum: 0 }
+        created_at: { type: string, format: date-time, nullable: true }
+        updated_at: { type: string, format: date-time }
+        assigned_at: { type: string, format: date-time }
+        worker_name: { type: string }
+        company_name: { type: string }
+        order_title: { type: string }
+        job_position: { type: string, nullable: true }
+        assignment: { $ref: '#/components/schemas/AttendanceMonitorAssignment' }
+
+    AttendanceMonitorAssignment:
+      type: object
+      required: [id, status, worker, order]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        assigned_category: { type: string, nullable: true }
+        position:
+          type: object
+          nullable: true
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            name_az: { type: string }
+            name_en: { type: string, nullable: true }
+        worker:
+          type: object
+          required: [id, name, phone]
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            phone: { type: string }
+        order:
+          type: object
+          required: [id, title, status, shift_start, shift_end, company]
+          properties:
+            id: { type: string, format: uuid }
+            title: { type: string }
+            status: { $ref: '#/components/schemas/OrderStatus' }
+            shift_start: { type: string, format: date-time }
+            shift_end: { type: string, format: date-time }
+            company:
+              type: object
+              required: [id, name]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+
+    AttendanceMonitorResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AttendanceMonitorItem' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+        server_time: { type: string, format: date-time }
+
+    CompanyDetailedReportOrder:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        category: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        created_at: { type: string, format: date-time }
+        start_datetime: { type: string, format: date-time }
+        end_datetime: { type: string, format: date-time }
+        location: { type: string }
+        workers_requested: { type: integer, minimum: 0 }
+        workers_assigned: { type: integer, minimum: 0 }
+        completed_assignments: { type: integer, minimum: 0 }
+        attendance_record_count: { type: integer, minimum: 0 }
+        total_recorded_minutes: { type: number, minimum: 0 }
+        total_recorded_hours: { type: number, minimum: 0 }
+        category_items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderCategoryItem' }
+        assignments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              status: { $ref: '#/components/schemas/AssignmentStatus' }
+              assigned_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+              category: { type: string, nullable: true }
+              position_id: { type: string, format: uuid, nullable: true }
+              position: { type: string, nullable: true }
+              worker:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  profile_photo_url: { type: string, nullable: true }
+                  registered_position: { type: string, nullable: true }
+              assigned_by:
+                type: object
+                nullable: true
+                properties:
+                  id: { type: string, format: uuid }
+                  name: { type: string }
+                  role: { type: string }
+              attendance:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    status: { type: string, enum: [not_checked_in, currently_working, checked_out] }
+                    checkin_time: { type: string, format: date-time, nullable: true }
+                    checkout_time: { type: string, format: date-time, nullable: true }
+                    duration_minutes: { type: integer, nullable: true }
+        attendance:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              assignment_id: { type: string, format: uuid }
+              worker_id: { type: string, format: uuid }
+              worker_name: { type: string }
+              position: { type: string, nullable: true }
+              status: { type: string, enum: [not_checked_in, currently_working, checked_out] }
+              checkin_time: { type: string, format: date-time, nullable: true }
+              checkout_time: { type: string, format: date-time, nullable: true }
+              duration_minutes: { type: integer, nullable: true }
+              created_at: { type: string, format: date-time }
+              updated_at: { type: string, format: date-time }
+
+    CompanyDetailedReport:
+      type: object
+      properties:
+        company:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            status: { $ref: '#/components/schemas/CompanyStatus' }
+            contact_name: { type: string, nullable: true }
+            phone: { type: string }
+            email: { type: string, format: email, nullable: true }
+            is_active: { type: boolean }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+        filters:
+          type: object
+          additionalProperties: true
+        summary:
+          type: object
+          properties:
+            total_orders: { type: integer, minimum: 0 }
+            active_orders: { type: integer, minimum: 0 }
+            pending_orders: { type: integer, minimum: 0 }
+            completed_orders: { type: integer, minimum: 0 }
+            cancelled_orders: { type: integer, minimum: 0 }
+            orders_by_status: { type: object, additionalProperties: { type: integer } }
+            workers_requested: { type: integer, minimum: 0 }
+            workers_assigned: { type: integer, minimum: 0 }
+            completed_assignments: { type: integer, minimum: 0 }
+            attendance_records: { type: integer, minimum: 0 }
+            completed_attendance_records: { type: integer, minimum: 0 }
+            open_attendance_records: { type: integer, minimum: 0 }
+            total_recorded_minutes: { type: number, minimum: 0 }
+            total_recorded_hours: { type: number, minimum: 0 }
+        orders:
+          type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/CompanyDetailedReportOrder' }
+            meta: { $ref: '#/components/schemas/PaginationMeta' }
+
 paths:
+  /health:
+    get:
+      tags: [Operations]
+      summary: Process liveness probe
+      description: Confirms that the HTTP process is running. It does not check dependencies.
+      servers:
+        - url: http://localhost:3000
+        - url: https://api.setservice.az
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, timestamp]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  timestamp: { type: string, format: date-time }
+
+  /ready:
+    get:
+      tags: [Operations]
+      summary: Dependency readiness probe
+      description: Returns 200 only when PostgreSQL and configured Redis are reachable and the in-process outbox processor is healthy or the separately deployed outbox worker heartbeat is fresh. Historical dead-letter delivery failures remain exposed by the worker health endpoint and metrics without permanently removing the API from service.
+      servers:
+        - url: http://localhost:3000
+        - url: https://api.setservice.az
+      responses:
+        '200': { description: All required dependencies are ready }
+        '503': { description: At least one required dependency is unavailable }
+
   /auth/register:
     post:
       tags: [Auth]
@@ -1034,7 +1843,7 @@ paths:
                       properties:
                         role: { type: string, enum: [company] }
       responses:
-        '201': { description: Account created and OTP sent }
+        '201': { description: Worker account created or ephemeral company enrollment started; OTP sent }
 
   /auth/worker/register:
     post:
@@ -1055,19 +1864,25 @@ paths:
     post:
       tags: [Auth]
       summary: Request worker OTP for registration resend or password reset
+      description: |
+        Returns a generic anti-enumeration acknowledgement after the OTP has been accepted into the
+        durable delivery flow. A successful HTTP response does not guarantee SMS delivery.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/RequestOtpRequest' }
       responses:
-        '200': { description: OTP sent or generic safe response }
+        '200':
+          description: OTP delivery request accepted or a generic anti-enumeration response returned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
         '403':
           description: Worker is not approved or registration is not pending OTP
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
-        '429':
-          description: OTP cooldown, rate limit, or temporary block
-          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/login:
     post:
@@ -1099,17 +1914,52 @@ paths:
         '200': { description: Password set and worker moved to pending_approval }
         '401': { description: Invalid or expired OTP }
 
+  /auth/worker/document-session:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Open a narrow document session for a pending worker
+      description: Valid phone/password and pending_approval status are required. Returns only a short-lived registration token; no access or refresh token. This token cannot access jobs, assignments, attendance or other protected app screens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerLoginRequest' }
+      responses:
+        '200':
+          description: Worker document session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  worker_id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending_approval] }
+                  registration_access_token: { type: string }
+                  required_document_types: { type: array, items: { type: string, enum: [health_certificate, criminal_record] } }
+        '401': { description: Invalid credentials }
+        '403': { description: Worker is not pending approval or account is inactive }
+
   /auth/worker/forgot-password:
     post:
       tags: [Auth]
       summary: Request worker password reset OTP
+      description: |
+        Always returns an anti-enumeration response. For an eligible account, delivery is queued
+        asynchronously through the configured SMS or email provider.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/WorkerForgotPasswordRequest' }
       responses:
-        '200': { description: Generic OTP response }
+        '200':
+          description: Generic OTP delivery acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/reset-password:
     post:
@@ -1128,37 +1978,100 @@ paths:
     post:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
-      summary: Request OTP for worker phone number change
-      description: The authenticated worker phone identity is not changed until OTP confirmation succeeds.
+      deprecated: true
+      summary: Request phone-change OTP using the Build 14 compatibility contract
+      description: |
+        Legacy Build 14 compatibility route accepting only `phone`. It remains protected by worker JWT,
+        strict IP/target rate limiting, an additional authenticated-actor/target limiter, and a redacted
+        audit event. It does not provide current-password step-up, so clients that support the v2 route
+        must not use it. A bearer token alone still cannot change the login identity: the target handset's
+        one-time code is required by the shared atomic confirmation route. To preserve the deployed Build 14
+        UI contract, an already-registered target returns the existing generic 409 conflict instead of opening
+        an OTP screen when no SMS was sent. This legacy availability signal is bounded by the additional
+        actor/target limiter and redacted audit and is removed from the password-protected v2 flow.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/WorkerPhoneChangeRequest' }
       responses:
-        '200': { description: OTP sent to the new phone number }
-        '409': { description: Phone number is already registered }
+        '200':
+          description: OTP request accepted; delivery is not guaranteed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '400': { description: Invalid phone number or the submitted phone is unchanged }
+        '401': { description: Worker authentication is required }
+        '404': { description: Worker profile not found }
+        '409': { description: Target phone cannot be used by the authenticated worker }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /auth/worker/phone-change/v2/request:
+    post:
+      tags: [Auth]
+      security: [{ BearerAuth: [] }]
+      summary: Request phone-change OTP with current-password step-up
+      description: |
+        Build 15 and later route. Requires the authenticated worker's current password before target-phone
+        availability is inspected. The worker phone identity is not changed until OTP confirmation succeeds.
+        To prevent registered-phone enumeration, an already-registered target receives the same accepted
+        response as an available target, but no OTP is sent. Therefore success acknowledges the request only;
+        it does not prove target availability, OTP dispatch, or handset delivery.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerPhoneChangeV2Request' }
+      responses:
+        '200':
+          description: Generic request acknowledgement; does not disclose target registration or OTP delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '400': { description: Invalid phone number or the submitted phone is unchanged }
+        '401': { description: Authentication is required or the current password is invalid }
+        '404': { description: Worker profile not found }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/worker/phone-change/confirm:
     post:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
       summary: Confirm worker phone number change with OTP
+      description: |
+        Atomically consumes the one-time code and updates the authenticated worker's login phone.
+        The database uniqueness constraint prevents duplicate phone identities. Existing access and
+        refresh sessions remain valid; subsequent phone login uses the returned canonical number.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/WorkerPhoneChangeConfirmRequest' }
       responses:
-        '200': { description: Worker phone identity updated }
+        '200':
+          description: Worker phone identity updated, or an already-committed retry acknowledged
+          headers:
+            Cache-Control:
+              schema: { type: string, example: "private, no-store" }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerPhoneChangeResponse' }
         '401': { description: Invalid or expired OTP }
+        '400': { description: Invalid phone number or OTP request shape }
+        '404': { description: Active worker profile not found }
+        '409': { description: Phone number became or remains registered to another account }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/email-verification/request:
     post:
       tags: [Auth]
       security: [{ BearerAuth: [] }]
       summary: Request email verification code for the authenticated user
-      description: The new email is stored as pending_email until code confirmation succeeds.
+      description: |
+        The new email is stored as pending_email until code confirmation succeeds.
+        Success means delivery was queued; it does not prove mailbox delivery.
       requestBody:
         required: true
         content:
@@ -1167,6 +2080,8 @@ paths:
       responses:
         '200': { description: Email verification code sent or email already verified }
         '409': { description: Email is already registered }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/email-verification/confirm:
     post:
@@ -1185,14 +2100,20 @@ paths:
   /auth/company/register:
     post:
       tags: [Auth]
-      summary: Register company and send OTP
+      summary: Start ephemeral company registration and send phone OTP
+      description: No User or Company database record is created at this stage. The short-lived enrollment state is stored outside the company tables and expires automatically.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompanyRegisterRequest' }
       responses:
-        '201': { description: Company created with pending_approval status }
+        '201':
+          description: Ephemeral enrollment started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyEnrollmentStartResponse' }
+        '409': { description: Phone or email already belongs to a completed account }
 
   /auth/company/login:
     post:
@@ -1212,32 +2133,109 @@ paths:
         '200':
           description: JWT token pair
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
-        '403': { description: Company is not approved }
+        '403': { description: Account is pending approval, rejected, suspended, or inactive }
+
+  /auth/company/web-login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Approved company browser login
+      description: |
+        Requires an exact trusted Origin. Returns the short-lived access token in the response
+        and sets the rotating company refresh token in a role-scoped HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
+      responses:
+        '200':
+          description: Browser session started
+          headers:
+            Set-Cookie:
+              description: Role-scoped HttpOnly refresh cookie; Secure is mandatory for SameSite=None.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '403': { description: Origin is not trusted or company is not approved }
+
+  /auth/company/web-refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate the company browser refresh cookie
+      description: |
+        Requires an exact trusted Origin and the company HttpOnly refresh cookie.
+        The previous refresh token is revoked during rotation and is never returned in JSON.
+      responses:
+        '200':
+          description: Browser session rotated
+          headers:
+            Set-Cookie:
+              description: Newly rotated role-scoped HttpOnly refresh cookie.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Browser session is missing, expired, or revoked }
+        '403': { description: Origin is not trusted }
+
+  /auth/company/web-logout:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Revoke and clear the company browser session
+      description: Requires an exact trusted Origin and revokes the refresh token from the HttpOnly cookie.
+      responses:
+        '204':
+          description: Browser session revoked
+          headers:
+            Set-Cookie:
+              description: Clears the role-scoped refresh cookie.
+              schema: { type: string }
+        '401': { description: Browser session is missing or expired }
+        '403': { description: Origin is not trusted }
 
   /auth/company/complete-registration:
     post:
       tags: [Auth]
-      summary: Verify company registration OTP and create password
+      summary: Verify company phone OTP, create password, and finalize registration
+      description: This is the only registration step that creates the User and Company records. The company starts with pending_approval status and has no access until an admin approves it. Email verification and company documents are not required.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompleteCompanyRegistrationRequest' }
       responses:
-        '200': { description: Password set; company remains pending admin approval }
+        '201':
+          description: Company finalized with pending_approval status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyRegistrationFinalizedResponse' }
         '401': { description: Invalid or expired OTP }
+        '409': { description: Phone or email became unavailable before finalization }
 
   /auth/company/forgot-password:
     post:
       tags: [Auth]
       summary: Request company password reset OTP by email
+      description: |
+        Always returns an anti-enumeration response. For an eligible account, delivery is queued
+        asynchronously through the configured email or SMS provider.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CompanyForgotPasswordRequest' }
       responses:
-        '200': { description: Generic OTP response }
+        '200':
+          description: Generic OTP delivery acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpRequestAcceptedResponse' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /auth/company/reset-password:
     post:
@@ -1266,17 +2264,98 @@ paths:
           description: JWT token pair
           content: { application/json: { schema: { $ref: '#/components/schemas/TokenResponse' } } }
 
+  /auth/admin/web-login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Admin browser login
+      description: |
+        Requires an exact trusted Origin. Returns the short-lived access token in the response
+        and sets the rotating admin refresh token in a role-scoped HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailPasswordLoginRequest' }
+      responses:
+        '200':
+          description: Browser session started
+          headers:
+            Set-Cookie:
+              description: Role-scoped HttpOnly refresh cookie; Secure is mandatory for SameSite=None.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Invalid credentials }
+        '403': { description: Origin is not trusted }
+
+  /auth/admin/web-refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Rotate the admin browser refresh cookie
+      description: |
+        Requires an exact trusted Origin and the admin HttpOnly refresh cookie.
+        The previous refresh token is revoked during rotation and is never returned in JSON.
+      responses:
+        '200':
+          description: Browser session rotated
+          headers:
+            Set-Cookie:
+              description: Newly rotated role-scoped HttpOnly refresh cookie.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebSessionResponse' }
+        '401': { description: Browser session is missing, expired, or revoked }
+        '403': { description: Origin is not trusted }
+
+  /auth/admin/web-logout:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Revoke and clear the admin browser session
+      description: Requires an exact trusted Origin and revokes the refresh token from the HttpOnly cookie.
+      responses:
+        '204':
+          description: Browser session revoked
+          headers:
+            Set-Cookie:
+              description: Clears the role-scoped refresh cookie.
+              schema: { type: string }
+        '401': { description: Browser session is missing or expired }
+        '403': { description: Origin is not trusted }
+
   /auth/admin/forgot-password:
     post:
       tags: [Auth]
-      summary: Request manual super admin password reset
+      deprecated: true
+      summary: Disabled public admin password-reset endpoint
+      description: |
+        This public recovery flow is intentionally disabled and always returns
+        `410 ADMIN_PASSWORD_RESET_DISABLED` without disclosing whether an admin account exists.
+        Admin recovery must follow the separately authorized operational recovery runbook.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/AdminForgotPasswordRequest' }
       responses:
-        '200': { description: Generic manual reset response }
+        '410':
+          description: Public admin password recovery is disabled (`ADMIN_PASSWORD_RESET_DISABLED`)
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error: Public admin password recovery is disabled.
+                code: ADMIN_PASSWORD_RESET_DISABLED
+                request_id: 7fa22d18-6e54-4c33-8154-9f68f8e2f84b
+                timestamp: "2030-01-15T10:00:00.000Z"
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /auth/verify-otp:
     post:
@@ -1402,6 +2481,42 @@ paths:
         '400': { description: Invalid token payload, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
+  /workers/me/enrollment:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Read own worker profile and document metadata during enrollment
+      description: Accepts a short-lived worker registration token or approved worker access token. Ownership comes from the token. Pending workers still cannot access normal app APIs; rejected, deleted and inactive enrollments are denied.
+      responses:
+        '200': { description: Own profile with safe private document metadata, content: { application/json: { schema: { $ref: '#/components/schemas/WorkerProfile' } } } }
+        '401': { description: Invalid or expired registration token }
+        '403': { description: Enrollment closed or wrong role }
+
+  /workers/me/documents/{type}/download:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      summary: Download own verified private document during enrollment
+      description: Worker registration token is accepted only for the authenticated worker's own documents. No worker ID can be supplied. CV remains private to the worker and authorized admins.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
+      responses:
+        '200':
+          description: Short-lived signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+                  expires_in_seconds: { type: integer }
+        '403': { description: Enrollment closed or wrong role }
+        '404': { description: Document not found }
+        '410': { description: Document deleted or not clean and ready }
+
   /workers/me:
     get:
       tags: [Workers]
@@ -1421,6 +2536,7 @@ paths:
             schema:
               type: object
               properties:
+                full_name: { type: string, minLength: 2, maxLength: 120, description: Trimmed worker full name. }
                 skills: { type: array, items: { $ref: '#/components/schemas/Skill' } }
                 languages: { type: array, items: { type: string } }
                 email: { type: string, format: email, nullable: true, description: Optional worker email. Must be unique when provided. }
@@ -1433,11 +2549,6 @@ paths:
                   nullable: true
                   enum: [male, female]
                 whatsapp_available: { type: boolean }
-                documents:
-                  type: array
-                  deprecated: true
-                  description: Prefer secure upload endpoints for worker documents.
-                  items: { $ref: '#/components/schemas/Document' }
                 availability: { type: boolean }
       responses:
         '200': { description: Updated worker profile }
@@ -1469,7 +2580,7 @@ paths:
       tags: [Workers]
       security: [{ BearerAuth: [] }]
       summary: Upload worker document
-      description: Approved workers can upload PDF or image documents. `criminal_record` is private to worker/admin by default; `health_certificate` is company-visible.
+      description: Approved workers can upload PDF or image documents. Content is validated by extension, MIME, magic bytes, an image/PDF parser, and a malware scanner before promotion from quarantine to ready storage. `criminal_record` and optional `cv` documents are private to the worker/admin by default; `health_certificate` is company-visible. CV does not participate in worker approval prerequisites.
       requestBody:
         required: true
         content:
@@ -1480,7 +2591,7 @@ paths:
               properties:
                 type:
                   type: string
-                  enum: [health_certificate, criminal_record]
+                  enum: [health_certificate, criminal_record, cv]
                   example: health_certificate
                 file:
                   type: string
@@ -1489,6 +2600,134 @@ paths:
         '201': { description: Updated worker profile, content: { application/json: { schema: { $ref: '#/components/schemas/WorkerProfile' } } } }
         '400': { description: Invalid upload file or document type, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '403': { description: Worker is not approved }
+        '413': { description: Upload exceeds the five MiB limit, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '415': { description: Extension, declared MIME, or magic bytes are not allowed or do not match, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422': { description: Corrupt, active-content, polyglot, or malware-positive file, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: Required malware scanner is unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /workers/me/documents/{type}:
+    delete:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: deleteMyWorkerDocument
+      summary: Delete one document owned by the authenticated worker
+      description: The document metadata is replaced with a non-downloadable soft-delete tombstone and an audit event in one transaction. Only a worker can delete their own document. The owned private object is removed after commit on a best-effort basis; foreign or malformed keys are never deleted.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
+      responses:
+        '200':
+          description: Document soft-deleted
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerDocumentDeletionResponse' }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not an approved worker, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Worker-owned document does not exist or was already deleted, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /workers/me/account-deletion-request:
+    post:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: requestMyWorkerAccountDeletion
+      summary: Request deletion of the authenticated worker account
+      description: Immediately soft-deletes and anonymizes the worker-owned profile and authentication data, revokes sessions and device tokens, tombstones documents, and writes an append-only audit event in one transaction. Historical operational relations remain intact; no database row is hard-deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerAccountDeletionRequest' }
+      responses:
+        '202':
+          description: Account deletion request accepted and applied
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerAccountDeletionResponse' }
+        '400': { description: Explicit confirmation is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not a worker, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Worker account does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /private-worker-documents/{token}:
+    get:
+      tags: [Workers]
+      security: []
+      operationId: downloadLocalPrivateWorkerDocument
+      summary: Read a local-development private document capability URL
+      description: |
+        Local storage only. The opaque, short-lived signed token is the capability; responses are
+        never cached and the token must not be logged, persisted, or forwarded. Production object
+        storage returns its own short-lived signed URL instead.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Private document bytes
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Cache-Control: { schema: { type: string }, description: "private, no-store, max-age=0" }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+            Content-Disposition: { schema: { type: string }, description: Forces download as an attachment. }
+            X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }
+            Content-Security-Policy: { schema: { type: string }, description: Blocks active document content in the browser. }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { description: Token is invalid, expired, or the private object does not exist }
+
+  /workers/{id}/documents/{type}/download:
+    get:
+      tags: [Workers]
+      security: [{ BearerAuth: [] }]
+      operationId: authorizeWorkerDocumentDownload
+      summary: Authorize access and issue a short-lived private document URL
+      description: |
+        Worker ownership, related approved company visibility, or admin `view_workers` permission is
+        required on every authorization request. Only ready documents with a clean scan result are
+        eligible. The returned provider capability expires after at most fifteen minutes, is audit
+        logged, and must not be logged, persisted, placed in analytics, or sent as a referrer.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [health_certificate, criminal_record, cv] }
+      responses:
+        '200':
+          description: Short-lived signed download URL
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Cache-Control: { schema: { type: string }, description: "private, no-store, max-age=0" }
+            Pragma: { schema: { type: string, enum: [no-cache] } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_in_seconds, expires_at]
+                properties:
+                  url: { type: string }
+                  expires_in_seconds: { type: integer, minimum: 1, maximum: 900, example: 300 }
+                  expires_at: { type: string, format: date-time }
+        '401': { description: Bearer token is missing or invalid }
+        '403': { description: Caller is not allowed to access this document }
+        '404': { description: Worker or document not found }
+        '410': { description: Document is rejected, deleted, legacy-public, foreign, or not clean/ready }
 
   /workers/{id}/company-profile:
     get:
@@ -1520,6 +2759,71 @@ paths:
       summary: Update approved company profile
       responses:
         '200': { description: Updated company profile }
+
+  /companies/me/account-deletion-request:
+    post:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      operationId: requestMyCompanyAccountDeletion
+      summary: Request deletion of the authenticated company account
+      description: Immediately soft-deletes and anonymizes the company-owned profile and authentication data, revokes sessions and device tokens, tombstones documents, and writes an append-only audit event. Historical operational relations remain intact; no database row is hard-deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompanyAccountDeletionRequest' }
+      responses:
+        '202':
+          description: Account deletion request accepted and applied
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyAccountDeletionResponse' }
+        '400': { description: Explicit confirmation is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Bearer token is missing or invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Authenticated account is not a company, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Company account does not exist, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /companies/me/documents:
+    post:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Upload or replace a company document in private storage
+      description: Accepts an approved access token or the narrow registration token returned after OTP/password completion. Files are quarantined, type-inspected, malware-scanned, and only clean files are promoted.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [type, file]
+              properties:
+                type: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Sanitized company profile/document metadata; no storage key or raw URL is returned }
+        '400': { description: Invalid type, file, MIME signature, or scan result }
+        '401': { description: Access or registration token is invalid }
+        '403': { description: Enrollment is closed }
+
+  /companies/me/documents/{type}/download:
+    get:
+      tags: [Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Authorize self-service company document download
+      description: Issues an audited, short-lived private capability URL. Raw object keys and permanent document URLs are never returned.
+      parameters:
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+      responses:
+        '200': { description: Short-lived signed download URL }
+        '401': { description: Access or registration token is invalid }
+        '404': { description: Company or document not found }
+        '410': { description: Legacy, foreign, or unscanned document must be uploaded again }
 
   /admin/workers:
     get:
@@ -1592,14 +2896,31 @@ paths:
     patch:
       tags: [Admin - Workers]
       security: [{ BearerAuth: [] }]
-      summary: Approve worker, create audit log, and notify worker
+      summary: Approve a pending worker, optionally classify them, create audit log, and notify worker
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                worker_class:
+                  allOf: [{ $ref: '#/components/schemas/WorkerClass' }]
+                  nullable: true
+            examples:
+              approve_without_class:
+                value: {}
+              approve_with_class:
+                value: { worker_class: A }
       responses:
         '200': { description: Worker approved }
+        '409': { description: Worker is not pending approval or the state changed concurrently }
 
   /admin/workers/{id}/reject:
     patch:
@@ -1680,6 +3001,27 @@ paths:
       responses:
         '200': { description: Company detail }
         '404': { description: Company not found }
+
+  /admin/companies/{id}/documents/{type}/download:
+    get:
+      tags: [Admin - Companies]
+      security: [{ BearerAuth: [] }]
+      summary: Authorize an audited company document download
+      description: Requires view_companies. Returns only a short-lived provider capability after ownership and clean-scan validation; the audit record stores a key hash, never the raw key or URL.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: type
+          required: true
+          schema: { type: string, enum: [registration_certificate, tax_certificate, operating_license, other] }
+      responses:
+        '200': { description: Short-lived signed download URL }
+        '403': { description: Requires view_companies }
+        '404': { description: Company or document not found }
+        '410': { description: Legacy, foreign, or unscanned document must be uploaded again }
 
   /admin/companies/{id}/approve:
     patch:
@@ -1786,10 +3128,12 @@ paths:
       parameters:
         - name: start_date
           in: query
-          schema: { type: string, format: date-time }
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive lower bound; `YYYY-MM-DD` is accepted.
         - name: end_date
           in: query
-          schema: { type: string, format: date-time }
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive upper bound; `YYYY-MM-DD` includes the whole day.
         - name: company_id
           in: query
           schema: { type: string, format: uuid }
@@ -1874,6 +3218,100 @@ paths:
         '200': { description: Dashboard and reporting metrics }
         '403': { description: Requires super_admin or admin with view_reports }
 
+  /admin/reports/companies/{companyId}:
+    get:
+      tags: [Admin - Reports]
+      security: [{ BearerAuth: [] }]
+      summary: Get a company-specific operational report
+      description: |
+        Requires `view_reports`. Every query is scoped to the company in the path and uses real order,
+        assignment and attendance records. Date filters match orders whose scheduled shift overlaps the range.
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: start_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Shift-overlap lower bound; `YYYY-MM-DD` is accepted.
+        - name: end_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Shift-overlap upper bound; `YYYY-MM-DD` includes the whole day.
+        - name: order_status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: worker_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: position_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Company profile, aggregate statistics and paginated order history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyDetailedReport' }
+        '400': { description: Invalid filter or date range, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Requires view_reports, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Company not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/reports/companies/{companyId}/export:
+    get:
+      tags: [Admin - Reports]
+      security: [{ BearerAuth: [] }]
+      summary: Export a company-specific operational report as CSV
+      description: |
+        Requires `view_reports`. Applies the same company, date, status, worker and position isolation as the JSON report.
+        Returns at most 10,000 matching orders. `X-Export-Truncated` is `true` when the cap was reached.
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv], default: csv }
+        - name: start_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Shift-overlap lower bound; `YYYY-MM-DD` is accepted.
+        - name: end_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Shift-overlap upper bound; `YYYY-MM-DD` includes the whole day.
+        - name: order_status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: worker_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: position_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: UTF-8 CSV with order, assignment and attendance rows
+          headers:
+            X-Export-Truncated: { schema: { type: boolean } }
+            X-Exported-Order-Count: { schema: { type: integer } }
+          content:
+            text/csv:
+              schema: { type: string }
+        '400': { description: Invalid filter or date range, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Requires view_reports, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Company not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   /company/reports/summary:
     get:
       tags: [Company - Reports]
@@ -1883,10 +3321,12 @@ paths:
       parameters:
         - name: start_date
           in: query
-          schema: { type: string, format: date-time }
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive lower bound; `YYYY-MM-DD` is accepted.
         - name: end_date
           in: query
-          schema: { type: string, format: date-time }
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive upper bound; `YYYY-MM-DD` includes the whole day.
         - name: worker_id
           in: query
           schema: { type: string, format: uuid }
@@ -2047,6 +3487,14 @@ paths:
         '200': { description: Subdepartment updated }
 
   /taxonomy/admin/positions:
+    get:
+      tags: [Taxonomy]
+      security: [{ BearerAuth: [] }]
+      summary: List active and inactive positions
+      description: Requires super_admin or admin with manage_admins.
+      responses:
+        '200': { description: Full administrative position list }
+        '403': { description: Missing manage_admins permission }
     post:
       tags: [Taxonomy]
       security: [{ BearerAuth: [] }]
@@ -2102,7 +3550,18 @@ paths:
           in: query
           schema: { type: boolean }
       responses:
-        '200': { description: Paginated notifications }
+        '200':
+          description: Paginated notifications in stable newest-first order
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /notifications/{id}/read:
     patch:
@@ -2130,13 +3589,18 @@ paths:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: List orders for company or all orders for super admin
-      description: Approved companies receive only their own orders. Requires super_admin or admin with view_orders to receive all orders.
+      description: Approved companies receive only their own orders. Requires super_admin or admin with view_orders to receive all orders. New orders persist as published with zero assignments. Use scope=active for current company orders or scope=staffing for admin assignment candidates, not the legacy literal status=active filter. Staffing candidates may have zero assignments; worker/category availability and remaining capacity are revalidated transactionally on assignment creation.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
         - name: status
           in: query
-          schema: { type: string, enum: [draft, active, completed, cancelled] }
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+          description: Exact persisted status, intersected with scope when both are provided.
+        - name: scope
+          in: query
+          schema: { type: string, enum: [active, staffing] }
+          description: Both scopes require a nondeleted order, approved active company, and shift_end strictly after server time (absolute instant; UTC/offset equivalent). Active includes active, published, partially_assigned, assigned and in_progress. Staffing excludes in_progress. Neither requires existing assignments. Omit for unfiltered history.
         - name: category
           in: query
           schema: { type: string, example: hospitality }
@@ -2158,8 +3622,12 @@ paths:
       responses:
         '200':
           description: Orders list
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/OrderListResponse' }
               example:
                 data:
                   - id: 6f6f09a0-0b32-47ea-ae22-8b35d7e0c111
@@ -2186,13 +3654,34 @@ paths:
                     end_datetime: "2030-01-15T18:00:00.000Z"
                     location: Grand Hotel Baku, Baku
                     status: active
+                    version: 1
                     assignment_count: 0
                 meta: { page: 1, limit: 20, total: 1, total_pages: 1 }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: Create order as approved company
-      description: Worker and super admin tokens cannot create orders. Company must be approved.
+      description: |
+        Worker and super admin tokens cannot create orders. Company must be approved.
+        Production clients should send a stable `Idempotency-Key` for each logical create attempt.
+        Repeating the same key with the same body returns the original response; reusing it with
+        a different body returns `409 IDEMPOTENCY_KEY_REUSED`. Matching keys remain scoped to the
+        authenticated actor and `orders.create` operation for 24 hours. A matching request still being
+        processed returns `409 IDEMPOTENCY_REQUEST_IN_PROGRESS`; retry it with the same key after backoff.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Client-generated key that uniquely identifies one logical order creation attempt.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+            pattern: '^[A-Za-z0-9._:-]+$'
       requestBody:
         required: true
         content:
@@ -2228,7 +3717,13 @@ paths:
                   notes: Formal dress required.
       responses:
         '201':
-          description: Order created
+          description: Order created or the original idempotent response replayed
+          headers:
+            X-Request-ID: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-ID: { $ref: '#/components/headers/XCorrelationId' }
+            Idempotency-Replayed:
+              description: "true when this response was replayed from a previous matching request."
+              schema: { type: boolean }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
@@ -2238,6 +3733,13 @@ paths:
         '403':
           description: Company is not approved or role cannot create orders
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: |
+            Idempotency key was used with a different body (`IDEMPOTENCY_KEY_REUSED`) or the matching
+            original request is still pending (`IDEMPOTENCY_REQUEST_IN_PROGRESS`).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /orders/{id}:
     get:
@@ -2267,7 +3769,13 @@ paths:
       tags: [Orders]
       security: [{ BearerAuth: [] }]
       summary: Cancel own order as an approved company
-      description: Only the approved company owner can cancel its own order. Super admin cannot cancel orders for now.
+      description: |
+        Only the approved company owner can cancel its own order. Super admin cannot cancel orders for now.
+        Cancellation is transactional: active assignments and kiosk sessions are revoked and notification/outbox
+        records are created together. A completed order is terminal (`400 ORDER_ALREADY_COMPLETED`); a second
+        cancellation is rejected (`409 ORDER_ALREADY_CANCELLED`). Cancellation is also rejected while an open
+        attendance session exists (`409 ORDER_HAS_ACTIVE_ATTENDANCE`). Clients should send the current order
+        `version` as `expected_version`; stale writes return `409 ORDER_VERSION_CONFLICT`.
       parameters:
         - name: id
           in: path
@@ -2282,6 +3790,7 @@ paths:
               postman:
                 value:
                   reason: Client cancelled the event.
+                  expected_version: 3
       responses:
         '200':
           description: Order cancelled
@@ -2295,8 +3804,12 @@ paths:
           description: Worker and super admin roles cannot cancel orders
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '409':
-          description: Order is already cancelled
+          description: |
+            Order is already cancelled, has an open attendance session, changed concurrently, or the supplied
+            version is stale (`ORDER_ALREADY_CANCELLED`, `ORDER_HAS_ACTIVE_ATTENDANCE`,
+            `ORDER_CANCEL_CONFLICT`, or `ORDER_VERSION_CONFLICT`).
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /orders/{id}/assign:
     post:
@@ -2339,6 +3852,7 @@ paths:
           description: Assignments created through compatibility wrapper
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/CreateAssignmentsResponse' }
               example:
                 assigned_count: 2
                 assignments:
@@ -2356,6 +3870,30 @@ paths:
           description: Order inactive, duplicate assignment, or capacity exceeded
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
+  /assignments/bulk:
+    post:
+      tags: [Assignments]
+      security: [{ BearerAuth: [] }]
+      summary: Assign multiple workers with a result for each worker
+      description: |
+        Requires `manage_assignments`. Each worker is validated and committed through a capacity-checked transaction.
+        Concurrent requests serialize on the order and worker rows. Duplicate, unavailable, missing or schedule-conflicting
+        workers return a failed result while valid workers remain assigned. A profile profession mismatch is returned as a
+        warning and never blocks assignment or changes the worker's registered profession.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAssignmentsRequest' }
+      responses:
+        '200':
+          description: Per-worker assignment results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkAssignmentsResponse' }
+        '400': { description: Invalid request body, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Requires manage_assignments, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   /assignments:
     post:
       tags: [Assignments]
@@ -2363,6 +3901,8 @@ paths:
       summary: Assign approved available workers to an active order
       description: |
         Requires super_admin or admin with manage_assignments. Capacity is category-aware when the order has category_items.
+        Overlapping active assignments are rejected. A worker whose registered profession differs from the requested
+        position is assigned with a `WORKER_POSITION_MISMATCH` warning; the profile profession is not changed.
 
         Postman setup:
         1. Create an order and copy its id into {{order_id}}.
@@ -2388,8 +3928,10 @@ paths:
           description: Assignments created
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/CreateAssignmentsResponse' }
               example:
                 assigned_count: 2
+                warnings: []
                 assignments:
                   - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
                     order_id: 6f6f09a0-0b32-47ea-ae22-8b35d7e0c111
@@ -2411,7 +3953,7 @@ paths:
           description: Requires super_admin or admin with manage_assignments
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '409':
-          description: Order inactive, duplicate assignment, or capacity exceeded
+          description: Order inactive, duplicate assignment, overlapping schedule, or capacity exceeded
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2437,23 +3979,51 @@ paths:
                   value:
                     error: Selected order category was not found.
                     code: INVALID_ORDER_CATEGORY
+                scheduleConflict:
+                  value:
+                    error: One or more workers already have an overlapping assignment.
+                    code: WORKER_SCHEDULE_CONFLICT
     get:
       tags: [Assignments]
       security: [{ BearerAuth: [] }]
       summary: List assignments
-      description: Requires super_admin or admin with view_assignments to see all. Company sees assignments for its own orders. Worker sees only own assignments.
+      description: |
+        Requires super_admin or admin with view_assignments to see all. Company sees assignments for its own orders.
+        Worker sees only own assignments. Responses retain completed/historical assignments and include the latest
+        attendance times, recorded duration and the admin recorded in the assignment-created audit event.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
+        - name: scope
+          in: query
+          schema: { type: string, enum: [active, history] }
+          description: Active maps to assigned/accepted; history maps to rejected/completed/cancelled.
         - name: status
           in: query
           schema: { $ref: '#/components/schemas/AssignmentStatus' }
+        - name: company_id
+          in: query
+          schema: { type: string, format: uuid }
         - name: order_id
           in: query
           schema: { type: string, format: uuid }
         - name: worker_id
           in: query
           schema: { type: string, format: uuid }
+        - name: worker_search
+          in: query
+          schema: { type: string, maxLength: 120 }
+        - name: position_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: start_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive assignment creation lower bound; `YYYY-MM-DD` is accepted.
+        - name: end_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive assignment creation upper bound; date-only values include the whole day.
         - name: sort
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
@@ -2462,6 +4032,7 @@ paths:
           description: Paginated assignments
           content:
             application/json:
+              schema: { $ref: '#/components/schemas/AssignmentListResponse' }
               example:
                 data:
                   - id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
@@ -2646,7 +4217,12 @@ paths:
       tags: [Attendance]
       security: [{ BearerAuth: [] }]
       summary: Create persistent venue kiosk link
-      description: Creates a stable venue/tablet kiosk URL. Admin later activates the current order/shift on this kiosk.
+      description: |
+        Creates a stable venue/tablet kiosk URL. An approved company can create and activate
+        kiosks for its own active orders immediately after order creation, before staffing.
+        Admins with manage_kiosks can manage kiosks for any approved company.
+        Multiple physical venue/tablet kiosks are supported; clients should reuse an existing
+        kiosk for an order when another physical display is not needed.
       requestBody:
         required: true
         content:
@@ -2658,50 +4234,165 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VenueKioskCreateResponse' }
+        '400':
+          description: Invalid request or company_id is missing for an admin request
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403':
+          description: Requires an approved company account or manage_kiosks permission
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404':
+          description: Requested company is not approved, active, or available
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
-  /attendance/venue-kiosks/{token}:
+  /attendance/venue-kiosks/companies:
+    get:
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: List companies available for persistent venue kiosk management
+      description: |
+        Requires an admin with `manage_kiosks`. Returns approved companies whose user account
+        is active and not deleted, regardless of whether they currently have a QR-eligible order.
+        The same eligibility is revalidated when the kiosk is created.
+      responses:
+        '200':
+          description: Companies that may own a persistent venue kiosk
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/VenueKioskCompany' }
+        '403':
+          description: Requires manage_kiosks
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /attendance/venue-kiosks/eligible-orders:
+    get:
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: List orders currently eligible for venue kiosk activation
+      description: |
+        Uses the same server-side order eligibility rules as kiosk activation:
+        an approved, non-deleted company, an active/published/partially_assigned/assigned/in_progress
+        order, and a future shift end. Deleted, draft, cancelled, completed and expired orders
+        are excluded. Accepted assignments are NOT required to create or activate venue QR.
+        Company accounts must be approved and are restricted to their own company.
+        Actual attendance still requires the authenticated worker's accepted assignment.
+      parameters:
+        - name: company_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: QR-eligible orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/KioskEligibleOrder' }
+
+  /attendance/venue-kiosks/context:
     get:
       tags: [Attendance]
       summary: Get public persistent kiosk context
-      description: Public but venue-kiosk-token-protected. Returns safe display context and current active order if any.
+      description: |
+        Capability-protected venue display context. The capability is sent only in
+        X-Kiosk-Capability and is never echoed in the response or placed in an API path.
+        A single currently running shift is selected automatically. Simultaneous shifts
+        are returned in eligible_orders for tablet selection. Recently ended shifts remain
+        checkout-only during the configured grace window only while an open attendance exists.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Safe kiosk context
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/VenueKiosk' }
+              schema: { $ref: '#/components/schemas/VenueKioskPublicContext' }
+        '400':
+          description: Missing or malformed X-Kiosk-Capability header
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled or revoked
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
-  /attendance/venue-kiosks/{token}/qr-token:
+  /attendance/venue-kiosks/qr-token:
     post:
       tags: [Attendance]
       summary: Generate fresh order-based 30-second venue kiosk QR
+      description: The kiosk capability is accepted only in X-Kiosk-Capability and is never echoed.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Fresh kiosk QR token
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/KioskQrTokenResponse' }
+              schema: { $ref: '#/components/schemas/VenueKioskQrTokenResponse' }
+        '400':
+          description: Missing or malformed X-Kiosk-Capability header
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404':
+          description: Kiosk capability not found
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '409':
-          description: No active order selected for kiosk
+          description: No active order is selected, or the selected shift has not started
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled/revoked or active order is no longer valid
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /attendance/venue-kiosks/select-order:
+    post:
+      tags: [Attendance]
+      summary: Select one of the kiosk company's currently eligible shifts
+      description: |
+        Capability-protected tablet action. The selected order is revalidated on the backend,
+        bound to the kiosk company and activated transactionally. Current shifts and recently
+        ended shifts with an outstanding check-out are selectable. The capability is accepted
+        only in X-Kiosk-Capability and is never returned in the response.
+      parameters:
+        - name: X-Kiosk-Capability
+          in: header
+          required: true
+          schema: { type: string, minLength: 32 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectVenueKioskOrderRequest' }
+      responses:
+        '200':
+          description: Selected kiosk context
+          content: { application/json: { schema: { $ref: '#/components/schemas/VenueKioskPublicContext' } } }
+        '400':
+          description: Missing or malformed capability header or invalid order_id
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '404':
+          description: Kiosk or company-bound shift not found
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '409':
+          description: Shift is no longer eligible
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '410':
+          description: Kiosk disabled or revoked
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /attendance/venue-kiosks/{id}/activate:
@@ -2709,6 +4400,12 @@ paths:
       tags: [Attendance]
       security: [{ BearerAuth: [] }]
       summary: Activate an order/shift on a persistent venue kiosk
+      description: |
+        Approved companies may activate only their own kiosk with their own eligible order.
+        Admins require manage_kiosks. Ownership, company approval and order eligibility are
+        rechecked in the activation transaction. Repeating the same kiosk/order activation
+        without changing expiry returns the existing active session. Accepted assignments
+        are not required for activation; worker check-in/out still validates them.
       parameters:
         - name: id
           in: path
@@ -2723,6 +4420,9 @@ paths:
         '200':
           description: Kiosk active session updated
           content: { application/json: { schema: { $ref: '#/components/schemas/VenueKiosk' } } }
+        '409':
+          description: Order is inactive, expired, or its company is no longer approved
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /attendance/venue-kiosks/{id}/active-session:
     delete:
@@ -2793,7 +4493,7 @@ paths:
                 revoked_at: null
                 refresh_interval_seconds: 30
                 kiosk_token: "{{kiosk_token}}"
-                kiosk_url: "/kiosk/{{kiosk_token}}"
+                kiosk_url: "/kiosk#capability={{kiosk_token}}"
         '403':
           description: Company cannot create a kiosk for another company's assignment
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -2804,16 +4504,18 @@ paths:
           description: Assignment is not accepted/active
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
-  /attendance/kiosk-sessions/{token}:
+  /attendance/kiosk-sessions/context:
     get:
       tags: [Attendance]
       summary: Get public QR kiosk display context
-      description: Public but kiosk-token-protected. Returns only safe venue/order context and never returns auth credentials or QR signing secrets.
+      description: |
+        Capability-protected display context. X-Kiosk-Capability carries the
+        capability; the response never returns it, auth credentials, or signing secrets.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Safe kiosk context
@@ -2821,7 +4523,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/KioskSession' }
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled, expired, revoked, or assignment/order inactive
@@ -2830,18 +4532,18 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: "QR ekrani deaktiv edilib.", code: KIOSK_SESSION_INACTIVE }
 
-  /attendance/kiosk-sessions/{token}/qr-token:
+  /attendance/kiosk-sessions/qr-token:
     post:
       tags: [Attendance]
       summary: Generate fresh 30-second kiosk QR token
       description: |
-        Public but kiosk-token-protected. Generates a fresh signed attendance QR token every 30 seconds.
+        X-Kiosk-Capability carries the kiosk capability outside the URL. Generates a fresh signed attendance QR token every 30 seconds.
         The previous displayed QR expires according to expires_at and must not be treated as valid after expiry.
       parameters:
-        - name: token
-          in: path
+        - name: X-Kiosk-Capability
+          in: header
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 32 }
       responses:
         '200':
           description: Fresh kiosk QR token
@@ -2859,7 +4561,7 @@ paths:
                 expires_at: "2030-01-15T10:00:30.000Z"
                 refresh_after_seconds: 30
         '404':
-          description: Kiosk token not found
+          description: Kiosk capability not found
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '410':
           description: Kiosk disabled, expired, revoked, or assignment/order inactive
@@ -3083,7 +4785,7 @@ paths:
       tags: [Attendance]
       security: [{ BearerAuth: [] }]
       summary: List attendance records
-      description: Requires super_admin or admin with view_attendance to see all. Company sees own order assignment attendance. Worker sees own attendance.
+      description: Requires super_admin or admin with view_attendance to see all. Company sees own order assignment attendance. Worker sees own attendance. Existing records include readable worker, company, order and position labels plus a derived attendance status and duration.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
@@ -3096,9 +4798,37 @@ paths:
         - name: worker_id
           in: query
           schema: { type: string, format: uuid }
+        - name: worker_search
+          in: query
+          schema: { type: string, maxLength: 120 }
+        - name: company_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: position_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        - name: start_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive check-in timestamp lower bound; `YYYY-MM-DD` is accepted.
+        - name: end_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Inclusive check-in timestamp upper bound; a date-only value includes the whole day.
+        - name: updated_since
+          in: query
+          schema: { type: string, format: date-time }
+          description: Return rows updated after this timestamp for controlled polling.
         - name: open_only
           in: query
           schema: { type: boolean }
+          description: Backward-compatible filter; cannot be combined with status.
+        - name: sort_by
+          in: query
+          schema: { type: string, enum: [created_at, checkin_time, checkout_time, updated_at], default: created_at }
         - name: sort
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
@@ -3154,6 +4884,72 @@ paths:
               examples:
                 forbidden:
                   value: { error: Workers can view only their own attendance records., code: FORBIDDEN }
+
+  /attendance/monitor:
+    get:
+      tags: [Attendance]
+      security: [{ BearerAuth: [] }]
+      summary: Monitor assignment attendance including workers without a log
+      description: |
+        Admin-only view requiring view_attendance. It is sourced from assignments and their
+        latest real attendance record, so not_checked_in and missing_incomplete states are
+        represented without inventing check-in or check-out timestamps. Supports the same
+        company, order, worker, worker_search, position, status, date, pagination and polling
+        filters as the attendance list. Date filters overlap the scheduled shift window.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: assignment_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: order_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: company_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: worker_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: worker_search
+          in: query
+          schema: { type: string, maxLength: 120 }
+        - name: position_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [not_checked_in, currently_working, checked_out, completed, missing_incomplete] }
+        - name: start_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Scheduled-shift overlap lower bound; `YYYY-MM-DD` is accepted.
+        - name: end_date
+          in: query
+          schema: { $ref: '#/components/schemas/DateOrDateTime' }
+          description: Scheduled-shift overlap upper bound; `YYYY-MM-DD` includes the whole day.
+        - name: updated_since
+          in: query
+          schema: { type: string, format: date-time }
+          description: Return assignments whose assignment metadata or attendance projection changed after this timestamp; both checks use indexed assignment columns.
+        - name: open_only
+          in: query
+          schema: { type: boolean }
+          description: Backward-compatible filter; cannot be combined with status.
+        - name: sort_by
+          in: query
+          description: updated_at sorts by the latest assignment or attendance activity; timestamp sorts use indexed assignment projections.
+          schema: { type: string, enum: [created_at, checkin_time, checkout_time, updated_at], default: updated_at }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Paginated live attendance state
+          content: { application/json: { schema: { $ref: '#/components/schemas/AttendanceMonitorResponse' } } }
+        '403':
+          description: Requires an admin with view_attendance
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /attendance/{id}:
     get:

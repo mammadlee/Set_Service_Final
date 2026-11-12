@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../network/api_client.dart';
+import '../storage/secure_storage_config.dart';
 import 'push_notification_service.dart';
 
 class PushRegistrationService {
@@ -16,7 +17,7 @@ class PushRegistrationService {
     FlutterSecureStorage? storage,
   }) : _dio = apiClient.dio,
        _pushNotificationService = pushNotificationService,
-       _storage = storage ?? const FlutterSecureStorage();
+       _storage = storage ?? SecureStorageConfig.storage;
 
   static const _installationIdKey = 'setservice_device_installation_id';
 
@@ -25,16 +26,31 @@ class PushRegistrationService {
   final FlutterSecureStorage _storage;
   StreamSubscription<String>? _tokenRefreshSubscription;
   String? _registeredToken;
+  Future<void>? _registrationInFlight;
 
-  Future<void> registerDeviceToken() async {
+  Future<void> registerDeviceToken() {
+    final inFlight = _registrationInFlight;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> registration;
+    registration = _registerCurrentToken().whenComplete(() {
+      if (identical(_registrationInFlight, registration)) {
+        _registrationInFlight = null;
+      }
+    });
+    _registrationInFlight = registration;
+    return registration;
+  }
+
+  Future<void> _registerCurrentToken() async {
     final token = await _pushNotificationService.getToken();
     if (token == null || token.isEmpty) return;
-    await _registerToken(token);
+    await _registerTokenWithRetry(token);
 
     _tokenRefreshSubscription ??= _pushNotificationService.onTokenRefresh
         .listen((newToken) {
           if (newToken.isNotEmpty) {
-            unawaited(_registerToken(newToken));
+            unawaited(_registerTokenWithRetry(newToken));
           }
         });
   }
@@ -42,37 +58,68 @@ class PushRegistrationService {
   Future<void> unregisterDeviceToken() async {
     final token =
         _registeredToken ?? await _pushNotificationService.currentToken();
-    await _tokenRefreshSubscription?.cancel();
-    _tokenRefreshSubscription = null;
-    _registeredToken = null;
+    try {
+      await _tokenRefreshSubscription?.cancel();
 
-    if (token != null && token.isNotEmpty) {
-      try {
+      if (token != null && token.isNotEmpty) {
         await _dio.delete<void>(
           '/auth/fcm-token',
           data: {'fcm_token': token},
           options: Options(extra: {'skipAuthRefresh': true}),
         );
+      }
+    } catch (_) {
+      // Logout must continue even if server-side push cleanup fails.
+    } finally {
+      _tokenRefreshSubscription = null;
+      _registeredToken = null;
+      await _pushNotificationService.deleteLocalToken();
+    }
+  }
+
+  Future<void> dispose() async {
+    await _tokenRefreshSubscription?.cancel();
+    _tokenRefreshSubscription = null;
+  }
+
+  Future<void> _registerTokenWithRetry(String token) async {
+    if (_registeredToken == token) return;
+    final deviceId = await _installationId();
+
+    for (var attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await _dio.post<Map<String, dynamic>>(
+          '/auth/fcm-token',
+          data: {
+            'fcm_token': token,
+            'platform': _platformName(),
+            'device_id': deviceId,
+          },
+        );
+        _registeredToken = token;
+        return;
+      } on DioException catch (error) {
+        if (!_isRetryable(error) || attempt == 3) return;
+        await Future<void>.delayed(
+          Duration(milliseconds: 500 * (1 << attempt)),
+        );
       } catch (_) {
-        // Logout must continue even if push token cleanup fails.
+        // Push registration is non-critical and should not block login.
+        return;
       }
     }
   }
 
-  Future<void> _registerToken(String token) async {
-    try {
-      await _dio.post<Map<String, dynamic>>(
-        '/auth/fcm-token',
-        data: {
-          'fcm_token': token,
-          'platform': _platformName(),
-          'device_id': await _installationId(),
-        },
-      );
-      _registeredToken = token;
-    } catch (_) {
-      // Push registration is non-critical and should not block login.
-    }
+  bool _isRetryable(DioException error) {
+    final status = error.response?.statusCode;
+    if (status == 429 || (status != null && status >= 500)) return true;
+    return switch (error.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout ||
+      DioExceptionType.receiveTimeout ||
+      DioExceptionType.connectionError => true,
+      _ => false,
+    };
   }
 
   Future<String> _installationId() async {

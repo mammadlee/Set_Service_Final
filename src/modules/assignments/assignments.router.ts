@@ -5,11 +5,13 @@ import { requireApprovedAccount, requirePermission, requireRole, requireRoleOrPe
 import { validate } from '../../middleware/validate';
 import {
   AssignmentIdParamsSchema,
+  BulkCreateAssignmentsSchema,
   CancelAssignmentSchema,
   CreateAssignmentsSchema,
   ListAssignmentsQuerySchema,
 } from './assignments.schema';
 import * as Service from './assignments.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 
@@ -37,7 +39,7 @@ assignCompatibilityRouter.post(
       res.status(201).json(await Service.createAssignments(req.user!.sub, req.user!.role, {
         order_id: id,
         worker_ids: req.body.worker_ids,
-      }));
+      }, isReviewScopedRequest(req)));
     } catch (e) {
       next(e);
     }
@@ -51,7 +53,32 @@ router.post(
   validate(CreateAssignmentsSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      res.status(201).json(await Service.createAssignments(req.user!.sub, req.user!.role, req.body));
+      res.status(201).json(await Service.createAssignments(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+// POST /assignments/bulk - partial-success admin operation with a result for
+// every submitted worker. The legacy POST /assignments remains atomic.
+router.post(
+  '/bulk',
+  requirePermission('manage_assignments'),
+  validate(BulkCreateAssignmentsSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      res.json(await Service.createBulkAssignments(
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -66,7 +93,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const query = ListAssignmentsQuerySchema.parse(req.query);
-      res.json(await Service.listAssignments(req.user!.sub, req.user!.role, query));
+      res.json(await Service.listAssignments(
+        req.user!.sub,
+        req.user!.role,
+        query,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -81,7 +113,12 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = AssignmentIdParamsSchema.parse(req.params);
-      res.json(await Service.getAssignment(id, req.user!.sub, req.user!.role));
+      res.json(await Service.getAssignment(
+        id,
+        req.user!.sub,
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }
@@ -126,7 +163,13 @@ router.patch(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { id } = AssignmentIdParamsSchema.parse(req.params);
-      res.json(await Service.cancelAssignment(id, req.user!.sub, req.user!.role, req.body));
+      res.json(await Service.cancelAssignment(
+        id,
+        req.user!.sub,
+        req.user!.role,
+        req.body,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }

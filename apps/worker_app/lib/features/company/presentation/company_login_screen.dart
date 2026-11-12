@@ -3,10 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../app_shell/presentation/multi_role_gate.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/app_logo.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
+import '../../../../shared/widgets/legal_acceptance_checkbox.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import 'company_auth_controller.dart';
 
@@ -24,6 +26,16 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   bool _obscurePassword = true;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<CompanyAuthController>().clearTransientMessages();
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
@@ -33,47 +45,61 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<CompanyAuthController>();
+    final height = MediaQuery.sizeOf(context).height;
+    final compact = height < 720;
+    final logoSize = compact ? 52.0 : 58.0;
+    final topGap = compact ? 8.0 : 16.0;
+    final logoGap = compact ? 18.0 : 28.0;
+
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
-              const SizedBox(height: 36),
-              const Center(child: AppLogo(size: 72)),
-              const SizedBox(height: 78),
+              SizedBox(height: topGap),
+              Center(child: AppLogo(size: logoSize)),
+              SizedBox(height: logoGap),
               Text(
                 AppStrings.loginTitle,
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.displaySmall?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.08,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
               Text(
-                'Mail vasitəsilə şirkət hesabınıza daxil olun.',
+                AppStrings.companyLoginSubtitle,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: BrandColors.darkText,
                   height: 1.35,
                 ),
               ),
-              const SizedBox(height: 28),
+              SizedBox(height: compact ? 20 : 24),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
                   kind: InlineMessageKind.error,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               if (auth.successMessage != null) ...[
                 InlineMessage(
                   message: auth.successMessage!,
                   kind: InlineMessageKind.success,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
               ],
               TextFormField(
                 controller: _emailController,
@@ -107,7 +133,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
@@ -115,33 +141,46 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                   child: const Text(AppStrings.forgotPassword),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               LoadingButton(
                 label: AppStrings.loginTitle,
                 icon: Icons.login_outlined,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
                   onPressed: auth.isSubmitting
                       ? null
                       : () async {
+                          context
+                              .read<CompanyAuthController>()
+                              .clearTransientMessages();
                           await Navigator.of(context).push<void>(
                             MaterialPageRoute(
                               builder: (_) => const CompanyRegisterScreen(),
                             ),
                           );
+                          if (context.mounted) {
+                            context
+                                .read<CompanyAuthController>()
+                                .clearTransientMessages();
+                          }
                         },
                   icon: const Icon(Icons.business_outlined),
-                  label: const Text(AppStrings.createCompanyAccount),
+                  label: const Text(
+                    AppStrings.createCompanyAccount,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
               const RoleAwareBackButton(),
-              const SizedBox(height: 36),
+              const SizedBox(height: 20),
             ],
           ),
         ),
@@ -152,7 +191,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     await context.read<CompanyAuthController>().loginCompany(
-      email: _emailController.text.trim(),
+      email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
     );
   }
@@ -168,7 +207,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
         return;
       }
       await context.read<CompanyAuthController>().forgotPasswordByEmail(
-        result.value,
+        result.value.trim().toLowerCase(),
       );
       return;
     }
@@ -179,7 +218,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
       return;
     }
     await context.read<CompanyAuthController>().forgotPasswordByPhone(
-      result.value,
+      _normalizePhone(result.value),
     );
   }
 
@@ -193,6 +232,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
       return await showModalBottomSheet<_CompanyForgotPasswordResult>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         showDragHandle: false,
         backgroundColor: BrandColors.creamBackground,
         shape: const RoundedRectangleBorder(
@@ -207,6 +247,8 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
             ),
             child: SafeArea(
               child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -225,6 +267,8 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                     ),
                     Text(
                       AppStrings.forgotPassword,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -234,15 +278,10 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                       width: double.infinity,
                       child: SegmentedButton<String>(
                         expandedInsets: EdgeInsets.zero,
+                        showSelectedIcon: false,
                         segments: const [
-                          ButtonSegment(
-                            value: 'phone',
-                            label: Text('Telefon nömrəsi ilə'),
-                          ),
-                          ButtonSegment(
-                            value: 'email',
-                            label: Text('Email ilə'),
-                          ),
+                          ButtonSegment(value: 'phone', label: Text('Telefon')),
+                          ButtonSegment(value: 'email', label: Text('E-poçt')),
                         ],
                         selected: {method},
                         onSelectionChanged: (value) =>
@@ -302,19 +341,19 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   }
 
   String? _validateEmail(String? value) {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.emailValidation;
-    }
-    return null;
+    return AuthInputValidators.email(value);
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').length < 8) return AppStrings.passwordValidation;
-    return null;
+    return AuthInputValidators.loginPassword(value);
   }
 
   bool _validPhone(String value) {
-    return RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(value.trim());
+    return AuthInputValidators.isValidPhone(value);
+  }
+
+  String _normalizePhone(String value) {
+    return AuthInputValidators.normalizePhone(value);
   }
 }
 
@@ -341,6 +380,17 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   final _contactController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController(text: '+994');
+  bool _legalAccepted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        context.read<CompanyAuthController>().clearTransientMessages();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -355,12 +405,23 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<CompanyAuthController>();
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.companyRegisterTitle)),
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: const Text(
+          AppStrings.companyRegisterTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.viewInsetsOf(context).bottom + 24,
+            ),
             children: [
               if (auth.errorMessage != null) ...[
                 InlineMessage(
@@ -369,7 +430,7 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
                 ),
                 const SizedBox(height: 16),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
               TextFormField(
                 controller: _contactController,
                 textInputAction: TextInputAction.next,
@@ -419,11 +480,17 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
                 onFieldSubmitted: (_) => _submit(context),
               ),
               const SizedBox(height: 22),
+              LegalAcceptanceCheckbox(
+                value: _legalAccepted,
+                onChanged: (value) => setState(() => _legalAccepted = value),
+              ),
+              const SizedBox(height: 12),
               LoadingButton(
                 label: AppStrings.registerAndSendOtp,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -433,11 +500,19 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_legalAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Davam etmək üçün İstifadə Qaydalarını qəbul edin.'),
+        ),
+      );
+      return;
+    }
     await context.read<CompanyAuthController>().registerCompany(
       name: _nameController.text.trim(),
       contactName: _contactController.text.trim(),
-      email: _emailController.text.trim(),
-      phone: _phoneController.text.trim(),
+      email: _emailController.text.trim().toLowerCase(),
+      phone: _normalizePhone(_phoneController.text),
     );
     if (!context.mounted) return;
     if (context.read<CompanyAuthController>().state ==
@@ -447,16 +522,14 @@ class _CompanyRegisterScreenState extends State<CompanyRegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   String? _validateEmail(String? value) {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value?.trim() ?? '')) {
-      return AppStrings.emailValidation;
-    }
-    return null;
+    return AuthInputValidators.email(value);
+  }
+
+  String _normalizePhone(String value) {
+    return AuthInputValidators.normalizePhone(value);
   }
 }

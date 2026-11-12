@@ -6,6 +6,7 @@ import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
+import '../../../../shared/widgets/content_report_dialog.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import '../../../../shared/widgets/premium_components.dart';
@@ -48,7 +49,13 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.assignmentDetail)),
+      appBar: AppBar(
+        title: const Text(
+          AppStrings.assignmentDetail,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         child: FutureBuilder<Assignment>(
@@ -84,9 +91,31 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
             return RefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 children: [
                   _AssignmentHeader(assignment: assignment),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    alignment: WrapAlignment.end,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      TextButton.icon(
+                        onPressed: () =>
+                            _reportTarget(assignment, company: false),
+                        icon: const Icon(Icons.flag_outlined),
+                        label: const Text('Sifarişi şikayət et'),
+                      ),
+                      TextButton.icon(
+                        onPressed: () =>
+                            _reportTarget(assignment, company: true),
+                        icon: const Icon(Icons.flag_outlined),
+                        label: const Text('Müəssisəni şikayət et'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
                   if (_error != null) ...[
                     InlineMessage(
                       message: _error!,
@@ -121,6 +150,48 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
     );
   }
 
+  Future<void> _reportTarget(
+    Assignment assignment, {
+    required bool company,
+  }) async {
+    final input = await showContentReportDialog(
+      context,
+      subjectLabel: company ? 'Müəssisəni' : 'Sifarişi',
+    );
+    if (input == null || !mounted) return;
+
+    try {
+      final repository = context.read<AssignmentRepository>();
+      if (company) {
+        await repository.reportCompany(
+          companyId: assignment.order.company.id,
+          reason: input.reason,
+          details: input.details,
+        );
+      } else {
+        await repository.reportOrder(
+          orderId: assignment.orderId,
+          reason: input.reason,
+          details: input.details,
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Şikayət qəbul edildi və admin yoxlamasına göndərildi.',
+          ),
+        ),
+      );
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'Şikayəti göndərmək mümkün olmadı.');
+    }
+  }
+
   Future<void> _changeStatus({required bool accept}) async {
     setState(() {
       _isChangingStatus = true;
@@ -149,7 +220,7 @@ class _AssignmentDetailScreenState extends State<AssignmentDetailScreen> {
 
   String _messageForStatus(Assignment assignment) {
     if (assignment.status == 'accepted') {
-      return assignment.order.status == 'active'
+      return assignment.canUseAttendance
           ? AppStrings.assignmentAcceptedActive
           : AppStrings.assignmentAcceptedInactive;
     }
@@ -177,67 +248,82 @@ class _AssignmentHeader extends StatelessWidget {
     final statusHelp = AppStrings.assignmentStatusHelp(assignment.status);
 
     return PremiumCard(
-      child: Padding(
-        padding: EdgeInsets.zero,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    assignment.order.title,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 400;
+              final title = Text(
+                assignment.order.title.trim().isEmpty
+                    ? 'Sifariş'
+                    : assignment.order.title,
+                softWrap: true,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  height: 1.2,
                 ),
-                const SizedBox(width: 12),
-                StatusPill(status: assignment.status),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (statusHelp != null) ...[
-              InlineMessage(message: statusHelp),
-              const SizedBox(height: 14),
-            ],
-            PremiumChip(
-              label: assignment.category.isNotEmpty
-                  ? assignment.category
-                  : assignment.order.category,
-              icon: Icons.room_service_outlined,
-            ),
+              );
+              if (compact) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    title,
+                    const SizedBox(height: 10),
+                    StatusPill(status: assignment.status),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: title),
+                  const SizedBox(width: 12),
+                  StatusPill(status: assignment.status),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          if (statusHelp != null) ...[
+            InlineMessage(message: statusHelp),
             const SizedBox(height: 14),
-            _DetailRow(
-              icon: Icons.business_outlined,
-              label: AppStrings.company,
-              value: assignment.order.company.name,
-            ),
-            _DetailRow(
-              icon: Icons.place_outlined,
-              label: AppStrings.location,
-              value: assignment.order.location,
-            ),
-            if (assignment.order.startDatetime != null)
-              _DetailRow(
-                icon: Icons.login_outlined,
-                label: AppStrings.starts,
-                value: dateFormat.format(assignment.order.startDatetime!),
-              ),
-            if (assignment.order.endDatetime != null)
-              _DetailRow(
-                icon: Icons.logout_outlined,
-                label: AppStrings.ends,
-                value: dateFormat.format(assignment.order.endDatetime!),
-              ),
-            _DetailRow(
-              icon: Icons.inventory_2_outlined,
-              label: AppStrings.orderStatus,
-              value: AppStrings.statusLabel(assignment.order.status),
-            ),
           ],
-        ),
+          PremiumChip(
+            label: assignment.category.isNotEmpty
+                ? assignment.category
+                : assignment.order.category,
+            icon: Icons.room_service_outlined,
+          ),
+          const SizedBox(height: 14),
+          _DetailRow(
+            icon: Icons.business_outlined,
+            label: AppStrings.company,
+            value: assignment.order.company.name,
+          ),
+          _DetailRow(
+            icon: Icons.place_outlined,
+            label: AppStrings.location,
+            value: assignment.order.location,
+          ),
+          if (assignment.order.startDatetime != null)
+            _DetailRow(
+              icon: Icons.login_outlined,
+              label: AppStrings.starts,
+              value: dateFormat.format(assignment.order.startDatetime!),
+            ),
+          if (assignment.order.endDatetime != null)
+            _DetailRow(
+              icon: Icons.logout_outlined,
+              label: AppStrings.ends,
+              value: dateFormat.format(assignment.order.endDatetime!),
+            ),
+          _DetailRow(
+            icon: Icons.inventory_2_outlined,
+            label: AppStrings.orderStatus,
+            value: AppStrings.statusLabel(assignment.order.status),
+          ),
+        ],
       ),
     );
   }
@@ -258,28 +344,51 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 18, color: BrandColors.mutedBrown),
-          const SizedBox(width: 10),
-          SizedBox(
-            width: 118,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: BrandColors.mutedBrown,
-                fontWeight: FontWeight.w600,
-              ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 430;
+          final labelWidget = Text(
+            label,
+            style: const TextStyle(
+              color: BrandColors.mutedBrown,
+              fontWeight: FontWeight.w600,
             ),
-          ),
-          Expanded(
-            child: Text(
-              value.isEmpty ? '-' : value,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
+          );
+          final valueWidget = Text(
+            value.isEmpty ? '-' : value,
+            softWrap: true,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          );
+          if (compact) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 18, color: BrandColors.mutedBrown),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      labelWidget,
+                      const SizedBox(height: 2),
+                      valueWidget,
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, size: 18, color: BrandColors.mutedBrown),
+              const SizedBox(width: 10),
+              Expanded(flex: 2, child: labelWidget),
+              const SizedBox(width: 12),
+              Expanded(flex: 3, child: valueWidget),
+            ],
+          );
+        },
       ),
     );
   }
@@ -307,10 +416,16 @@ class _DecisionActions extends StatelessWidget {
           onPressed: onAccept,
         ),
         const SizedBox(height: 10),
-        OutlinedButton.icon(
-          onPressed: loading ? null : onReject,
-          icon: const Icon(Icons.cancel_outlined),
-          label: const Text(AppStrings.rejectAssignment),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: loading ? null : onReject,
+            icon: const Icon(Icons.cancel_outlined),
+            label: const Text(
+              AppStrings.rejectAssignment,
+              textAlign: TextAlign.center,
+            ),
+          ),
         ),
       ],
     );

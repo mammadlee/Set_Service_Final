@@ -56,6 +56,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               title: AppStrings.scanQrTitle,
               subtitle: AppStrings.luxuryQrGuidance,
               compact: true,
+              wrapFullText: true,
               children: [
                 PremiumChip(
                   label: AppStrings.scanQr,

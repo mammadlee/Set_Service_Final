@@ -14,8 +14,11 @@ import { QrDisplayPage } from '../features/attendance/QrDisplayPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { CompaniesPage } from '../features/companies/CompaniesPage';
 import { CompanyDetailPage } from '../features/companies/CompanyDetailPage';
+import { CompanyReportPage } from '../features/companies/CompanyReportPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import { DeletionRequestsPage } from '../features/deletion/DeletionRequestsPage';
 import { NotificationsPage } from '../features/notifications/NotificationsPage';
+import { ModerationPage } from '../features/moderation/ModerationPage';
 import { OrderDetailPage } from '../features/orders/OrderDetailPage';
 import { OrdersPage } from '../features/orders/OrdersPage';
 import { ReportsPage } from '../features/reports/ReportsPage';
@@ -36,6 +39,7 @@ export function App() {
           <Route path="workers/:id" element={<RequirePermission permission="view_workers"><WorkerDetailPage /></RequirePermission>} />
           <Route path="companies" element={<RequirePermission permission="view_companies"><CompaniesPage /></RequirePermission>} />
           <Route path="companies/:id" element={<RequirePermission permission="view_companies"><CompanyDetailPage /></RequirePermission>} />
+          <Route path="companies/:id/report" element={<RequirePermission permission="view_reports"><CompanyReportPage /></RequirePermission>} />
           <Route path="orders" element={<RequirePermission permission="view_orders"><OrdersPage /></RequirePermission>} />
           <Route path="orders/:id" element={<RequirePermission permission="view_orders"><OrderDetailPage /></RequirePermission>} />
           <Route path="assignments" element={<RequirePermission permission="view_assignments"><AssignmentsPage /></RequirePermission>} />
@@ -45,10 +49,12 @@ export function App() {
           <Route path="attendance/:id" element={<RequirePermission permission="view_attendance"><AttendanceDetailPage /></RequirePermission>} />
           <Route path="reports" element={<RequirePermission permission="view_reports"><ReportsPage /></RequirePermission>} />
           <Route path="notifications" element={<RequirePermission permission="view_notifications"><NotificationsPage /></RequirePermission>} />
+          <Route path="moderation" element={<RequirePermission permission="view_moderation"><ModerationPage /></RequirePermission>} />
           <Route path="settings" element={<RequireSuperAdmin><SettingsLayout /></RequireSuperAdmin>}>
             <Route index element={<Navigate to="taxonomy" replace />} />
             <Route path="taxonomy" element={<TaxonomyPage />} />
             <Route path="system" element={<SystemSettingsPage />} />
+            <Route path="deletion-requests" element={<DeletionRequestsPage />} />
           </Route>
           <Route path="taxonomy" element={<Navigate to="/settings/taxonomy" replace />} />
           <Route path="admins" element={<RequirePermission permission="manage_admins"><AdminsPage /></RequirePermission>} />

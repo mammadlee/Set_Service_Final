@@ -20,7 +20,10 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
 
 router.post('/', validate(CreateAdminSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.status(201).json(await Service.createAdmin(req.body));
+    res.status(201).json(await Service.createAdmin(req.body, {
+      sub: req.user!.sub,
+      role: req.user!.role,
+    }));
   } catch (error) {
     next(error);
   }
@@ -29,7 +32,10 @@ router.post('/', validate(CreateAdminSchema), async (req: Request, res: Response
 router.patch('/:id', validate(UpdateAdminSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = AdminIdParamsSchema.parse(req.params);
-    res.json(await Service.updateAdmin(id, req.user!.sub, req.body));
+    res.json(await Service.updateAdmin(id, {
+      sub: req.user!.sub,
+      role: req.user!.role,
+    }, req.body));
   } catch (error) {
     next(error);
   }
@@ -38,7 +44,10 @@ router.patch('/:id', validate(UpdateAdminSchema), async (req: Request, res: Resp
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = AdminIdParamsSchema.parse(req.params);
-    res.json(await Service.deactivateAdmin(id, req.user!.sub));
+    res.json(await Service.deactivateAdmin(id, {
+      sub: req.user!.sub,
+      role: req.user!.role,
+    }));
   } catch (error) {
     next(error);
   }

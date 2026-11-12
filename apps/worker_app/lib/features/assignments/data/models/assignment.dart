@@ -22,7 +22,15 @@ class Assignment {
   final AssignmentWorker worker;
 
   bool get canAcceptOrReject => status == 'assigned';
-  bool get canUseAttendance => status == 'accepted' && order.status == 'active';
+  bool get canUseAttendance =>
+      status == 'accepted' &&
+      const {
+        'active',
+        'published',
+        'partially_assigned',
+        'assigned',
+        'in_progress',
+      }.contains(order.status);
 
   factory Assignment.fromJson(Map<String, dynamic> json) {
     return Assignment(

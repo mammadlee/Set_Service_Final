@@ -1,3 +1,5 @@
+import '../../features/auth/data/models/auth_models.dart';
+
 class PageMeta {
   const PageMeta({
     required this.page,
@@ -103,6 +105,9 @@ class MobileOrderCategoryItem {
     required this.assignedCount,
     required this.remainingCount,
     required this.notes,
+    this.departmentName,
+    this.subdepartmentName,
+    this.positionName,
   });
 
   final String? id;
@@ -111,6 +116,9 @@ class MobileOrderCategoryItem {
   final int assignedCount;
   final int remainingCount;
   final String? notes;
+  final String? departmentName;
+  final String? subdepartmentName;
+  final String? positionName;
 
   factory MobileOrderCategoryItem.fromJson(Map<String, dynamic> json) {
     return MobileOrderCategoryItem(
@@ -120,6 +128,13 @@ class MobileOrderCategoryItem {
       assignedCount: _int(json['assigned_count'], 0),
       remainingCount: _int(json['remaining_count'], 0),
       notes: json['notes'] as String?,
+      departmentName:
+          (json['department'] as Map<String, dynamic>?)?['name_az'] as String?,
+      subdepartmentName:
+          (json['subdepartment'] as Map<String, dynamic>?)?['name_az']
+              as String?,
+      positionName:
+          (json['position'] as Map<String, dynamic>?)?['name_az'] as String?,
     );
   }
 }
@@ -334,22 +349,28 @@ class WorkerExperienceSummary {
   }
 }
 
-class CompanyVisibleWorkerDocument {
+class CompanyVisibleWorkerDocument extends WorkerDocument {
   const CompanyVisibleWorkerDocument({
-    required this.type,
-    required this.url,
-    this.name,
+    required super.type,
+    required super.url,
+    super.name,
+    super.available,
+    super.status,
+    super.scanStatus,
   });
 
-  final String type;
-  final String url;
-  final String? name;
+  @override
+  bool get canRequestDownload =>
+      type == 'health_certificate' && super.canRequestDownload;
 
   factory CompanyVisibleWorkerDocument.fromJson(Map<String, dynamic> json) {
     return CompanyVisibleWorkerDocument(
       type: json['type'] as String? ?? '',
       url: json['url'] as String? ?? '',
       name: json['name'] as String?,
+      available: json['available'] == true,
+      status: json['status'] as String? ?? 'legacy',
+      scanStatus: json['scan_status'] as String? ?? 'unscanned',
     );
   }
 }

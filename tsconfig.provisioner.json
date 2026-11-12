@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./provisioner-dist",
+    "rootDir": "."
+  },
+  "include": [
+    "scripts/provision-store-review.ts",
+    "scripts/review-account-readiness.ts",
+    "scripts/run-store-review-provisioner.ts"
+  ],
+  "exclude": ["node_modules", "dist", "provisioner-dist"]
+}
