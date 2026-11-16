@@ -1,11 +1,218 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { validateBuildkitProvenance } from './validate-buildkit-provenance.mjs';
 
 const workflowPath = '.github/workflows/publish-release-images.yml';
 const workflow = readFileSync(workflowPath, 'utf8');
 const checklist = readFileSync(
   'docs/immutable-image-publication-and-production-checklist.md',
   'utf8',
+);
+
+const digest = (character) => `sha256:${character.repeat(64)}`;
+const releaseSha = '8'.repeat(40);
+const githubRepository = 'mammadlee/Set_Service_Final';
+const githubRef = 'refs/heads/codex/final-store-release-preparation';
+const imageRepository = 'setservice-api';
+const target = 'api';
+const nodeBaseImage = `node:24.22.0-trixie-slim@${digest('1')}`;
+const runtimeBaseImage = `gcr.io/distroless/nodejs24-debian13:nonroot@${digest('2')}`;
+const immutableRef = `ghcr.io/mammadlee/${imageRepository}@${digest('a')}`;
+
+const validIndex = {
+  mediaType: 'application/vnd.oci.image.index.v1+json',
+  digest: digest('a'),
+  manifests: [
+    {
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      digest: digest('b'),
+      platform: { os: 'linux', architecture: 'amd64' },
+    },
+    {
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      digest: digest('c'),
+      platform: { os: 'unknown', architecture: 'unknown' },
+      annotations: {
+        'vnd.docker.reference.digest': digest('b'),
+        'vnd.docker.reference.type': 'attestation-manifest',
+      },
+    },
+  ],
+};
+
+const validAttestationManifest = {
+  schemaVersion: 2,
+  mediaType: 'application/vnd.oci.image.manifest.v1+json',
+  artifactType: 'application/vnd.docker.attestation.manifest.v1+json',
+  subject: {
+    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    digest: digest('b'),
+    size: 4096,
+  },
+  config: {
+    mediaType: 'application/vnd.oci.empty.v1+json',
+    digest: digest('d'),
+    size: 2,
+  },
+  layers: [
+    {
+      mediaType: 'application/vnd.in-toto+json',
+      digest: digest('e'),
+      annotations: {
+        'in-toto.io/predicate-type': 'https://slsa.dev/provenance/v1',
+      },
+    },
+    {
+      mediaType: 'application/vnd.in-toto+json',
+      digest: digest('f'),
+      annotations: {
+        'in-toto.io/predicate-type': 'https://spdx.dev/Document',
+      },
+    },
+  ],
+};
+
+const validPredicate = {
+  buildDefinition: {
+    buildType:
+      'https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md',
+    externalParameters: {
+      configSource: { path: 'Dockerfile' },
+      request: {
+        frontend: 'dockerfile.v0',
+        args: {
+          target,
+          'build-arg:NODE_BASE_IMAGE': nodeBaseImage,
+          'build-arg:RUNTIME_BASE_IMAGE': runtimeBaseImage,
+          'label:org.opencontainers.image.source': `https://github.com/${githubRepository}`,
+          'label:org.opencontainers.image.revision': releaseSha,
+        },
+      },
+    },
+    internalParameters: {
+      github_repository: githubRepository,
+      github_workflow_sha: releaseSha,
+      github_ref: githubRef,
+      github_event_name: 'workflow_dispatch',
+      targetPlatform: 'linux/amd64',
+    },
+    resolvedDependencies: [
+      {
+        uri: 'pkg:docker/example/node@sha256:fixture',
+        digest: { sha256: '1'.repeat(64) },
+      },
+      {
+        uri: 'pkg:docker/example/runtime@sha256:fixture',
+        digest: { sha256: '2'.repeat(64) },
+      },
+    ],
+  },
+  runDetails: {
+    builder: { id: '' },
+    metadata: {
+      invocationId: 'fixture-invocation',
+      startedOn: '2026-11-16T07:19:47Z',
+      finishedOn: '2026-11-16T07:20:41Z',
+      buildkit_completeness: {
+        request: true,
+        resolvedDependencies: false,
+      },
+    },
+  },
+};
+
+const validateFixture = (overrides = {}) =>
+  validateBuildkitProvenance({
+    index: structuredClone(validIndex),
+    attestationManifest: structuredClone(validAttestationManifest),
+    predicate: structuredClone(validPredicate),
+    immutableRef,
+    imageRepository,
+    releaseSha,
+    githubRepository,
+    githubRef,
+    target,
+    nodeBaseImage,
+    runtimeBaseImage,
+    ...overrides,
+  });
+
+const evidence = validateFixture();
+assert.equal(evidence.attestation.predicateType, 'https://slsa.dev/provenance/v1');
+assert.equal(evidence.attestation.subjectManifestDigest, digest('b'));
+assert.equal(evidence.image.indexDigest, digest('a'));
+assert.deepEqual(evidence.completeness, {
+  request: true,
+  resolvedDependencies: false,
+});
+assert.ok(!Object.hasOwn(validPredicate, 'predicateType'));
+assert.ok(!Object.hasOwn(validPredicate, 'subject'));
+
+assert.throws(() => validateFixture({ predicate: null }), /SLSA predicate/);
+
+const missingRunDetails = structuredClone(validPredicate);
+delete missingRunDetails.runDetails;
+assert.throws(
+  () => validateFixture({ predicate: missingRunDetails }),
+  /predicate\.runDetails/,
+);
+
+const emptyDependencies = structuredClone(validPredicate);
+emptyDependencies.buildDefinition.resolvedDependencies = [];
+assert.throws(
+  () => validateFixture({ predicate: emptyDependencies }),
+  /resolvedDependencies must be non-empty/,
+);
+
+const missingPinnedRuntime = structuredClone(validPredicate);
+missingPinnedRuntime.buildDefinition.resolvedDependencies.pop();
+assert.throws(
+  () => validateFixture({ predicate: missingPinnedRuntime }),
+  /runtime base image is missing from resolved dependencies/,
+);
+
+const unsupportedTypeManifest = structuredClone(validAttestationManifest);
+unsupportedTypeManifest.layers[0].annotations['in-toto.io/predicate-type'] =
+  'https://slsa.dev/provenance/v0.2';
+assert.throws(
+  () => validateFixture({ attestationManifest: unsupportedTypeManifest }),
+  /SLSA v1 provenance layer/,
+);
+
+const unboundIndex = structuredClone(validIndex);
+unboundIndex.manifests[1].annotations['vnd.docker.reference.digest'] = digest('9');
+assert.throws(
+  () => validateFixture({ index: unboundIndex }),
+  /attestation subject reference/,
+);
+
+const missingOciSubject = structuredClone(validAttestationManifest);
+delete missingOciSubject.subject;
+assert.throws(
+  () => validateFixture({ attestationManifest: missingOciSubject }),
+  /attestation manifest subject/,
+);
+
+const duplicateProvenance = structuredClone(validAttestationManifest);
+duplicateProvenance.layers.push(structuredClone(duplicateProvenance.layers[0]));
+assert.throws(
+  () => validateFixture({ attestationManifest: duplicateProvenance }),
+  /SLSA v1 provenance layer/,
+);
+
+const wrongSourcePredicate = structuredClone(validPredicate);
+wrongSourcePredicate.buildDefinition.internalParameters.github_workflow_sha = '7'.repeat(40);
+assert.throws(
+  () => validateFixture({ predicate: wrongSourcePredicate }),
+  /predicate workflow SHA/,
+);
+
+const falseCompletenessClaim = structuredClone(validPredicate);
+falseCompletenessClaim.runDetails.metadata.buildkit_completeness.resolvedDependencies =
+  true;
+assert.throws(
+  () => validateFixture({ predicate: falseCompletenessClaim }),
+  /predicate dependency completeness marker/,
 );
 
 const triggerBlock = workflow.match(/^on:\r?\n([\s\S]*?)^permissions:/m)?.[1] ?? '';
@@ -56,6 +263,14 @@ assert.match(workflow, /--platform linux\/amd64/);
 assert.match(workflow, /--provenance=mode=max/);
 assert.match(workflow, /--sbom=true/);
 assert.match(workflow, /\.Provenance\.SLSA/);
+assert.match(workflow, /--format '\{\{ json \.Manifest \}\}'/);
+assert.match(workflow, /vnd\.docker\.reference\.type/);
+assert.match(workflow, /in-toto\.io\/predicate-type|validate-buildkit-provenance\.mjs/);
+assert.match(workflow, /validate-buildkit-provenance\.mjs/);
+assert.match(workflow, /--raw > "\$attestation_file"/);
+assert.match(workflow, /\.attestation\.predicateType/);
+assert.doesNotMatch(workflow, /\.predicateType \| test\(/);
+assert.doesNotMatch(workflow, /\.subject \/\//);
 assert.match(workflow, /provenance\.json/);
 assert.match(workflow, /-candidate-\$\{GITHUB_RUN_ID\}-\$\{GITHUB_RUN_ATTEMPT\}/);
 assert.match(workflow, /org\.opencontainers\.image\.revision=\$\{RELEASE_SHA\}/);
