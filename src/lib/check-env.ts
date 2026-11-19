@@ -1,6 +1,7 @@
 import { JWT_TTL_SPECS, JwtTtlKey, jwtTtlIssue } from './jwt-ttl';
 import { kioskPublicUrlIssue } from './kiosk-public-url';
 import { assertTimeZone } from './date-filters';
+import { storeReviewFixedOtpConfigurationIssues } from './store-review-fixed-otp';
 
 interface EnvVar {
   key: string;
@@ -32,6 +33,9 @@ const ENV_VARS: EnvVar[] = [
   { key: 'OTP_TEST_MODE', required: false, hint: 'test only: true | false' },
   { key: 'OTP_TEST_CODE', required: false, hint: 'test only; exactly 6 digits' },
   { key: 'OTP_LOG_CODES', required: false, hint: 'development only: true | false' },
+  { key: 'STORE_REVIEW_FIXED_OTP_ENABLED', required: false, hint: 'true | false; enables reviewer-only second-factor verification' },
+  { key: 'STORE_REVIEW_FIXED_OTP_HASH', required: false, hint: 'HMAC-SHA256 hex; never store the reviewer code itself' },
+  { key: 'STORE_REVIEW_FIXED_OTP_EXPIRES_AT', required: false, hint: 'ISO-8601 UTC expiry for the review window' },
   { key: 'CORS_ORIGINS', required: 'production', hint: 'comma-separated allowed origins' },
   { key: 'AUTH_COOKIE_SAME_SITE', required: false, hint: 'strict | lax | none; default: lax' },
   { key: 'PORT', required: false, positiveInt: true, hint: 'default: 3000' },
@@ -246,6 +250,7 @@ function validateProductionSafety(errors: string[], warnings: string[], isProduc
       errors.push('- OTP_TEST_CODE must contain exactly 6 digits when OTP_TEST_MODE=true');
     }
   }
+  errors.push(...storeReviewFixedOtpConfigurationIssues(process.env).map((issue) => `- ${issue}`));
 
   const signedUrlTtl = Number(process.env.STORAGE_SIGNED_URL_TTL_SECONDS ?? 300);
   if (!Number.isInteger(signedUrlTtl) || signedUrlTtl < 1 || signedUrlTtl > 900) {

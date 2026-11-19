@@ -1,11 +1,30 @@
 # Store-review account provisioning
 
 The Apple App Review and Google Play App Access accounts use normal password
-authentication. They do not use a universal OTP, master password, or
-authentication bypass. All five identifiers and all three passwords must be
+authentication plus a time-bounded, reviewer-only OTP challenge. This is not a
+universal OTP, master password, or authentication bypass: the server accepts it
+only after a valid password for one of the three exact, marked review accounts.
+All five identifiers and all three passwords must be
 injected from the production secret manager through the `STORE_REVIEW_*`
 variables. Never place their values in a repository, command transcript,
 screenshot, issue, or application log.
+
+The one-off provisioner and readiness command also require
+`STORE_REVIEW_FIXED_OTP_ENABLED=true`, a 64-character lowercase
+`STORE_REVIEW_FIXED_OTP_HASH`, and a future UTC
+`STORE_REVIEW_FIXED_OTP_EXPIRES_AT` no more than 90 days ahead. The hash is the
+lowercase HMAC-SHA256 of the exact UTF-8 data
+`store_review_login:v1:<six-digit-code>`, using the production `OTP_PEPPER` as
+the HMAC key. It must be prepared privately; never store the six-digit code
+itself in an environment variable or file. On a trusted operator machine with
+shell tracing and command recording disabled, a private local helper must read
+the code and pepper with input echo disabled, derive only that domain-separated
+HMAC, send the hash directly to the approved secret manager, and then clear all
+three values from process memory. The helper must never print either input or
+write them to disk, shell history, CI, chat, or a transcript. The provisioner
+rejects a plaintext
+`STORE_REVIEW_FIXED_OTP_CODE`, an invalid hash, a non-UTC expiry, or an expired
+window. Its output reports only `fixed_otp_ready=true`, never the hash or code.
 
 The generic `npm run db:seed` command is for local/CI fixtures. It is not the
 store-review installer and must not be run in production for this purpose. The
@@ -63,7 +82,8 @@ docker run --rm --network set-service_egress \
    ```
 
    Continue only when the result is exactly `1`.
-3. Inject the eight `STORE_REVIEW_*` values and database/encryption variables
+3. Inject the eight account `STORE_REVIEW_*` values, the three reviewer-OTP
+   control values, and database/encryption variables
    into the short-lived provisioner container. Keep
    `ALLOW_PRODUCTION_REVIEW_PROVISION=false` in every long-running service.
 4. Run the digest-pinned image with `plan`. This is read-only and reports counts
@@ -153,6 +173,16 @@ if review is delayed beyond that buffer, repeat the approved idempotent apply
 and readiness sequence. Do not extend the fixture by editing production rows
 manually.
 
+The provisioner does not persist a reusable QR token. It creates the isolated
+synthetic active assignment required by the normal QR flow and reports
+`qr_live_flow_required=true`. After apply, use the authenticated Review Company
+session to generate a short-lived QR for that assignment, then use the Review
+Worker session to perform check-in and check-out. This validates the same
+300-second token, replay protection, RBAC, and attendance path used by ordinary
+accounts without placing a signing secret or durable QR capability in the
+database, Git, logs, or store instructions. The fixed reviewer OTP is only a
+login challenge; it is never a QR signing input.
+
 Before marking an adopted user as reviewer, the same transaction decrypts and
 quarantines pending or processing SMS/email outbox events linked to the
 configured identifiers, previous pending email, or owned OTP records. The
@@ -241,10 +271,16 @@ owned private documents, synthetic orders, assignments, closed attendance,
 in-app notifications, relationship isolation, and absence of review-order
 outbox events. Output contains counts and error codes only.
 
-After readiness passes, verify all three logins from an external test device.
+After readiness passes, verify all three password-plus-reviewer-OTP logins from
+an external test device. Confirm that wrong OTP attempts are rate limited,
+audited without the code, and temporarily blocked, and that expiry disables the
+fixed challenge as designed without affecting ordinary user OTP delivery.
 The reviewer Admin must see only review-scoped records, arbitrary production
 record IDs must return not found, and the review Company must not notify real
-operators when it creates a sample order.
+operators when it creates a sample order. Generate the live review QR only
+through the normal Company API and complete its check-in/check-out with the
+review Worker; do not copy the returned short-lived QR token into this runbook
+or any store metadata.
 
 ## Deprovision and rollback plan
 

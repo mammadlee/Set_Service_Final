@@ -68,6 +68,10 @@ export const appStrings = {
     emailPlaceholder: "company@setservice.az",
     password: "Şifrə",
     passwordPlaceholder: "Şifrənizi daxil edin",
+    reviewerOtp: "Reviewer OTP kodu",
+    reviewerOtpPlaceholder: "6 rəqəmli kod",
+    reviewerOtpHelp:
+      "Bu əlavə kod yalnız təsdiqlənmiş Apple və Google reviewer hesabına aiddir.",
     loginButton: "Daxil ol",
     wait: "Zəhmət olmasa gözləyin...",
     refreshingSession: "Sessiya yoxlanılır...",
@@ -410,6 +414,22 @@ export function backendErrorMessage(code: string): string | null {
           "E-poçt və ya şifrə yanlışdır.",
         OTP_LOGIN_DEPRECATED:
           "OTP ilə giriş artıq aktiv deyil. Şifrə ilə daxil olun.",
+        REVIEWER_OTP_REQUIRED: appStrings.auth.reviewerOtpHelp,
+        REVIEWER_OTP_INVALID: "Reviewer OTP kodu yanlışdır.",
+        REVIEWER_OTP_BLOCKED:
+          "Reviewer OTP cəhdləri müvəqqəti bloklanıb. Bir az sonra yenidən cəhd edin.",
+        REVIEWER_OTP_RATE_LIMITED:
+          "Çox sayda reviewer OTP cəhdi edilib. Bir az sonra yenidən cəhd edin.",
+        REVIEWER_OTP_EXPIRED:
+          "Reviewer OTP giriş müddəti bitib. Dəstək komandası ilə əlaqə saxlayın.",
+        REVIEWER_OTP_DISABLED:
+          "Reviewer OTP girişi deaktiv edilib. Dəstək komandası ilə əlaqə saxlayın.",
+        REVIEWER_OTP_CONFIGURATION_INVALID:
+          "Reviewer girişi təhlükəsizlik konfiqurasiyasına görə dayandırılıb. Dəstək komandası ilə əlaqə saxlayın.",
+        REVIEWER_OTP_SCOPE_INVALID:
+          "Reviewer hesabının təhlükəsizlik əhatəsi uyğun deyil. Dəstək komandası ilə əlaqə saxlayın.",
+        AUTH_ACCOUNT_SCOPE_CHANGED:
+          "Hesabın təhlükəsizlik statusu giriş zamanı dəyişdi. Yenidən cəhd edin.",
         COMPANY_NOT_APPROVED: "Müəssisə hesabı hələ təsdiqlənməyib.",
         ACCOUNT_NOT_APPROVED: "Hesab hələ təsdiqlənməyib.",
         ACCOUNT_INACTIVE: "Hesab aktiv deyil.",

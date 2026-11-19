@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
@@ -18,6 +19,7 @@ import {
   parseStoreReviewProvisionArgs,
   storeReviewSessionResetReason,
 } from './provision-store-review';
+import { assertStoreReviewFixedOtpReady } from '../src/lib/store-review-fixed-otp';
 
 const config: StoreReviewAccountConfig = {
   identifiers: {
@@ -160,6 +162,52 @@ function testArgumentsAndProductionGates(): void {
     STORE_REVIEW_OUTBOX_QUIESCED: 'true',
     ALLOW_PRODUCTION_REVIEW_ADOPTION: 'true',
   }));
+}
+
+function testFixedOtpReadinessGate(): void {
+  const now = new Date('2026-11-19T10:00:00.000Z');
+  const valid = {
+    STORE_REVIEW_WORKER_PHONE: config.identifiers.workerPhone,
+    STORE_REVIEW_COMPANY_PHONE: config.identifiers.companyPhone,
+    STORE_REVIEW_COMPANY_EMAIL: config.identifiers.companyEmail,
+    STORE_REVIEW_ADMIN_PHONE: config.identifiers.adminPhone,
+    STORE_REVIEW_ADMIN_EMAIL: config.identifiers.adminEmail,
+    STORE_REVIEW_FIXED_OTP_ENABLED: 'true',
+    STORE_REVIEW_FIXED_OTP_HASH: createHash('sha256')
+      .update('store-review-provision-regression-only')
+      .digest('hex'),
+    STORE_REVIEW_FIXED_OTP_EXPIRES_AT: new Date(
+      now.getTime() + 7 * 24 * 60 * 60 * 1000,
+    ).toISOString(),
+    [['OTP', 'PEPPER'].join('_')]: createHash('sha256')
+      .update('store-review-provision-regression-pepper-source')
+      .digest('base64url'),
+  };
+
+  assert.doesNotThrow(() => assertStoreReviewFixedOtpReady(valid, now));
+  expectCode(
+    () => assertStoreReviewFixedOtpReady({ ...valid, STORE_REVIEW_FIXED_OTP_ENABLED: 'false' }, now),
+    'STORE_REVIEW_FIXED_OTP_DISABLED',
+  );
+  expectCode(
+    () => assertStoreReviewFixedOtpReady({
+      ...valid,
+      STORE_REVIEW_FIXED_OTP_HASH: valid.STORE_REVIEW_FIXED_OTP_HASH.toUpperCase(),
+    }, now),
+    'STORE_REVIEW_FIXED_OTP_CONFIGURATION_INVALID',
+  );
+  expectCode(
+    () => assertStoreReviewFixedOtpReady({ ...valid, STORE_REVIEW_FIXED_OTP_EXPIRES_AT: '2026-11-26' }, now),
+    'STORE_REVIEW_FIXED_OTP_CONFIGURATION_INVALID',
+  );
+  expectCode(
+    () => assertStoreReviewFixedOtpReady({ ...valid, STORE_REVIEW_FIXED_OTP_EXPIRES_AT: now.toISOString() }, now),
+    'STORE_REVIEW_FIXED_OTP_CONFIGURATION_INVALID',
+  );
+  expectCode(
+    () => assertStoreReviewFixedOtpReady({ ...valid, STORE_REVIEW_FIXED_OTP_CODE: 'not-allowed' }, now),
+    'STORE_REVIEW_FIXED_OTP_CONFIGURATION_INVALID',
+  );
 }
 
 async function candidate(
@@ -412,6 +460,7 @@ function testSourceSafety(): void {
   assert.ok(!source.includes('Hilton'));
   assert.ok(!source.includes('Four Seasons'));
   assert.ok(!source.includes('console.log(config'));
+  assert.doesNotMatch(source, /STORE_REVIEW_FIXED_OTP_CODE\s*[:=]\s*['\"]?\d{6}/);
   assert.ok(!seed.includes('STORE_REVIEW_'));
   assert.ok(!seed.includes('APPLE_REVIEW_'));
   assert.match(runbook, /normal authenticated mobile\s+flow/i);
@@ -434,6 +483,7 @@ function testSourceSafety(): void {
 
 async function main(): Promise<void> {
   testArgumentsAndProductionGates();
+  testFixedOtpReadinessGate();
   testWorkerAdoptionProfileSafety();
   await testCollisionAndAdoptionPlanning();
   testSourceSafety();

@@ -39,6 +39,7 @@ class AuthController extends ChangeNotifier {
   String? errorMessage;
   String? successMessage;
   bool isSubmitting = false;
+  bool reviewerOtpRequired = false;
   bool _disposed = false;
 
   @override
@@ -117,6 +118,13 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearReviewerOtpChallenge() {
+    if (!reviewerOtpRequired) return;
+    reviewerOtpRequired = false;
+    errorMessage = null;
+    notifyListeners();
+  }
+
   Future<void> registerWorker({
     required String fullName,
     required String phone,
@@ -144,11 +152,22 @@ class AuthController extends ChangeNotifier {
   Future<void> loginWorker({
     required String phone,
     required String password,
+    String? reviewerOtpCode,
   }) async {
     await _submit(() async {
+      if (reviewerOtpCode == null) reviewerOtpRequired = false;
       try {
-        await _repository.loginWorker(phone: phone, password: password);
+        await _repository.loginWorker(
+          phone: phone,
+          password: password,
+          reviewerOtpCode: reviewerOtpCode,
+        );
       } on ApiException catch (error) {
+        if (error.code == 'REVIEWER_OTP_REQUIRED') {
+          reviewerOtpRequired = true;
+          errorMessage = null;
+          return;
+        }
         if (_applyAccountApprovalError(error) &&
             blockedStatus == 'pending_approval') {
           final session = await _repository.createDocumentSession(
@@ -161,6 +180,7 @@ class AuthController extends ChangeNotifier {
         }
         rethrow;
       }
+      reviewerOtpRequired = false;
       documentSessionToken = null;
       worker = await _repository.getWorkerProfile();
       errorMessage = null;
@@ -336,6 +356,7 @@ class AuthController extends ChangeNotifier {
       blockedStatus = null;
       errorMessage = null;
       successMessage = null;
+      reviewerOtpRequired = false;
       isSubmitting = false;
       state = AuthViewState.unauthenticated;
       _notifySessionState(SessionState.unauthenticated);
@@ -353,6 +374,7 @@ class AuthController extends ChangeNotifier {
     blockedStatus = null;
     errorMessage = null;
     successMessage = null;
+    reviewerOtpRequired = false;
     state = AuthViewState.unauthenticated;
     _notifySessionState(SessionState.unauthenticated);
     notifyListeners();

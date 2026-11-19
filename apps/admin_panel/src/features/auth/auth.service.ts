@@ -5,10 +5,10 @@ import { isAdminRole } from '../../shared/auth/permissions';
 import { appStrings } from '../../shared/i18n/appStrings';
 
 export const authService = {
-  async loginAdmin(email: string, password: string) {
+  async loginAdmin(email: string, password: string, reviewerOtpCode?: string) {
     const result = await apiRequest<TokenResponse>('/auth/admin/web-login', {
       method: 'POST',
-      body: { email, password },
+      body: { email, password, ...(reviewerOtpCode ? { otp_code: reviewerOtpCode } : {}) },
       auth: false,
     });
 

@@ -262,6 +262,9 @@ class AppStrings {
   static const otpCode = 'OTP kodu';
   static const verifyOtp = 'OTP-ni təsdiqlə';
   static const otpValidation = '6 rəqəmli OTP kodu daxil edin.';
+  static const reviewerOtpCode = 'Reviewer OTP kodu';
+  static const reviewerOtpHelp =
+      'Bu əlavə kod yalnız Apple və Google üçün təsdiqlənmiş reviewer hesabına aiddir.';
   static const otpSessionExpired =
       'OTP sessiyası bitib. Zəhmət olmasa yenidən başlayın.';
   static String otpSentTo(String? phone) =>
@@ -539,6 +542,20 @@ class AppStrings {
         'Telefon nömrəsi, e-poçt ünvanı və ya şifrə yanlışdır.',
       'OTP_LOGIN_DEPRECATED' =>
         'OTP ilə giriş artıq aktiv deyil. Şifrə ilə daxil olun.',
+      'REVIEWER_OTP_REQUIRED' => reviewerOtpHelp,
+      'REVIEWER_OTP_INVALID' => 'Reviewer OTP kodu yanlışdır.',
+      'REVIEWER_OTP_BLOCKED' =>
+        'Reviewer OTP cəhdləri müvəqqəti bloklanıb. Bir az sonra yenidən cəhd edin.',
+      'REVIEWER_OTP_RATE_LIMITED' =>
+        'Çox sayda reviewer OTP cəhdi edilib. Bir az sonra yenidən cəhd edin.',
+      'REVIEWER_OTP_EXPIRED' =>
+        'Reviewer OTP giriş müddəti bitib. Dəstək komandası ilə əlaqə saxlayın.',
+      'REVIEWER_OTP_DISABLED' =>
+        'Reviewer OTP girişi deaktiv edilib. Dəstək komandası ilə əlaqə saxlayın.',
+      'REVIEWER_OTP_CONFIGURATION_INVALID' || 'REVIEWER_OTP_SCOPE_INVALID' =>
+        'Reviewer girişi təhlükəsizlik konfiqurasiyasına görə dayandırılıb. Dəstək komandası ilə əlaqə saxlayın.',
+      'AUTH_ACCOUNT_SCOPE_CHANGED' =>
+        'Hesabın təhlükəsizlik statusu giriş zamanı dəyişdi. Yenidən cəhd edin.',
       'WORKER_NOT_APPROVED' => pendingApprovalMessage,
       'COMPANY_NOT_APPROVED' => companyPendingApprovalMessage,
       'PENDING_APPROVAL' => companyPendingApprovalMessage,

@@ -23,6 +23,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _reviewerOtpController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
@@ -39,6 +40,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _reviewerOtpController.dispose();
     super.dispose();
   }
 
@@ -103,6 +105,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
               ],
               TextFormField(
                 controller: _emailController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
@@ -115,6 +118,7 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
               const SizedBox(height: 14),
               TextFormField(
                 controller: _passwordController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 obscureText: _obscurePassword,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
@@ -133,6 +137,25 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
+              if (auth.reviewerOtpRequired) ...[
+                const SizedBox(height: 14),
+                TextFormField(
+                  key: const ValueKey('company-reviewer-otp'),
+                  controller: _reviewerOtpController,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  maxLength: 6,
+                  decoration: const InputDecoration(
+                    labelText: AppStrings.reviewerOtpCode,
+                    helperText: AppStrings.reviewerOtpHelp,
+                    prefixIcon: Icon(Icons.verified_user_outlined),
+                    counterText: '',
+                  ),
+                  validator: _validateReviewerOtp,
+                  onFieldSubmitted: (_) => _submit(context),
+                ),
+              ],
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
@@ -190,10 +213,26 @@ class _CompanyLoginScreenState extends State<CompanyLoginScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final auth = context.read<CompanyAuthController>();
     await context.read<CompanyAuthController>().loginCompany(
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
+      reviewerOtpCode: auth.reviewerOtpRequired
+          ? _reviewerOtpController.text.trim()
+          : null,
     );
+  }
+
+  String? _validateReviewerOtp(String? value) {
+    if (!context.read<CompanyAuthController>().reviewerOtpRequired) return null;
+    return RegExp(r'^\d{6}$').hasMatch(value?.trim() ?? '')
+        ? null
+        : AppStrings.otpValidation;
+  }
+
+  void _clearReviewerOtpChallenge(BuildContext context) {
+    _reviewerOtpController.clear();
+    context.read<CompanyAuthController>().clearReviewerOtpChallenge();
   }
 
   Future<void> _forgot(BuildContext context) async {

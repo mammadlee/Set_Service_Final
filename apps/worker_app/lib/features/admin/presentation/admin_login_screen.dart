@@ -22,12 +22,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _reviewerOtpController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _reviewerOtpController.dispose();
     super.dispose();
   }
 
@@ -78,6 +80,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               ],
               TextFormField(
                 controller: _emailController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
@@ -90,6 +93,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               const SizedBox(height: 14),
               TextFormField(
                 controller: _passwordController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 obscureText: _obscurePassword,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
@@ -108,6 +112,25 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
+              if (auth.reviewerOtpRequired) ...[
+                const SizedBox(height: 14),
+                TextFormField(
+                  key: const ValueKey('admin-reviewer-otp'),
+                  controller: _reviewerOtpController,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  maxLength: 6,
+                  decoration: const InputDecoration(
+                    labelText: AppStrings.reviewerOtpCode,
+                    helperText: AppStrings.reviewerOtpHelp,
+                    prefixIcon: Icon(Icons.verified_user_outlined),
+                    counterText: '',
+                  ),
+                  validator: _validateReviewerOtp,
+                  onFieldSubmitted: (_) => _submit(context),
+                ),
+              ],
               const SizedBox(height: 6),
               Align(
                 alignment: Alignment.centerRight,
@@ -135,9 +158,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final auth = context.read<AdminAuthController>();
     await context.read<AdminAuthController>().loginAdmin(
       email: _emailController.text.trim(),
       password: _passwordController.text,
+      reviewerOtpCode: auth.reviewerOtpRequired
+          ? _reviewerOtpController.text.trim()
+          : null,
     );
   }
 
@@ -159,5 +186,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
   String? _validatePassword(String? value) {
     return AuthInputValidators.loginPassword(value);
+  }
+
+  String? _validateReviewerOtp(String? value) {
+    if (!context.read<AdminAuthController>().reviewerOtpRequired) return null;
+    return RegExp(r'^\d{6}$').hasMatch(value?.trim() ?? '')
+        ? null
+        : AppStrings.otpValidation;
+  }
+
+  void _clearReviewerOtpChallenge(BuildContext context) {
+    _reviewerOtpController.clear();
+    context.read<AdminAuthController>().clearReviewerOtpChallenge();
   }
 }

@@ -7,6 +7,7 @@ import {
 } from './provision-store-review';
 import { runReviewAccountReadiness } from './review-account-readiness';
 import { resolveStoreReviewAccountConfig } from '../src/lib/store-review-accounts';
+import { assertStoreReviewFixedOtpReady } from '../src/lib/store-review-fixed-otp';
 
 type ProvisionerCommand = 'plan' | 'apply' | 'check';
 
@@ -36,6 +37,7 @@ async function runProvision(command: 'plan' | 'apply'): Promise<void> {
   // The immutable release image intentionally exposes no adoption or password
   // rotation switches; those require separately reviewed source tooling.
   assertStoreReviewProvisionAllowed(options);
+  assertStoreReviewFixedOtpReady();
   const config = resolveStoreReviewAccountConfig();
   const prisma = new PrismaClient();
   try {
@@ -50,6 +52,8 @@ async function runProvision(command: 'plan' | 'apply'): Promise<void> {
       password_rotation_required_count: plan.passwordRotationRequiredCount,
       private_document_setup_required: plan.privateDocumentSetupRequired,
       profile_photo_setup_required: plan.profilePhotoSetupRequired,
+      fixed_otp_ready: true,
+      qr_live_flow_required: true,
     });
   } finally {
     await prisma.$disconnect();
@@ -59,6 +63,7 @@ async function runProvision(command: 'plan' | 'apply'): Promise<void> {
 async function main(): Promise<void> {
   const command = parseCommand(process.argv.slice(2));
   if (command === 'check') {
+    assertStoreReviewFixedOtpReady();
     await runReviewAccountReadiness();
     return;
   }

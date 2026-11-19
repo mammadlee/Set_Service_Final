@@ -31,11 +31,16 @@ class AdminRepository {
   Future<AuthSession> loginAdmin({
     required String email,
     required String password,
+    String? reviewerOtpCode,
   }) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
         '/auth/admin/login',
-        data: {'email': email, 'password': password},
+        data: {
+          'email': email,
+          'password': password,
+          if (reviewerOtpCode != null) 'otp_code': reviewerOtpCode,
+        },
       );
       final session = AuthSession.fromJson(response.data ?? const {});
       final payload = readAccessTokenPayload(session.accessToken);

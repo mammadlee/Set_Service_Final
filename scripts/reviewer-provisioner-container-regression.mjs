@@ -25,6 +25,8 @@ const reviewer = {
   companyPassword: `Company-${crypto.randomBytes(24).toString('base64url')}Aa1!`,
   adminPassword: `Admin-${crypto.randomBytes(24).toString('base64url')}Aa1!`,
   outboxSecret: crypto.randomBytes(32).toString('base64url'),
+  otpPepper: crypto.randomBytes(32).toString('base64url'),
+  fixedOtpHash: crypto.randomBytes(32).toString('hex'),
 };
 
 function runDocker(args, { expectedStatus = 0, timeout = 180_000 } = {}) {
@@ -69,6 +71,12 @@ function provisionerEnv({ apply = false } = {}) {
     STORE_REVIEW_COMPANY_PASSWORD: reviewer.companyPassword,
     STORE_REVIEW_ADMIN_PASSWORD: reviewer.adminPassword,
     PROVIDER_OUTBOX_ENCRYPTION_SECRET: reviewer.outboxSecret,
+    [['OTP', 'PEPPER'].join('_')]: reviewer.otpPepper,
+    STORE_REVIEW_FIXED_OTP_ENABLED: 'true',
+    STORE_REVIEW_FIXED_OTP_HASH: reviewer.fixedOtpHash,
+    STORE_REVIEW_FIXED_OTP_EXPIRES_AT: new Date(
+      Date.now() + 7 * 24 * 60 * 60 * 1000,
+    ).toISOString(),
     ...(apply ? {
       ALLOW_PRODUCTION_REVIEW_PROVISION: 'true',
       STORE_REVIEW_OUTBOX_QUIESCED: 'true',
@@ -110,6 +118,8 @@ function assertRedacted(output) {
     reviewer.companyPassword,
     reviewer.adminPassword,
     reviewer.outboxSecret,
+    reviewer.otpPepper,
+    reviewer.fixedOtpHash,
   ]) {
     assert.equal(output.includes(sensitive), false, 'provisioner output disclosed protected input');
   }
@@ -168,6 +178,8 @@ try {
   const initialPlan = runProvisioner('plan');
   assert.match(initialPlan, /command:\s*'plan'/);
   assert.match(initialPlan, /create_count:\s*3/);
+  assert.match(initialPlan, /fixed_otp_ready:\s*true/);
+  assert.match(initialPlan, /qr_live_flow_required:\s*true/);
   assertRedacted(initialPlan);
 
   const ungatedApply = runProvisioner('apply', { expectedStatus: 1 });
