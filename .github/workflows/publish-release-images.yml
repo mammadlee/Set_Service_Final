@@ -208,17 +208,59 @@ jobs:
         shell: bash
         env:
           IMMUTABLE_REF: ${{ steps.image.outputs.immutable_ref }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
           REPOSITORY: ${{ matrix.repository }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
+          index_file="${REPOSITORY}.provenance-index.json"
+          attestation_file="${REPOSITORY}.provenance-attestation.json"
+          predicate_file="${REPOSITORY}.provenance-predicate.json"
+
+          docker buildx imagetools inspect "$IMMUTABLE_REF" \
+            --format '{{ json .Manifest }}' \
+            > "$index_file"
           docker buildx imagetools inspect "$IMMUTABLE_REF" \
             --format '{{ json .Provenance.SLSA }}' \
-            > "${REPOSITORY}.provenance.json"
-          jq -e '
-            type == "object" and
-            (.predicateType | test("^https://slsa.dev/provenance/v(0\\.2|1)$")) and
-            ((.subject // []) | length > 0)
-          ' "${REPOSITORY}.provenance.json" >/dev/null
+            > "$predicate_file"
+
+          attestation_digest="$(jq -er '
+            [
+              .manifests[]?
+              | select(
+                  .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+                  .platform.os == "unknown" and
+                  .platform.architecture == "unknown" and
+                  .annotations["vnd.docker.reference.type"] == "attestation-manifest"
+                )
+            ] as $matches
+            | if ($matches | length) == 1
+              then $matches[0].digest
+              else error("expected exactly one BuildKit attestation descriptor")
+              end
+          ' "$index_file")"
+          if [[ ! "$attestation_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo '::error::BuildKit did not return a valid attestation manifest digest.'
+            exit 1
+          fi
+
+          image_name="${IMMUTABLE_REF%@*}"
+          docker buildx imagetools inspect "${image_name}@${attestation_digest}" \
+            --raw > "$attestation_file"
+
+          node scripts/validate-buildkit-provenance.mjs \
+            --index "$index_file" \
+            --attestation-manifest "$attestation_file" \
+            --predicate "$predicate_file" \
+            --immutable-ref "$IMMUTABLE_REF" \
+            --image-repository "$REPOSITORY" \
+            --release-sha "$RELEASE_SHA" \
+            --github-repository "$GITHUB_REPOSITORY" \
+            --github-ref "$GITHUB_REF" \
+            --target "$TARGET" \
+            --node-base-image "$NODE_BASE_IMAGE" \
+            --runtime-base-image "$RUNTIME_BASE_IMAGE" \
+            --output "${REPOSITORY}.provenance.json"
 
       - name: Scan immutable image with Trivy
         shell: bash
@@ -357,7 +399,7 @@ jobs:
           build_metadata_sha="$(sha256sum "${REPOSITORY}.build-metadata.json" | awk '{print $1}')"
           signature_verification_sha="$(sha256sum "${REPOSITORY}.cosign-verification.json" | awk '{print $1}')"
           provenance_sha="$(sha256sum "${REPOSITORY}.provenance.json" | awk '{print $1}')"
-          provenance_type="$(jq -er '.predicateType' "${REPOSITORY}.provenance.json")"
+          provenance_type="$(jq -er '.attestation.predicateType' "${REPOSITORY}.provenance.json")"
           high_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "${REPOSITORY}.trivy.json")"
           critical_count="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "${REPOSITORY}.trivy.json")"
           secret_count="$(jq '[.Results[]?.Secrets[]?] | length' "${REPOSITORY}.trivy.json")"
@@ -476,13 +518,18 @@ jobs:
           path: release-artifacts
           merge-multiple: true
 
-      - name: Verify provisioner and migration images on PostgreSQL 16
+      - name: Verify one-off production tools on PostgreSQL 16
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t fragments < <(find release-artifacts -maxdepth 1 -name '*.fragment.json' -type f | sort)
+          api_ref="$(jq -er 'select(.target == "api") | .immutable_ref' "${fragments[@]}")"
           provisioner_ref="$(jq -er 'select(.target == "reviewer-provisioner") | .immutable_ref' "${fragments[@]}")"
           migration_ref="$(jq -er 'select(.target == "migration") | .immutable_ref' "${fragments[@]}")"
+          node scripts/jwt-invalidator-container-regression.mjs \
+            "$api_ref" \
+            "$migration_ref" \
+            "$POSTGRES_CI_IMAGE"
           node scripts/reviewer-provisioner-container-regression.mjs \
             "$provisioner_ref" \
             "$migration_ref" \

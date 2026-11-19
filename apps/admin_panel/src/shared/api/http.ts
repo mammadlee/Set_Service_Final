@@ -1,7 +1,7 @@
 import { API_BASE_URL } from './config';
-import { isAccessTokenExpired, readAccessTokenPayload } from './jwt';
+import { isAccessTokenExpired, isAccessTokenPayload, readAccessTokenPayload } from './jwt';
 import { tokenStore } from './tokenStore';
-import type { ApiError, ApiErrorBody, TokenResponse } from './types';
+import type { ApiError, ApiErrorBody, AuthUser, TokenResponse } from './types';
 import { isAdminRole } from '../auth/permissions';
 import { apiErrorMessage, appStrings } from '../i18n/appStrings';
 
@@ -13,10 +13,11 @@ interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined | null>;
   auth?: boolean;
   retry?: boolean;
+  accept?: string;
 }
 
 let onUnauthorized: (() => void) | undefined;
-let refreshPromise: Promise<boolean> | null = null;
+let refreshPromise: Promise<AuthUser | null> | null = null;
 
 export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
@@ -26,7 +27,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const response = await send(path, options);
 
   if (response.status === 401 && options.auth !== false && options.retry !== false) {
-    const refreshed = await refreshTokens();
+    const refreshed = await refreshSession();
     if (refreshed) {
       const retryResponse = await send(path, { ...options, retry: false });
       return parseResponse<T>(retryResponse);
@@ -39,6 +40,26 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return parseResponse<T>(response);
 }
 
+export async function apiDownload(path: string, options: RequestOptions = {}): Promise<{ blob: Blob; filename?: string }> {
+  let response = await send(path, { ...options, accept: options.accept ?? 'application/octet-stream' });
+
+  if (response.status === 401 && options.auth !== false && options.retry !== false) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      response = await send(path, { ...options, accept: options.accept ?? 'application/octet-stream', retry: false });
+    } else {
+      tokenStore.clear();
+      onUnauthorized?.();
+    }
+  }
+
+  if (!response.ok) return parseResponse<never>(response);
+  return {
+    blob: await response.blob(),
+    filename: contentDispositionFilename(response.headers.get('content-disposition')),
+  };
+}
+
 async function send(path: string, options: RequestOptions) {
   const url = new URL(`${API_BASE_URL}${path}`);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
@@ -47,7 +68,7 @@ async function send(path: string, options: RequestOptions) {
     }
   });
 
-  const headers = new Headers({ accept: 'application/json' });
+  const headers = new Headers({ accept: options.accept ?? 'application/json' });
   if (options.body !== undefined) headers.set('content-type', 'application/json');
 
   const token = tokenStore.getAccessToken();
@@ -57,7 +78,24 @@ async function send(path: string, options: RequestOptions) {
     method: options.method ?? 'GET',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    cache: 'no-store',
+    credentials: 'include',
+    referrerPolicy: 'no-referrer',
   });
+}
+
+function contentDispositionFilename(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded).replace(/[\\/\r\n]/g, '_');
+    } catch {
+      return undefined;
+    }
+  }
+  const basic = value.match(/filename="?([^";]+)"?/i)?.[1]?.trim();
+  return basic?.replace(/[\\/\r\n]/g, '_');
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -86,7 +124,7 @@ function parseJson(text: string) {
   }
 }
 
-async function refreshTokens() {
+export async function refreshSession() {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = performRefresh().finally(() => {
@@ -97,27 +135,28 @@ async function refreshTokens() {
 }
 
 async function performRefresh() {
-  const refreshToken = tokenStore.getRefreshToken();
-  if (!refreshToken) return false;
-
   try {
-    const response = await send('/auth/refresh', {
+    const response = await send('/auth/admin/web-refresh', {
       method: 'POST',
-      body: { refresh_token: refreshToken },
       auth: false,
     });
     const data = await parseResponse<TokenResponse>(response);
     const tokenPayload = readAccessTokenPayload(data.access_token);
-    if (!isAdminRole(data.user.role) || !isAdminRole(tokenPayload?.role) || isAccessTokenExpired(tokenPayload)) {
+    if (
+      !isAdminRole(data.user.role) ||
+      !isAdminRole(tokenPayload?.role) ||
+      !isAccessTokenPayload(tokenPayload) ||
+      isAccessTokenExpired(tokenPayload)
+    ) {
       tokenStore.clear();
       onUnauthorized?.();
-      return false;
+      return null;
     }
 
-    tokenStore.setTokens(data.access_token, data.refresh_token);
-    return true;
+    tokenStore.setAccessToken(data.access_token);
+    return data.user;
   } catch {
-    return false;
+    return null;
   }
 }
 

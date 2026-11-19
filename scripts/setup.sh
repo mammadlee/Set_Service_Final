@@ -25,7 +25,7 @@ npm install
 if [ ! -f .env ]; then
   echo -e "${YELLOW}→ .env.example-dən .env yaradılır...${NC}"
   cp .env.example .env
-  echo -e "${RED}  ⚠ .env faylını doldurun: DATABASE_URL, JWT_SECRET, QR_HMAC_SECRET${NC}"
+  echo -e "${RED}  ⚠ .env faylını doldurun: DATABASE_URL, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, QR_HMAC_SECRET${NC}"
 fi
 
 # Prisma generate

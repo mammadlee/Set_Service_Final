@@ -47,11 +47,16 @@ class AuthRepository {
   Future<AuthSession> loginWorker({
     required String phone,
     required String password,
+    String? reviewerOtpCode,
   }) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
         '/auth/worker/login',
-        data: {'phone': phone, 'password': password},
+        data: {
+          'phone': phone,
+          'password': password,
+          if (reviewerOtpCode != null) 'otp_code': reviewerOtpCode,
+        },
       );
       final session = AuthSession.fromJson(response.data ?? const {});
       final payload = readAccessTokenPayload(session.accessToken);
@@ -110,6 +115,21 @@ class AuthRepository {
         },
       );
       return OtpVerificationResult.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
+  Future<WorkerRegistrationVerification> createDocumentSession({
+    required String phone,
+    required String password,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/auth/worker/document-session',
+        data: {'phone': phone, 'password': password},
+      );
+      return WorkerRegistrationVerification.fromJson(response.data ?? const {});
     } catch (error) {
       throw mapDioException(error);
     }

@@ -1,5 +1,10 @@
 import { apiRequest } from '../../shared/api/http';
-import type { Assignment, AssignmentStatus, Paginated } from '../../shared/api/types';
+import type {
+  Assignment,
+  AssignmentStatus,
+  BulkAssignmentResponse,
+  Paginated,
+} from '../../shared/api/types';
 
 export const assignmentsService = {
   list(params: {
@@ -8,6 +13,12 @@ export const assignmentsService = {
     status?: AssignmentStatus | '';
     order_id?: string;
     worker_id?: string;
+    worker_search?: string;
+    company_id?: string;
+    position_id?: string;
+    start_date?: string;
+    end_date?: string;
+    scope?: 'active' | 'history';
     sort?: 'asc' | 'desc';
   }) {
     return apiRequest<Paginated<Assignment>>('/assignments', { query: params });
@@ -23,6 +34,23 @@ export const assignmentsService = {
     options?: { category?: string; orderCategoryItemId?: string | null; positionId?: string | null },
   ) {
     return apiRequest<{ assigned_count: number; assignments: Assignment[] }>('/assignments', {
+      method: 'POST',
+      body: {
+        order_id: orderId,
+        worker_ids: workerIds,
+        ...(options?.category ? { category: options.category } : {}),
+        ...(options?.orderCategoryItemId ? { order_category_item_id: options.orderCategoryItemId } : {}),
+        ...(options?.positionId ? { position_id: options.positionId } : {}),
+      },
+    });
+  },
+
+  bulkCreate(
+    orderId: string,
+    workerIds: string[],
+    options?: { category?: string; orderCategoryItemId?: string | null; positionId?: string | null },
+  ) {
+    return apiRequest<BulkAssignmentResponse>('/assignments/bulk', {
       method: 'POST',
       body: {
         order_id: orderId,

@@ -1,0 +1,607 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:worker_app/core/network/api_client.dart';
+import 'package:worker_app/core/push/push_notification_service.dart';
+import 'package:worker_app/core/push/push_registration_service.dart';
+import 'package:worker_app/core/session/role_session_controller.dart';
+import 'package:worker_app/core/session/session_coordinator.dart';
+import 'package:worker_app/core/storage/token_storage.dart';
+import 'package:worker_app/core/theme/app_theme.dart';
+import 'package:worker_app/features/admin/data/admin_repository.dart';
+import 'package:worker_app/features/admin/presentation/admin_auth_controller.dart';
+import 'package:worker_app/features/admin/presentation/admin_login_screen.dart';
+import 'package:worker_app/features/auth/data/auth_repository.dart';
+import 'package:worker_app/features/auth/presentation/controllers/auth_controller.dart';
+import 'package:worker_app/features/auth/presentation/screens/account_blocked_screen.dart';
+import 'package:worker_app/features/auth/presentation/screens/login_screen.dart';
+import 'package:worker_app/features/auth/presentation/screens/otp_screen.dart';
+import 'package:worker_app/features/auth/presentation/screens/password_screen.dart';
+import 'package:worker_app/features/auth/presentation/screens/pending_approval_screen.dart';
+import 'package:worker_app/features/auth/presentation/screens/register_screen.dart';
+import 'package:worker_app/features/company/data/company_repository.dart';
+import 'package:worker_app/features/company/presentation/company_auth_controller.dart';
+import 'package:worker_app/features/company/presentation/company_login_screen.dart';
+import 'package:worker_app/features/company/presentation/company_otp_screen.dart';
+import 'package:worker_app/features/company/presentation/company_password_screen.dart';
+import 'package:worker_app/features/company/presentation/company_status_screen.dart';
+import 'package:worker_app/features/company/presentation/company_account_privacy_screen.dart';
+import 'package:worker_app/features/worker/data/worker_repository.dart';
+import 'package:worker_app/features/worker/presentation/screens/worker_profile_screen.dart';
+import 'package:worker_app/features/taxonomy/data/taxonomy_repository.dart';
+import 'package:worker_app/shared/app_strings.dart';
+import 'package:worker_app/shared/widgets/premium_components.dart';
+
+void main() {
+  const compactPhoneSizes = <Size>[
+    Size(320, 480),
+    Size(360, 640),
+    Size(390, 844),
+    Size(430, 932),
+  ];
+
+  testWidgets('all unauthenticated forms remain usable on common phone sizes', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final screens = <String, Widget Function()>{
+      'worker login': () => const LoginScreen(),
+      'worker registration': () => const RegisterScreen(),
+      'worker otp': () => const OtpScreen(),
+      'worker password': () => const PasswordScreen(),
+      'worker pending': () => const PendingApprovalScreen(),
+      'worker blocked': () => const AccountBlockedScreen(),
+      'company login': () => const CompanyLoginScreen(),
+      'company registration': () => const CompanyRegisterScreen(),
+      'company otp': () => const CompanyOtpScreen(),
+      'company password': () => const CompanyPasswordScreen(),
+      'company pending': () => const CompanyStatusScreen(
+        title: AppStrings.pendingApprovalTitle,
+        body: AppStrings.companyPendingApprovalMessage,
+        icon: Icons.hourglass_top_outlined,
+        color: BrandColors.accentGold,
+      ),
+      'admin login': () => const AdminLoginScreen(),
+    };
+
+    for (final entry in screens.entries) {
+      for (final phoneSize in compactPhoneSizes) {
+        tester.view.physicalSize = phoneSize;
+        await tester.pumpWidget(fixture.wrap(entry.value()));
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: '${entry.key} $phoneSize',
+        );
+
+        final scrollables = find.byType(Scrollable);
+        expect(scrollables, findsWidgets, reason: '${entry.key} $phoneSize');
+        final position = tester
+            .state<ScrollableState>(scrollables.first)
+            .position;
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pump();
+
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: '${entry.key} $phoneSize',
+        );
+      }
+    }
+  });
+
+  testWidgets('worker auth flow remains scrollable in landscape and tablets', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final screens = <String, Widget Function()>{
+      'worker login': () => const LoginScreen(),
+      'worker registration': () => const RegisterScreen(),
+      'worker otp': () => const OtpScreen(),
+      'worker password': () => const PasswordScreen(),
+      'worker pending': () => const PendingApprovalScreen(),
+      'worker blocked': () => const AccountBlockedScreen(),
+    };
+
+    for (final entry in screens.entries) {
+      for (final size in const [
+        Size(844, 390),
+        Size(768, 1024),
+        Size(1024, 768),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpWidget(fixture.wrap(entry.value()));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byType(Scrollable),
+          findsWidgets,
+          reason: '${entry.key} $size',
+        );
+        final position = tester
+            .state<ScrollableState>(find.byType(Scrollable).first)
+            .position;
+        position.jumpTo(position.maxScrollExtent);
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: '${entry.key} $size');
+      }
+    }
+  });
+
+  testWidgets('worker registration preserves the complete field hierarchy', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(fixture.wrap(const RegisterScreen()));
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.fullName), findsOneWidget);
+    expect(find.text(AppStrings.phoneNumber), findsOneWidget);
+    expect(find.text('Şöbə seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Şöbə');
+
+    await tester.tap(find.text('Şöbə seçin'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mətbəx Şöbəsi'), findsOneWidget);
+    await tester.tap(find.text('Mətbəx Şöbəsi'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -220));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Departament seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Departament');
+    await tester.tap(find.text('Departament seçin'));
+    await tester.pumpAndSettle();
+    expect(find.text('İsti mətbəx'), findsOneWidget);
+    await tester.tap(find.text('İsti mətbəx'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -180));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Vəzifə seçin'), findsOneWidget);
+    _expectRegistrationSelectorBorder(tester, 'Vəzifə');
+    await tester.tap(find.text('Vəzifə seçin'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aşpaz'), findsOneWidget);
+    await tester.tap(find.text('Aşpaz'));
+    await tester.pumpAndSettle();
+    expect(find.text('Aşpaz'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text(AppStrings.registerAndSendOtp),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.skills), findsOneWidget);
+    expect(find.text(AppStrings.languages), findsOneWidget);
+    expect(find.text(AppStrings.registerAndSendOtp), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('skills sheet stays usable with keyboard on a narrow phone', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+
+    await tester.pumpWidget(fixture.wrap(const RegisterScreen()));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text(AppStrings.skillsHint));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(AppStrings.skillsHint));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Vaxtın idarə olunması'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Vaxtın idarə olunması'));
+    await tester.pumpAndSettle();
+    final selectedChip = tester.widget<PremiumSelectableChip>(
+      find.ancestor(
+        of: find.text('Vaxtın idarə olunması'),
+        matching: find.byType(PremiumSelectableChip),
+      ),
+    );
+    expect(selectedChip.selected, isTrue);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+    await tester.showKeyboard(find.byType(TextField).last);
+    await tester.pumpAndSettle();
+
+    expect(find.text(AppStrings.cancel), findsOneWidget);
+    expect(find.text(AppStrings.save), findsOneWidget);
+    expect(
+      tester
+          .widget<PremiumSelectableChip>(
+            find.ancestor(
+              of: find.text('Vaxtın idarə olunması'),
+              matching: find.byType(PremiumSelectableChip),
+            ),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'in-app account deletion remains visible on narrow iOS-sized UI',
+    (tester) async {
+      final fixture = _UiFixture();
+      addTearDown(fixture.dispose);
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        fixture.wrap(const CompanyAccountPrivacyScreen()),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Müəssisə hesabını sil'), findsOneWidget);
+      expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<RoleSessionController>.value(
+              value: fixture.roleSession,
+            ),
+            ChangeNotifierProvider<AuthController>.value(
+              value: fixture.workerAuth,
+            ),
+            ChangeNotifierProvider<CompanyAuthController>.value(
+              value: fixture.companyAuth,
+            ),
+            Provider<TaxonomyRepository>.value(
+              value: TaxonomyRepository(apiClient: fixture.workerClient),
+            ),
+            Provider<WorkerRepository>.value(
+              value: WorkerRepository(apiClient: fixture.workerClient),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: const Scaffold(body: WorkerProfileScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text(AppStrings.deleteAccount),
+        320,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(AppStrings.deleteAccount), findsOneWidget);
+      expect(find.text('Web hesab silmə səhifəsi'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('worker profile menu grows for long content across devices', (
+    tester,
+  ) async {
+    final fixture = _UiFixture();
+    addTearDown(fixture.dispose);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    for (final size in const [
+      Size(320, 568),
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1024, 768),
+      Size(844, 390),
+    ]) {
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<RoleSessionController>.value(
+              value: fixture.roleSession,
+            ),
+            ChangeNotifierProvider<AuthController>.value(
+              value: fixture.workerAuth,
+            ),
+            Provider<TaxonomyRepository>.value(
+              value: TaxonomyRepository(apiClient: fixture.workerClient),
+            ),
+            Provider<WorkerRepository>.value(
+              value: WorkerRepository(apiClient: fixture.workerClient),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: Scaffold(
+              body: WorkerProfileScreen(key: ValueKey('profile-$size')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text(_responsiveWorkerName), findsOneWidget, reason: '$size');
+      expect(
+        find.text(_responsiveWorkerPosition),
+        findsOneWidget,
+        reason: '$size',
+      );
+      expect(
+        find.text(
+          'Qonaq xidmətlərinin əməliyyat idarəetməsi · Beynəlxalq tədbirlər və banket xidməti',
+        ),
+        findsOneWidget,
+        reason: '$size',
+      );
+      await tester.scrollUntilVisible(
+        find.text(AppStrings.deleteAccount),
+        300,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await tester.pump();
+      expect(find.text(AppStrings.deleteAccount), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: '$size');
+    }
+  });
+}
+
+void _expectRegistrationSelectorBorder(WidgetTester tester, String label) {
+  final selector = tester.widget<AnimatedContainer>(
+    find.byKey(ValueKey('registration-selector-$label')),
+  );
+  final decoration = selector.decoration! as BoxDecoration;
+  expect(decoration.borderRadius, const BorderRadius.all(Radius.circular(14)));
+  final border = decoration.border! as Border;
+  expect(border.top.width, 1.25);
+  expect(border.right.width, 1.25);
+  expect(border.bottom.width, 1.25);
+  expect(border.left.width, 1.25);
+}
+
+class _UiFixture {
+  _UiFixture() {
+    workerClient = _client('worker');
+    companyClient = _client('company');
+    adminClient = _client('super_admin');
+    final push = PushNotificationService();
+
+    workerAuth = AuthController(
+      AuthRepository(apiClient: workerClient, tokenStorage: workerStorage),
+      PushRegistrationService(
+        apiClient: workerClient,
+        pushNotificationService: push,
+      ),
+      coordinator,
+    );
+    companyAuth = CompanyAuthController(
+      CompanyRepository(apiClient: companyClient, tokenStorage: companyStorage),
+      PushRegistrationService(
+        apiClient: companyClient,
+        pushNotificationService: push,
+      ),
+      coordinator,
+    );
+    adminAuth = AdminAuthController(
+      AdminRepository(apiClient: adminClient, tokenStorage: adminStorage),
+      PushRegistrationService(
+        apiClient: adminClient,
+        pushNotificationService: push,
+      ),
+      coordinator,
+    );
+  }
+
+  final coordinator = SessionCoordinator();
+  final roleSession = RoleSessionController();
+  final workerStorage = _MemoryTokenStorage();
+  final companyStorage = _MemoryTokenStorage();
+  final adminStorage = _MemoryTokenStorage();
+  late final ApiClient workerClient;
+  late final ApiClient companyClient;
+  late final ApiClient adminClient;
+  late final AuthController workerAuth;
+  late final CompanyAuthController companyAuth;
+  late final AdminAuthController adminAuth;
+
+  Widget wrap(Widget child) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<RoleSessionController>.value(value: roleSession),
+        ChangeNotifierProvider<AuthController>.value(value: workerAuth),
+        ChangeNotifierProvider<CompanyAuthController>.value(value: companyAuth),
+        ChangeNotifierProvider<AdminAuthController>.value(value: adminAuth),
+        Provider<TaxonomyRepository>.value(
+          value: TaxonomyRepository(apiClient: workerClient),
+        ),
+      ],
+      child: MaterialApp(theme: AppTheme.light(), home: child),
+    );
+  }
+
+  ApiClient _client(String role) {
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+    dio.httpClientAdapter = _CallbackAdapter((options) async {
+      if (options.path == '/taxonomy') {
+        return _jsonResponse(200, _taxonomyResponse);
+      }
+      if (role == 'worker' && options.path == '/workers/me') {
+        return _jsonResponse(200, _responsiveWorkerResponse);
+      }
+      return _jsonResponse(200, <String, dynamic>{});
+    });
+    return ApiClient(
+      baseUrl: 'https://example.test',
+      tokenStorage: switch (role) {
+        'worker' => workerStorage,
+        'company' => companyStorage,
+        _ => adminStorage,
+      },
+      expectedRole: role,
+      sessionCoordinator: coordinator,
+      dioOverride: dio,
+      refreshDioOverride: Dio(BaseOptions(baseUrl: 'https://example.test')),
+    );
+  }
+
+  Future<void> dispose() async {
+    workerAuth.dispose();
+    companyAuth.dispose();
+    adminAuth.dispose();
+    roleSession.dispose();
+    await coordinator.dispose();
+  }
+}
+
+class _MemoryTokenStorage implements TokenStorage {
+  @override
+  bool get isLoaded => true;
+
+  @override
+  String? get cachedAccessToken => null;
+
+  @override
+  String? get cachedRefreshToken => null;
+
+  @override
+  Future<void> clear() async {}
+
+  @override
+  Future<String?> readAccessToken() async => null;
+
+  @override
+  Future<String?> readRefreshToken() async => null;
+
+  @override
+  Future<StoredTokens?> readTokens() async => null;
+
+  @override
+  Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {}
+
+  @override
+  Future<void> warmUp() async {}
+}
+
+class _CallbackAdapter implements HttpClientAdapter {
+  _CallbackAdapter(this.handler);
+
+  final Future<ResponseBody> Function(RequestOptions options) handler;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) {
+    return handler(options);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+ResponseBody _jsonResponse(int statusCode, Map<String, dynamic> body) {
+  return ResponseBody.fromString(
+    jsonEncode(body),
+    statusCode,
+    headers: {
+      Headers.contentTypeHeader: ['application/json'],
+    },
+  );
+}
+
+const _taxonomyResponse = <String, dynamic>{
+  'data': [
+    {
+      'id': 'department-1',
+      'name_az': 'Mətbəx Şöbəsi',
+      'subdepartments': [
+        {
+          'id': 'subdepartment-1',
+          'department_id': 'department-1',
+          'name_az': 'İsti mətbəx',
+          'positions': [
+            {
+              'id': 'position-1',
+              'subdepartment_id': 'subdepartment-1',
+              'name_az': 'Aşpaz',
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+const _responsiveWorkerName = 'Ülviyyə Məmmədova Əli qızı';
+const _responsiveWorkerPosition =
+    'Baş qonaq münasibətləri və çoxşaxəli banket əməliyyatları koordinatoru';
+
+const _responsiveWorkerResponse = <String, dynamic>{
+  'id': 'worker-responsive',
+  'name': _responsiveWorkerName,
+  'phone': '+994702315151',
+  'position': _responsiveWorkerPosition,
+  'position_ids': ['position-responsive'],
+  'positions': [
+    {
+      'id': 'position-responsive',
+      'name_az': _responsiveWorkerPosition,
+      'department': {
+        'id': 'department-responsive',
+        'name_az': 'Qonaq xidmətlərinin əməliyyat idarəetməsi',
+      },
+      'subdepartment': {
+        'id': 'subdepartment-responsive',
+        'name_az': 'Beynəlxalq tədbirlər və banket xidməti',
+      },
+    },
+  ],
+  'email': 'ulviyye@example.test',
+  'email_verified': true,
+  'email_verified_at': '2026-10-07T08:00:00.000Z',
+  'skills': ['Qonaqlarla peşəkar ünsiyyət'],
+  'languages': ['Azərbaycan dili', 'İngilis dili'],
+  'documents': <Object>[],
+  'work_history': <Object>[],
+  'gender': 'female',
+  'whatsapp_available': true,
+  'status': 'approved',
+  'availability': true,
+  'worker_class': 'A',
+  'rating_avg': 4.9,
+  'rating_count': 12,
+};

@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, BarChart3 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getErrorMessage } from '../../shared/api/http';
@@ -10,15 +10,15 @@ import { PageHeader } from '../../shared/components/PageHeader';
 import { ErrorState, LoadingState } from '../../shared/components/StateBlock';
 import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
-import { normalizeDocuments } from '../../shared/utils/documents';
 import { companiesService } from './companies.service';
 
 export function CompanyDetailPage() {
   const { id = '' } = useParams();
   const { user } = useAuth();
   const canManageCompanies = hasPermission(user, 'manage_companies');
+  const canViewReports = hasPermission(user, 'view_reports');
   const company = useAsync(() => companiesService.get(id), [id]);
-  const documents = normalizeDocuments(company.data?.documents);
+  const awaitingApproval = company.data?.status === 'pending_approval';
   const [action, setAction] = useState<'approve' | 'reject' | null>(null);
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -43,14 +43,18 @@ export function CompanyDetailPage() {
       <PageHeader
         title={appStrings.companies.detailTitle}
         description={appStrings.companies.detailDescription}
-        actions={<Link className="btn secondary compact" to="/companies"><ArrowLeft size={16} />{appStrings.back}</Link>}
+        actions={(
+          <>
+            <Link className="btn secondary compact" to="/companies"><ArrowLeft size={16} />{appStrings.back}</Link>
+            {canViewReports ? <Link className="btn primary compact" to={`/companies/${id}/report`}><BarChart3 size={16} />Hesabat</Link> : null}
+          </>
+        )}
       />
 
       {company.loading ? <LoadingState /> : null}
       {company.error ? <ErrorState message={company.error} onRetry={company.reload} /> : null}
       {company.data ? (
-        <section className="detail-grid">
-          <div className="panel">
+        <section className="panel">
             <div className="detail-title">
               <h2>{company.data.name}</h2>
               <StatusBadge status={company.data.status} />
@@ -59,30 +63,15 @@ export function CompanyDetailPage() {
               <dt>{appStrings.companies.contact}</dt><dd>{company.data.contact_name || appStrings.notAvailable}</dd>
               <dt>{appStrings.companies.phone}</dt><dd>{company.data.phone}</dd>
               <dt>{appStrings.companies.email}</dt><dd>{company.data.email || appStrings.notAvailable}</dd>
-              <dt>{appStrings.companies.docsUrl}</dt><dd>{company.data.docs_url ? <a href={company.data.docs_url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : appStrings.notAvailable}</dd>
               <dt>{appStrings.companies.rejectReason}</dt><dd>{company.data.reject_reason || appStrings.notAvailable}</dd>
             </dl>
             {canManageCompanies ? (
-              <div className="action-row">
-                <button className="btn primary" disabled={company.data.status === 'approved'} onClick={() => setAction('approve')}>{appStrings.companies.approve}</button>
-                <button className="btn danger" disabled={company.data.status === 'rejected'} onClick={() => setAction('reject')}>{appStrings.companies.reject}</button>
+              <div className="action-row detail-actions">
+                <button className="btn primary" disabled={!awaitingApproval} onClick={() => setAction('approve')}>{appStrings.companies.approve}</button>
+                <button className="btn danger" disabled={!awaitingApproval} onClick={() => setAction('reject')}>{appStrings.companies.reject}</button>
               </div>
             ) : null}
             {actionError ? <div className="form-error">{actionError}</div> : null}
-          </div>
-          <div className="panel">
-            <h2>{appStrings.companies.documents}</h2>
-            {documents.length > 0 ? (
-              <ul className="document-list">
-                {documents.map((doc, index) => (
-                  <li key={`${doc.url}-${index}`}>
-                    <span>{doc.name || doc.type || appStrings.workers.document}</span>
-                    {doc.url ? <a href={doc.url} target="_blank" rel="noreferrer">{appStrings.workers.openDocument}</a> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="muted">{appStrings.companies.noDocuments}</p>}
-          </div>
         </section>
       ) : null}
 

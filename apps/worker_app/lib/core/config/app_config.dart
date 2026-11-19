@@ -1,19 +1,35 @@
 import 'package:flutter/foundation.dart';
 
-enum AppConfigIssue { missingBaseUrl, localBaseUrl }
+enum AppConfigIssue {
+  missingEnvironment,
+  invalidEnvironment,
+  missingBaseUrl,
+  invalidBaseUrl,
+  localBaseUrl,
+  insecureBaseUrl,
+  environmentBaseUrlMismatch,
+}
 
 class AppConfig {
-  static const _defaultBaseUrl = 'http://localhost:3000';
+  // Real-device/debug builds must work without an extra --dart-define.
+  // Local backend testing can still override this with BASE_URL.
+  static const _defaultBaseUrl = 'https://api.setservice.az';
+  static const _productionBaseUrl = 'https://api.setservice.az';
+  static const _ciBaseUrl = 'https://api.invalid';
+  static const _configuredEnvironment = String.fromEnvironment('APP_ENV');
   static const _configuredBaseUrl = String.fromEnvironment('BASE_URL');
   static const pushNotificationsEnabled = bool.fromEnvironment(
     'ENABLE_PUSH_NOTIFICATIONS',
-    defaultValue: kReleaseMode,
+    defaultValue: false,
   );
 
-  static String get rawBaseUrl {
-    const configured = _configuredBaseUrl;
-    if (configured.trim().isEmpty) return _defaultBaseUrl;
-    return configured.replaceAll(RegExp(r'/+$'), '');
+  static String get rawBaseUrl => normalizeBaseUrl(_configuredBaseUrl);
+
+  @visibleForTesting
+  static String normalizeBaseUrl(String configured) {
+    final normalized = configured.trim();
+    if (normalized.isEmpty) return _defaultBaseUrl;
+    return normalized.replaceAll(RegExp(r'/+$'), '');
   }
 
   static String get apiBaseUrl {
@@ -22,13 +38,62 @@ class AppConfig {
   }
 
   static AppConfigIssue? get configIssue {
-    if (!kReleaseMode) return null;
+    return validateBaseUrl(
+      _configuredBaseUrl,
+      appEnvironment: _configuredEnvironment,
+      releaseMode: kReleaseMode,
+    );
+  }
 
-    final configured = _configuredBaseUrl.trim();
-    if (configured.isEmpty) return AppConfigIssue.missingBaseUrl;
+  @visibleForTesting
+  static AppConfigIssue? validateBaseUrl(
+    String configured, {
+    String appEnvironment = 'production',
+    required bool releaseMode,
+  }) {
+    if (!releaseMode) return null;
 
-    final normalized = configured.replaceAll(RegExp(r'/+$'), '');
+    final environment = appEnvironment.trim().toLowerCase();
+    if (environment.isEmpty) return AppConfigIssue.missingEnvironment;
+    if (environment != 'production' &&
+        environment != 'staging' &&
+        environment != 'ci') {
+      return AppConfigIssue.invalidEnvironment;
+    }
+
+    final value = configured.trim();
+    if (value.isEmpty) return AppConfigIssue.missingBaseUrl;
+
+    final normalized = value.replaceAll(RegExp(r'/+$'), '');
+    final uri = Uri.tryParse(normalized);
+    if (uri == null ||
+        !uri.isAbsolute ||
+        uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return AppConfigIssue.invalidBaseUrl;
+    }
     if (_isLocalBaseUrl(normalized)) return AppConfigIssue.localBaseUrl;
+    if (uri.scheme.toLowerCase() != 'https') {
+      return AppConfigIssue.insecureBaseUrl;
+    }
+
+    final normalizedHost = uri.host.toLowerCase();
+    final normalizedPath = uri.path.replaceAll(RegExp(r'/+$'), '');
+    if (environment == 'production') {
+      if (normalizedHost != Uri.parse(_productionBaseUrl).host ||
+          uri.port != 443 ||
+          (normalizedPath.isNotEmpty && normalizedPath != '/v1')) {
+        return AppConfigIssue.environmentBaseUrlMismatch;
+      }
+    } else if (environment == 'staging') {
+      if (normalizedHost == Uri.parse(_productionBaseUrl).host) {
+        return AppConfigIssue.environmentBaseUrlMismatch;
+      }
+    } else if (normalized != _ciBaseUrl) {
+      return AppConfigIssue.environmentBaseUrlMismatch;
+    }
 
     return null;
   }

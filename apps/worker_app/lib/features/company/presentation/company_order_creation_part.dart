@@ -1,0 +1,1131 @@
+part of 'company_home_shell.dart';
+
+class CompanyCreateOrderScreen extends StatefulWidget {
+  const CompanyCreateOrderScreen({super.key});
+
+  @override
+  State<CompanyCreateOrderScreen> createState() => _CreateOrderScreenState();
+}
+
+class _CreateOrderScreenState extends State<CompanyCreateOrderScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
+  final _title = TextEditingController();
+  final _description = TextEditingController();
+  final _start = TextEditingController();
+  final _end = TextEditingController();
+  final _location = TextEditingController();
+  final List<_CategoryDraft> _categories = [_CategoryDraft()];
+  List<TaxonomyDepartment> _taxonomy = const [];
+  DateTime? _startDateTime;
+  DateTime? _endDateTime;
+  int _stepIndex = 0;
+  int _activeCategoryIndex = 0;
+  bool _loading = false;
+  bool _taxonomyLoading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTaxonomy();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _title.dispose();
+    _description.dispose();
+    _start.dispose();
+    _end.dispose();
+    _location.dispose();
+    for (final category in _categories) {
+      category.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeIndex = _activeCategoryIndex >= _categories.length
+        ? _categories.length - 1
+        : _activeCategoryIndex;
+    final draft = _categories[activeIndex];
+    return Scaffold(
+      appBar: AppBar(title: const Text(AppStrings.createOrder)),
+      body: _CompanyAdaptiveBody(
+        maxWidth: 760,
+        showBackdrop: true,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+        child: Form(
+          key: _formKey,
+          child: LayoutBuilder(
+            builder: (context, _) {
+              final content = <Widget>[
+                if (_error != null) ...[
+                  InlineMessage(
+                    message: _error!,
+                    kind: InlineMessageKind.error,
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                _OrderStepHeader(stepIndex: _stepIndex),
+                const SizedBox(height: 20),
+                Text(
+                  _stepTitle(_stepIndex),
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(_stepHelp(_stepIndex)),
+                const SizedBox(height: 20),
+                if (_taxonomyLoading)
+                  const LinearProgressIndicator()
+                else if (_taxonomy.isEmpty)
+                  OutlinedButton.icon(
+                    onPressed: _loadTaxonomy,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Vəzifələri yenidən yüklə'),
+                  )
+                else
+                  AbsorbPointer(
+                    absorbing: _loading,
+                    child: _stepContent(draft),
+                  ),
+              ];
+              final actions = _OrderStepActions(
+                stepIndex: _stepIndex,
+                loading: _loading,
+                canContinue: !_taxonomyLoading && _canContinue(draft),
+                onContinue: _stepIndex == 6 ? _submit : _continue,
+                onBack: _stepIndex > 0 && !_loading
+                    ? () => _goToStep(_stepIndex - 1)
+                    : null,
+              );
+              // Keep the editable subtree stable while iOS animates keyboard
+              // insets. Replacing this ListView with another ScrollView type
+              // disposes TextFormField's implicit FocusNode and closes the
+              // keyboard immediately after the first tap.
+              return Column(
+                children: [
+                  Expanded(
+                    child: ListView(
+                      key: const ValueKey('company-order-form-scroll'),
+                      controller: _scrollController,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      children: content,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  actions,
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _stepTitle(int step) {
+    return switch (step) {
+      0 => CompanyStrings.department,
+      1 => CompanyStrings.subdepartment,
+      2 => CompanyStrings.position,
+      3 => 'İşçi sayı',
+      4 => 'Tarix və saat',
+      5 => CompanyStrings.workplace,
+      _ => CompanyStrings.orderInformation,
+    };
+  }
+
+  String _stepHelp(int step) => switch (step) {
+    0 => 'İşçilərin çalışacağı xidmət şöbəsini seçin.',
+    1 => 'Seçilmiş şöbə daxilində iş istiqamətini seçin.',
+    2 => 'Sifariş üçün lazım olan vəzifəni seçin.',
+    3 => 'Bu vəzifə üzrə işçi sayını və qeydi daxil edin.',
+    4 => 'İşin başlama və bitmə vaxtını seçin.',
+    5 => 'İşin keçiriləcəyi ünvanı dəqiq qeyd edin.',
+    _ => 'Sifarişin adını, təsvirini və seçdiyiniz məlumatları yoxlayın.',
+  };
+
+  void _continue() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_stepIndex == 4 && !_validateDates()) return;
+    FocusScope.of(context).unfocus();
+    _goToStep(_stepIndex + 1);
+  }
+
+  void _goToStep(int step) {
+    setState(() {
+      _error = null;
+      _stepIndex = step.clamp(0, 6).toInt();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _showError(String message) {
+    setState(() => _error = message);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
+  }
+
+  bool _validateDates() {
+    if (_startDateTime == null || _endDateTime == null) {
+      _showError(AppStrings.dateRequired);
+      return false;
+    }
+    if (_startDateTime!.isBefore(DateTime.now())) {
+      _showError(AppStrings.startDateFuture);
+      return false;
+    }
+    if (!_endDateTime!.isAfter(_startDateTime!)) {
+      _showError(AppStrings.endDateAfterStart);
+      return false;
+    }
+    return true;
+  }
+
+  bool _canContinue(_CategoryDraft draft) {
+    return switch (_stepIndex) {
+      0 => draft.departmentId != null,
+      1 => draft.subdepartmentId != null,
+      2 => draft.positionId != null,
+      3 => draft.count > 0,
+      4 => _startDateTime != null && _endDateTime != null,
+      5 => _location.text.trim().length >= 2,
+      _ => true,
+    };
+  }
+
+  Widget _stepContent(_CategoryDraft draft) {
+    return switch (_stepIndex) {
+      0 => _DepartmentStep(
+        draft: draft,
+        taxonomy: _taxonomy,
+        onChanged: () => setState(() {}),
+      ),
+      1 => _SubdepartmentStep(
+        draft: draft,
+        taxonomy: _taxonomy,
+        onChanged: () => setState(() {}),
+      ),
+      2 => _PositionStep(
+        draft: draft,
+        taxonomy: _taxonomy,
+        onChanged: () => setState(() {}),
+      ),
+      3 => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _QuantitySelector(
+            value: draft.count,
+            onChanged: (value) {
+              draft.count = value;
+              setState(() {});
+            },
+          ),
+          _Field(
+            controller: draft.notes,
+            label: AppStrings.categoryNotes,
+            required: false,
+            hint: 'İstəyə bağlı qısa qeyd əlavə edin.',
+          ),
+        ],
+      ),
+      4 => _ResponsiveOrderFields(
+        children: [
+          _DateTimeField(
+            controller: _start,
+            label: AppStrings.starts,
+            onTap: () => _pickDateTime(isStart: true),
+          ),
+          _DateTimeField(
+            controller: _end,
+            label: AppStrings.ends,
+            onTap: () => _pickDateTime(isStart: false),
+          ),
+        ],
+      ),
+      5 => _Field(
+        controller: _location,
+        label: CompanyStrings.address,
+        hint: CompanyStrings.addressHint,
+        maxLines: 4,
+        min: 2,
+        onChanged: (_) => setState(() => _error = null),
+      ),
+      _ => _OrderSummaryStep(
+        title: _title,
+        description: _description,
+        categories: _categories,
+        taxonomy: _taxonomy,
+        onChanged: () => setState(() => _error = null),
+        onAddCategory: _addCategory,
+        onRemoveCategory: _removeCategory,
+        start: _startDateTime,
+        end: _endDateTime,
+        location: _location.text.trim(),
+      ),
+    };
+  }
+
+  Future<void> _submit() async {
+    if (_loading) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final start = _startDateTime;
+    final end = _endDateTime;
+    if (start == null) {
+      _showError(AppStrings.dateRequired);
+      return;
+    }
+    if (start.isBefore(DateTime.now())) {
+      _showError(AppStrings.startDateFuture);
+      return;
+    }
+    if (end == null) {
+      _showError(AppStrings.dateRequired);
+      return;
+    }
+    if (!end.isAfter(start)) {
+      _showError(AppStrings.endDateAfterStart);
+      return;
+    }
+    final positionIds = <String>{};
+    for (final category in _categories) {
+      if (category.positionId == null) {
+        _showError(CompanyStrings.taxonomyRequired);
+        return;
+      }
+      if (positionIds.contains(category.positionId)) {
+        _showError(AppStrings.duplicateCategory);
+        return;
+      }
+      positionIds.add(category.positionId!);
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final repo = context.read<CompanyRepository>();
+      final navigator = Navigator.of(context);
+      final created = await repo.createOrder(
+        title: _title.text.trim(),
+        description: _description.text.trim(),
+        categoryItems: _categories
+            .map(
+              (category) => CreateOrderCategoryInput(
+                category: category.category.trim(),
+                departmentId: category.departmentId!,
+                subdepartmentId: category.subdepartmentId!,
+                positionId: category.positionId!,
+                requiredCount: category.count,
+                notes: category.notes.text.trim().isEmpty
+                    ? null
+                    : category.notes.text.trim(),
+              ),
+            )
+            .toList(),
+        start: start,
+        end: end,
+        location: _location.text.trim(),
+      );
+      if (mounted) navigator.pop(created);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showError(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showError(AppStrings.actionFailed);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadTaxonomy() async {
+    setState(() {
+      _taxonomyLoading = true;
+      _error = null;
+    });
+    try {
+      final taxonomy = await context.read<TaxonomyRepository>().list();
+      if (!mounted) return;
+      setState(() {
+        _taxonomy = taxonomy;
+        _taxonomyLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Vəzifələr yüklənmədi.';
+        _taxonomyLoading = false;
+      });
+    }
+  }
+
+  void _addCategory() {
+    setState(() {
+      _categories.add(_CategoryDraft());
+      _activeCategoryIndex = _categories.length - 1;
+      _stepIndex = 0;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToTop());
+  }
+
+  void _removeCategory(int index) {
+    if (_categories.length <= 1) return;
+    late final _CategoryDraft removed;
+    setState(() {
+      removed = _categories.removeAt(index);
+      if (_activeCategoryIndex >= _categories.length) {
+        _activeCategoryIndex = _categories.length - 1;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => removed.dispose());
+  }
+
+  Future<void> _pickDateTime({required bool isStart}) async {
+    final now = DateTime.now();
+    final current = isStart ? _startDateTime : _endDateTime;
+    final initial = current ?? now.add(const Duration(hours: 2));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return;
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+    if (!mounted) return;
+    setState(() {
+      if (isStart) {
+        _startDateTime = picked;
+        _start.text = _dateTimeLabel(picked);
+      } else {
+        _endDateTime = picked;
+        _end.text = _dateTimeLabel(picked);
+      }
+      _error = null;
+    });
+  }
+
+  String _dateTimeLabel(DateTime value) {
+    return DateFormat('dd.MM.yyyy, HH:mm').format(value);
+  }
+}
+
+/*
+const _orderCategoryOptions = [
+  'Ofisiant',
+  'Aşpaz köməkçisi',
+  'Barmen',
+  'Hostes',
+  'Otaq təmizləyicisi',
+  'Qabyuyan',
+  'Servis köməkçisi',
+  'Barmen köməkçisi',
+];
+*/
+
+class _CategoryDraft {
+  String category = '';
+  String? departmentId;
+  String? subdepartmentId;
+  String? positionId;
+  int count = 1;
+  final notes = TextEditingController();
+
+  void dispose() {
+    notes.dispose();
+  }
+}
+
+List<TaxonomySubdepartment> _subdepartmentsFor(
+  List<TaxonomyDepartment> departments,
+  String? departmentId,
+) {
+  for (final department in departments) {
+    if (department.id == departmentId) return department.subdepartments;
+  }
+  return const [];
+}
+
+List<TaxonomyPosition> _positionsFor(
+  List<TaxonomyDepartment> departments,
+  String? departmentId,
+  String? subdepartmentId,
+) {
+  for (final subdepartment in _subdepartmentsFor(departments, departmentId)) {
+    if (subdepartment.id == subdepartmentId) return subdepartment.positions;
+  }
+  return const [];
+}
+
+TaxonomyPosition? _findPosition(
+  List<TaxonomyDepartment> departments,
+  String? positionId,
+) {
+  for (final department in departments) {
+    for (final subdepartment in department.subdepartments) {
+      for (final position in subdepartment.positions) {
+        if (position.id == positionId) return position;
+      }
+    }
+  }
+  return null;
+}
+
+TaxonomyDepartment? _findDepartment(
+  List<TaxonomyDepartment> departments,
+  String? departmentId,
+) {
+  for (final department in departments) {
+    if (department.id == departmentId) return department;
+  }
+  return null;
+}
+
+TaxonomySubdepartment? _findSubdepartment(
+  List<TaxonomySubdepartment> subdepartments,
+  String? subdepartmentId,
+) {
+  for (final subdepartment in subdepartments) {
+    if (subdepartment.id == subdepartmentId) return subdepartment;
+  }
+  return null;
+}
+
+Future<T?> _showOrderOptionSheet<T>({
+  required BuildContext context,
+  required String title,
+  required List<T> items,
+  required String Function(T item) label,
+}) {
+  final viewportHeight = MediaQuery.sizeOf(context).height;
+  final listHeight = (viewportHeight * 0.62).clamp(220.0, 520.0).toDouble();
+  return showPremiumBottomSheet<T>(
+    context: context,
+    title: title,
+    child: SizedBox(
+      height: listHeight,
+      child: items.isEmpty
+          ? const InlineMessage(message: 'Seçim tapılmadı.')
+          : ListView.builder(
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return ListTile(
+                  minVerticalPadding: 14,
+                  onTap: () => Navigator.of(context).pop(item),
+                  title: Text(
+                    label(item),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                );
+              },
+            ),
+    ),
+  );
+}
+
+class _OrderStepActions extends StatelessWidget {
+  const _OrderStepActions({
+    required this.stepIndex,
+    required this.loading,
+    required this.canContinue,
+    required this.onContinue,
+    required this.onBack,
+  });
+
+  final int stepIndex;
+  final bool loading;
+  final bool canContinue;
+  final VoidCallback onContinue;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = LoadingButton(
+      label: stepIndex == 6 ? AppStrings.createOrder : 'Davam et',
+      icon: stepIndex == 6 ? Icons.save_outlined : Icons.arrow_forward_outlined,
+      loading: loading,
+      onPressed: canContinue ? onContinue : null,
+    );
+    final back = OutlinedButton.icon(
+      onPressed: onBack,
+      icon: const Icon(Icons.arrow_back_outlined),
+      label: const Text('Geri'),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560 || stepIndex == 0) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              primary,
+              if (stepIndex > 0) ...[const SizedBox(height: 10), back],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: back),
+            const SizedBox(width: 12),
+            Expanded(child: primary),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ResponsiveOrderFields extends StatelessWidget {
+  const _ResponsiveOrderFields({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560) {
+          return Column(children: children);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var index = 0; index < children.length; index++) ...[
+              if (index > 0) const SizedBox(width: 12),
+              Expanded(child: children[index]),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _OrderSelectorTile extends StatelessWidget {
+  const _OrderSelectorTile({
+    required this.label,
+    required this.placeholder,
+    required this.onTap,
+    this.value,
+  });
+
+  final String label;
+  final String placeholder;
+  final VoidCallback? onTap;
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final displayValue = value?.trim() ?? '';
+    return Material(
+      color: BrandColors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: InputDecorator(
+          isEmpty: false,
+          decoration: InputDecoration(
+            labelText: label,
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            enabled: onTap != null,
+            suffixIcon: Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: BrandColors.darkText,
+            ),
+          ),
+          child: Text(
+            displayValue.isEmpty ? placeholder : displayValue,
+            softWrap: true,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: displayValue.isEmpty
+                  ? BrandColors.mutedBrown
+                  : BrandColors.darkText,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderStepHeader extends StatelessWidget {
+  const _OrderStepHeader({required this.stepIndex});
+
+  final int stepIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumCard(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: List.generate(7, (index) {
+          final active = index == stepIndex;
+          return Expanded(
+            child: Container(
+              height: 9,
+              margin: EdgeInsets.only(right: index == 6 ? 0 : 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? BrandColors.primaryBurgundy
+                    : const Color(0xFFD7D4CF),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _DepartmentStep extends StatelessWidget {
+  const _DepartmentStep({
+    required this.draft,
+    required this.taxonomy,
+    required this.onChanged,
+  });
+
+  final _CategoryDraft draft;
+  final List<TaxonomyDepartment> taxonomy;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = _findDepartment(taxonomy, draft.departmentId);
+    return _OrderSelectorTile(
+      label: CompanyStrings.department,
+      value: selected?.nameAz,
+      placeholder: taxonomy.isEmpty ? 'Şöbə tapılmadı' : 'Şöbə seçin',
+      onTap: taxonomy.isEmpty
+          ? null
+          : () async {
+              final value = await _showOrderOptionSheet<TaxonomyDepartment>(
+                context: context,
+                title: 'Şöbə seçin',
+                items: taxonomy,
+                label: (item) => item.nameAz,
+              );
+              if (value == null) return;
+              draft.departmentId = value.id;
+              draft.subdepartmentId = null;
+              draft.positionId = null;
+              draft.category = '';
+              onChanged();
+            },
+    );
+  }
+}
+
+class _SubdepartmentStep extends StatelessWidget {
+  const _SubdepartmentStep({
+    required this.draft,
+    required this.taxonomy,
+    required this.onChanged,
+  });
+
+  final _CategoryDraft draft;
+  final List<TaxonomyDepartment> taxonomy;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _subdepartmentsFor(taxonomy, draft.departmentId);
+    final selected = _findSubdepartment(items, draft.subdepartmentId);
+    return _OrderSelectorTile(
+      label: CompanyStrings.subdepartment,
+      value: selected?.nameAz,
+      placeholder: draft.departmentId == null
+          ? 'Əvvəlcə şöbə seçin'
+          : CompanyStrings.chooseSubdepartment,
+      onTap: draft.departmentId == null
+          ? null
+          : () async {
+              final value = await _showOrderOptionSheet<TaxonomySubdepartment>(
+                context: context,
+                title: CompanyStrings.chooseSubdepartment,
+                items: items,
+                label: (item) => item.nameAz,
+              );
+              if (value == null) return;
+              draft.subdepartmentId = value.id;
+              draft.positionId = null;
+              draft.category = '';
+              onChanged();
+            },
+    );
+  }
+}
+
+class _PositionStep extends StatelessWidget {
+  const _PositionStep({
+    required this.draft,
+    required this.taxonomy,
+    required this.onChanged,
+  });
+
+  final _CategoryDraft draft;
+  final List<TaxonomyDepartment> taxonomy;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _positionsFor(
+      taxonomy,
+      draft.departmentId,
+      draft.subdepartmentId,
+    );
+    final selected = _findPosition(taxonomy, draft.positionId);
+    return _OrderSelectorTile(
+      label: 'Vəzifə',
+      value: selected?.nameAz,
+      placeholder: draft.subdepartmentId == null
+          ? 'Əvvəlcə alt şöbə seçin'
+          : CompanyStrings.choosePosition,
+      onTap: draft.subdepartmentId == null
+          ? null
+          : () async {
+              final value = await _showOrderOptionSheet<TaxonomyPosition>(
+                context: context,
+                title: 'Vəzifə seçin',
+                items: items,
+                label: (item) => item.nameAz,
+              );
+              if (value == null) return;
+              draft.positionId = value.id;
+              draft.category = value.nameAz;
+              onChanged();
+            },
+    );
+  }
+}
+
+class _OrderSummaryStep extends StatelessWidget {
+  const _OrderSummaryStep({
+    required this.title,
+    required this.description,
+    required this.categories,
+    required this.taxonomy,
+    required this.onChanged,
+    required this.onAddCategory,
+    required this.onRemoveCategory,
+    required this.start,
+    required this.end,
+    required this.location,
+  });
+
+  final TextEditingController title;
+  final TextEditingController description;
+  final List<_CategoryDraft> categories;
+  final List<TaxonomyDepartment> taxonomy;
+  final VoidCallback onChanged;
+  final VoidCallback onAddCategory;
+  final ValueChanged<int> onRemoveCategory;
+  final DateTime? start;
+  final DateTime? end;
+  final String location;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Field(
+          controller: title,
+          label: AppStrings.orderTitle,
+          hint: 'Məsələn, banket xidməti üçün heyət',
+          min: 3,
+          onChanged: (_) => onChanged(),
+        ),
+        _Field(
+          controller: description,
+          label: AppStrings.description,
+          hint: 'İşin tələblərini və vacib detalları qeyd edin.',
+          min: 10,
+          maxLines: 3,
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 6),
+        ...categories.asMap().entries.map((entry) {
+          final draft = entry.value;
+          final position = _findPosition(taxonomy, draft.positionId);
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.room_service_outlined),
+            title: Text(position?.nameAz ?? draft.category),
+            subtitle: Text('${AppStrings.requiredWorkers}: ${draft.count}'),
+            trailing: categories.length > 1
+                ? IconButton(
+                    onPressed: () => onRemoveCategory(entry.key),
+                    icon: const Icon(Icons.close),
+                  )
+                : null,
+          );
+        }),
+        const SizedBox(height: 8),
+        _CompanyDetailField(
+          label: AppStrings.starts,
+          value: _companyDateTime(start),
+        ),
+        _CompanyDetailField(
+          label: AppStrings.ends,
+          value: _companyDateTime(end),
+        ),
+        _CompanyDetailField(label: CompanyStrings.address, value: location),
+        OutlinedButton.icon(
+          onPressed: onAddCategory,
+          icon: const Icon(Icons.add),
+          label: const Text(AppStrings.addCategory),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuantitySelector extends StatelessWidget {
+  const _QuantitySelector({required this.value, required this.onChanged});
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final controls = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton.filledTonal(
+                tooltip: 'İşçi sayını azalt',
+                onPressed: value > 1 ? () => onChanged(value - 1) : null,
+                icon: const Icon(Icons.remove),
+              ),
+              SizedBox(
+                width: 56,
+                child: Center(
+                  child: Semantics(
+                    label: 'Tələb olunan işçi sayı: $value',
+                    liveRegion: true,
+                    child: Text(
+                      '$value',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ),
+              ),
+              IconButton.filledTonal(
+                tooltip: 'İşçi sayını artır',
+                onPressed: value < 500 ? () => onChanged(value + 1) : null,
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          );
+          final label = Text(
+            AppStrings.requiredWorkers,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+          );
+          if (constraints.maxWidth < 420) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label,
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: controls),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: label),
+              const SizedBox(width: 12),
+              controls,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Field extends StatelessWidget {
+  const _Field({
+    required this.controller,
+    required this.label,
+    this.min = 1,
+    this.required = true,
+    this.maxLines = 1,
+    this.hint,
+    this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final int min;
+  final bool required;
+  final int maxLines;
+  final String? hint;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: controller,
+        maxLines: maxLines,
+        textCapitalization: TextCapitalization.sentences,
+        textInputAction: maxLines == 1
+            ? TextInputAction.next
+            : TextInputAction.newline,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          hintMaxLines: maxLines > 1 ? 2 : 3,
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          alignLabelWithHint: true,
+          errorMaxLines: 3,
+        ),
+        validator: (value) {
+          final text = value?.trim() ?? '';
+          if (!required && text.isEmpty) return null;
+          if (text.isEmpty) return AppStrings.requiredField;
+          if (text.length < min) return 'Ən azı $min simvol daxil edin.';
+          return null;
+        },
+      ),
+    );
+  }
+}
+
+class _DateTimeField extends StatelessWidget {
+  const _DateTimeField({
+    required this.controller,
+    required this.label,
+    required this.onTap,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextFormField(
+        controller: controller,
+        readOnly: true,
+        onTap: onTap,
+        decoration: InputDecoration(
+          labelText: label,
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          errorMaxLines: 3,
+          hintText: 'Tarix və saat seçin',
+          prefixIcon: const Icon(Icons.event_available_outlined),
+          suffixIcon: const Icon(Icons.expand_more),
+        ),
+        validator: (value) {
+          final text = value?.trim() ?? '';
+          if (text.isEmpty) {
+            return AppStrings.dateRequired;
+          }
+          return null;
+        },
+      ),
+    );
+  }
+}
+
+class _OrderCard extends StatelessWidget {
+  const _OrderCard({required this.order, this.onTap});
+
+  final MobileOrder order;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Premium3DCard(
+      onTap: onTap,
+      padding: const EdgeInsets.fromLTRB(22, 22, 18, 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 170),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            StatusPill(status: order.status),
+            const SizedBox(height: 12),
+            Text(
+              order.title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 18),
+            Text(
+              _orderCategorySummary(order),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '${AppStrings.requiredWorkers}: ${order.assignmentCount}/${order.requiredCount}',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (order.location.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                order.location,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(color: BrandColors.mutedBrown),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _orderCategorySummary(MobileOrder order) {
+  if (order.categoryItems.isEmpty) {
+    return '${order.category} (${order.requiredCount})';
+  }
+  return order.categoryItems
+      .map(
+        (item) =>
+            '${item.category} (${item.assignedCount}/${item.requiredCount})',
+      )
+      .join(', ');
+}

@@ -12,7 +12,7 @@ import { useAsync } from '../../shared/hooks/useAsync';
 import { adminsService } from './admins.service';
 
 const permissionLabels: Record<AdminPermission, string> = {
-  view_dashboard: 'Dashboard baxışı',
+  view_dashboard: 'İdarə panelinə baxış',
   view_workers: 'İşçilərə baxış',
   manage_workers: 'İşçiləri idarə et',
   view_companies: 'Müəssisələrə baxış',
@@ -22,13 +22,15 @@ const permissionLabels: Record<AdminPermission, string> = {
   manage_assignments: 'Təyinatları idarə et',
   view_attendance: 'Davamiyyətə baxış',
   view_reports: 'Hesabatlara baxış',
+  view_moderation: 'Şikayətlərə baxış',
+  manage_moderation: 'Şikayətləri idarə et',
   manage_kiosks: 'QR kioskları idarə et',
   view_notifications: 'Bildirişlərə baxış',
   manage_admins: 'Adminləri idarə et',
 };
 
 const permissionGroups: Array<{ title: string; permissions: AdminPermission[] }> = [
-  { title: 'İcmal', permissions: ['view_dashboard', 'view_reports', 'view_notifications'] },
+  { title: 'İcmal', permissions: ['view_dashboard', 'view_reports', 'view_notifications', 'view_moderation', 'manage_moderation'] },
   { title: 'İşçi və müəssisələr', permissions: ['view_workers', 'manage_workers', 'view_companies', 'manage_companies'] },
   { title: 'Sifariş əməliyyatları', permissions: ['view_orders', 'view_assignments', 'manage_assignments', 'view_attendance'] },
   { title: 'Sistem', permissions: ['manage_kiosks', 'manage_admins'] },
@@ -118,7 +120,7 @@ export function AdminsPage() {
       await admins.reload();
       startCreate();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Admin yadda saxlanılmadı.');
+      setError(submitError instanceof Error ? submitError.message : 'Admin məlumatları yadda saxlanılmadı.');
     } finally {
       setSaving(false);
     }
@@ -128,7 +130,7 @@ export function AdminsPage() {
     <>
       <PageHeader
         title="Adminlər"
-        description="Super Admin burada məhdud admin hesabları yaradır və icazələri təyin edir."
+        description="Super admin burada məhdud admin hesabları yaradır və icazələri təyin edir."
         actions={(
           <button className="btn primary" type="button" onClick={startCreate}>
             <Plus size={16} />
@@ -142,7 +144,7 @@ export function AdminsPage() {
           <div className="panel-heading">
             <div>
               <h2>Admin siyahısı</h2>
-              <p>Məhdud adminlər yalnız verilən icazələr üzrə bölmələri görür.</p>
+              <p>Məhdud adminlər yalnız verilmiş icazələrə uyğun bölmələri görə bilərlər.</p>
             </div>
           </div>
 
@@ -153,7 +155,7 @@ export function AdminsPage() {
               <EmptyState message="Hələ admin yaradılmayıb." />
             ) : (
               <div className="table-wrap">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>Ad</th>
@@ -166,18 +168,18 @@ export function AdminsPage() {
                   <tbody>
                     {admins.data.data.map((admin) => (
                       <tr key={admin.id}>
-                        <td>
+                        <td data-label="Ad">
                           <strong>{admin.name}</strong>
-                          <span className="table-subtext">Admin Panel</span>
+                          <span className="table-subtext">Admin paneli</span>
                         </td>
-                        <td>{admin.email}</td>
-                        <td>
+                        <td data-label="E-poçt">{admin.email}</td>
+                        <td data-label="Status">
                           <span className={`badge ${admin.is_active ? 'status-approved' : 'status-inactive'}`}>
                             {admin.is_active ? 'Aktiv' : 'Deaktiv'}
                           </span>
                         </td>
-                        <td>{admin.permissions.length}</td>
-                        <td>
+                        <td data-label="İcazə sayı">{admin.permissions.length}</td>
+                        <td className="mobile-card-action">
                           <button className="link-btn" type="button" onClick={() => startEdit(admin)}>
                             Redaktə et
                           </button>

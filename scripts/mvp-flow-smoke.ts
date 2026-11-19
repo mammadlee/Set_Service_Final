@@ -1,4 +1,5 @@
 const { randomBytes } = require('node:crypto');
+const { PDFDocument } = require('pdf-lib') as typeof import('pdf-lib');
 
 type Json = Record<string, any>;
 
@@ -30,7 +31,7 @@ const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL ?? process.env.SEED_ADMIN_EMAI
 const ADMIN_PASSWORD = requiredSmokePassword('SMOKE_ADMIN_PASSWORD', 'SEED_ADMIN_PASSWORD');
 const REPORTS_ADMIN_EMAIL = process.env.SMOKE_REPORTS_ADMIN_EMAIL ?? process.env.SEED_REPORTS_ADMIN_EMAIL ?? 'reports@setservice.az';
 const RESTRICTED_ADMIN_PASSWORD = process.env.SMOKE_RESTRICTED_ADMIN_PASSWORD ?? process.env.SEED_RESTRICTED_ADMIN_PASSWORD ?? ADMIN_PASSWORD;
-const COMPANY_EMAIL = process.env.SMOKE_COMPANY_EMAIL ?? process.env.SEED_COMPANY_EMAIL ?? 'company@setservice.az';
+const COMPANY_EMAIL = process.env.SMOKE_COMPANY_EMAIL ?? 'company@setservice.az';
 const COMPANY_PASSWORD = requiredSmokePassword('SMOKE_COMPANY_PASSWORD', 'SEED_COMPANY_PASSWORD');
 const WORKER_PASSWORD = process.env.SMOKE_WORKER_PASSWORD ?? randomSmokePassword();
 const AUDIT_ADMIN_PASSWORD = process.env.SMOKE_AUDIT_ADMIN_PASSWORD ?? randomSmokePassword();
@@ -104,9 +105,11 @@ async function requestUrl(
   path: string,
   body?: Json,
   token?: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<HttpResult> {
   const headers: Record<string, string> = {
     accept: 'application/json',
+    ...extraHeaders,
   };
 
   if (body !== undefined) {
@@ -171,6 +174,18 @@ function get(path: string, token?: string) {
 
 function post(path: string, body?: Json, token?: string) {
   return requestUrl('POST', path, body, token);
+}
+
+function getWithKioskCapability(path: string, capability: string) {
+  return requestUrl('GET', path, undefined, undefined, {
+    'x-kiosk-capability': capability,
+  });
+}
+
+function postWithKioskCapability(path: string, capability: string) {
+  return requestUrl('POST', path, undefined, undefined, {
+    'x-kiosk-capability': capability,
+  });
 }
 
 function postAuthFlow(path: string, body?: Json, token?: string) {
@@ -425,19 +440,20 @@ function firstIdFrom(collection: any[], label: string): string {
 
 function makeProfileImageForm(): FormData {
   const form = new FormData();
-  const png = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde,
-  ]);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
 
   form.append('file', new Blob([png], { type: 'image/png' }), `set-service-profil-${RUN_ID}.png`);
   return form;
 }
 
-function makeDocumentForm(type: string): FormData {
+async function makeDocumentForm(type: string): Promise<FormData> {
   const form = new FormData();
-  const pdf = Buffer.from('%PDF-1.4\n% SET Service worker document\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  const pdf = Buffer.from(await document.save({ useObjectStreams: false }));
 
   form.append('type', type);
   form.append('file', new Blob([pdf], { type: 'application/pdf' }), `set-service-sened-${RUN_ID}.pdf`);
@@ -553,21 +569,29 @@ async function findExistingApprovedWorker(
 async function main() {
   console.log(`SET Service full-system verification flow`);
   console.log(`BASE_URL=${BASE_URL}`);
-  console.log(`TEST_OTP=${TEST_OTP}`);
+  console.log(`TEST_OTP_CONFIGURED=${TEST_OTP.length > 0}`);
   console.log(`RUN_ID=${RUN_ID}\n`);
 
   const workerPhone = createPhone(1);
   const capacityWorkerPhone = createPhone(2);
+  const approvalCompanyPhone = createPhone(3);
+  const bruteForceWorkerPhone = createPhone(4);
+  const approvalCompanyEmail = `approval-${RUN_ID}@setservice.az`;
   const workerName = 'Elvin Məmmədov';
   const capacityWorkerName = 'Murad Əliyev';
 
   let workerId!: string;
+  let workerOtpChallenge!: string;
+  let approvalCompanyId!: string;
+  let approvalCompanyEnrollmentToken!: string;
+  let approvalCompanyOtpChallenge!: string;
   let capacityWorkerId!: string;
   let adminTokens!: Tokens;
   let workerTokens!: Tokens;
   let companyTokens!: Tokens;
   let companyId!: string;
   let orderId!: string;
+  let orderStartAt!: Date;
   let assignmentId!: string;
   let attendanceId!: string;
   let venueKioskId!: string;
@@ -604,10 +628,32 @@ async function main() {
     workerId = expectString(unwrapData(json)?.worker_id ?? unwrapData(json)?.id ?? json?.worker_id ?? json?.id, 'worker id');
   });
 
+  await step('Worker OTP verification alone does not make the account approvable', async () => {
+    const verify = await postAuthFlow('/auth/verify-otp', {
+      phone: workerPhone,
+      otp_code: TEST_OTP,
+      purpose: 'worker_registration',
+    });
+    expectStatus(verify.response, verify.json, 200);
+    const payload = expectObject(unwrapData(verify.json), 'worker OTP verification');
+    expectEqual(payload.status, 'pending_otp', 'worker status before password creation');
+    workerOtpChallenge = expectString(payload.otp_challenge, 'worker OTP challenge');
+
+    adminTokens = await loginAdminWithPassword();
+    const approval = await patch(`/admin/workers/${workerId}/approve`, {}, adminTokens.accessToken);
+    expectStatus(approval.response, approval.json, 409);
+    expectErrorCode(approval.json, 'WORKER_APPROVAL_NOT_PENDING');
+    expectEqual(
+      approval.json?.details?.status,
+      'pending_otp',
+      'worker status rejected by admin approval',
+    );
+  });
+
   await step('Worker registration OTP verify and password creation', async () => {
     const { response, json } = await postAuthFlow('/auth/worker/complete-registration', {
       phone: workerPhone,
-      otp_code: TEST_OTP,
+      otp_challenge: workerOtpChallenge,
       password: WORKER_PASSWORD,
     });
 
@@ -620,10 +666,6 @@ async function main() {
     const login = await postAuthFlow('/auth/worker/login', { phone: workerPhone, password: WORKER_PASSWORD });
     expectStatus(login.response, login.json, 403);
     expectErrorCode(login.json, 'WORKER_NOT_APPROVED');
-  });
-
-  await step('Admin login with email and password', async () => {
-    adminTokens = await loginAdminWithPassword();
   });
 
   await step('Super admin can create restricted admin and permissions are enforced', async () => {
@@ -662,7 +704,7 @@ async function main() {
 
     const staleTokenDenied = await get('/assignments', restrictedTokens.accessToken);
     expectStatus(staleTokenDenied.response, staleTokenDenied.json, 403);
-    expectErrorCode(staleTokenDenied.json, 'ADMIN_ACCOUNT_INACTIVE');
+    expectErrorCode(staleTokenDenied.json, 'ACCOUNT_INACTIVE');
   });
 
   await step('Seeded reports admin can access reports but not attendance', async () => {
@@ -686,6 +728,120 @@ async function main() {
     workerTokens = await loginWorkerWithPassword(workerPhone);
   });
 
+  await step('Access and refresh tokens are not interchangeable', async () => {
+    const refreshAsAccess = await get('/workers/me', workerTokens.refreshToken);
+    expectStatus(refreshAsAccess.response, refreshAsAccess.json, 401);
+
+    const accessAsRefresh = await postAuthFlow('/auth/refresh', { refresh_token: workerTokens.accessToken });
+    expectStatus(accessAsRefresh.response, accessAsRefresh.json, 401);
+    expectErrorCode(accessAsRefresh.json, 'INVALID_REFRESH_TOKEN');
+  });
+
+  await step('Refresh token rotation rejects reuse', async () => {
+    const previousRefreshToken = workerTokens.refreshToken;
+    const rotated = await postAuthFlow('/auth/refresh', { refresh_token: previousRefreshToken });
+    expectStatus(rotated.response, rotated.json, 200);
+    workerTokens = parseTokens(rotated.json, 'rotated worker session');
+
+    const reused = await postAuthFlow('/auth/refresh', { refresh_token: previousRefreshToken });
+    expectStatus(reused.response, reused.json, 401);
+    expectErrorCode(reused.json, 'REFRESH_TOKEN_REUSE');
+
+    const familyRevoked = await postAuthFlow('/auth/refresh', { refresh_token: workerTokens.refreshToken });
+    expectStatus(familyRevoked.response, familyRevoked.json, 401);
+    expectErrorCode(familyRevoked.json, 'INVALID_REFRESH_TOKEN');
+
+    const me = await get('/workers/me', workerTokens.accessToken);
+    expectStatus(me.response, me.json, 200);
+  });
+
+  await step('Incomplete company phone OTP flow creates no company account', async () => {
+    const registration = await postAuthFlow('/auth/company/register', {
+      name: `Approval Test Company ${RUN_ID}`,
+      contact_name: 'Approval Test Contact',
+      email: approvalCompanyEmail,
+      phone: approvalCompanyPhone,
+    });
+    expectStatus(registration.response, registration.json, 201);
+    approvalCompanyEnrollmentToken = expectString(
+      unwrapData(registration.json)?.enrollment_token ?? registration.json?.enrollment_token,
+      'approval test company enrollment token',
+    );
+    expectEqual(
+      unwrapData(registration.json)?.company_id ?? registration.json?.company_id,
+      undefined,
+      'incomplete registration company id',
+    );
+
+    const verify = await postAuthFlow('/auth/verify-otp', {
+      phone: approvalCompanyPhone,
+      otp_code: TEST_OTP,
+      purpose: 'company_registration',
+    });
+    expectStatus(verify.response, verify.json, 200);
+    const payload = expectObject(unwrapData(verify.json), 'company OTP verification');
+    approvalCompanyOtpChallenge = expectString(payload.otp_challenge, 'company OTP challenge');
+
+    const companies = await get(
+      `/admin/companies?status=pending_approval&search=${encodeURIComponent(approvalCompanyPhone)}`,
+      adminTokens.accessToken,
+    );
+    expectStatus(companies.response, companies.json, 200);
+    expectEqual(
+      (unwrapData(companies.json)?.data ?? companies.json?.data ?? []).length,
+      0,
+      'incomplete phone OTP company list result',
+    );
+  });
+
+  await step('Phone verification and password atomically finalize pending company', async () => {
+    const completion = await postAuthFlow('/auth/company/complete-registration', {
+      enrollment_token: approvalCompanyEnrollmentToken,
+      otp_challenge: approvalCompanyOtpChallenge,
+      password: WORKER_PASSWORD,
+    });
+    expectStatus(completion.response, completion.json, 201);
+    approvalCompanyId = expectString(
+      unwrapData(completion.json)?.company_id ?? completion.json?.company_id,
+      'approval test company id',
+    );
+    expectEqual(
+      unwrapData(completion.json)?.status ?? completion.json?.status,
+      'pending_approval',
+      'finalized company status',
+    );
+
+    const companies = await get(
+      `/admin/companies?status=pending_approval&search=${encodeURIComponent(approvalCompanyPhone)}`,
+      adminTokens.accessToken,
+    );
+    expectStatus(companies.response, companies.json, 200);
+    expectEqual(
+      (unwrapData(companies.json)?.data ?? companies.json?.data ?? []).length,
+      1,
+      'finalized company list result',
+    );
+  });
+
+  await step('Pending company is blocked until admin approval', async () => {
+    const pendingLogin = await postAuthFlow('/auth/company/login', {
+      email: approvalCompanyEmail,
+      password: WORKER_PASSWORD,
+    });
+    expectStatus(pendingLogin.response, pendingLogin.json, 403);
+    expectErrorCode(pendingLogin.json, 'PENDING_APPROVAL');
+
+    const approval = await patch(`/admin/companies/${approvalCompanyId}/approve`, {}, adminTokens.accessToken);
+    expectStatus(approval.response, approval.json, 200);
+
+    const login = await postAuthFlow('/auth/company/login', {
+      email: approvalCompanyEmail,
+      password: WORKER_PASSWORD,
+    });
+    expectStatus(login.response, login.json, 200);
+    parseTokens(login.json, 'approval test company login');
+  });
+
   await step('Company login with email and password', async () => {
     companyTokens = await loginCompanyWithPassword();
     const me = await get('/companies/me', companyTokens.accessToken);
@@ -694,7 +850,8 @@ async function main() {
   });
 
   await step('Company creates single-category order', async () => {
-    const dates = futureWindow(24, 8);
+    const dates = futureWindow(10 / 3600, 8);
+    orderStartAt = new Date(dates.start_date);
     const { response, json } = await post(
       '/orders',
       {
@@ -742,6 +899,9 @@ async function main() {
   let qrToken!: string;
 
   await step('Company generates attendance QR token with display context', async () => {
+    const waitForShiftMs = Math.max(0, orderStartAt.getTime() - Date.now() + 100);
+    if (waitForShiftMs > 0) await sleep(waitForShiftMs);
+
     const { response, json } = await post(
       '/attendance/qr-token',
       {
@@ -783,20 +943,29 @@ async function main() {
     expectEqual(kiosk.refresh_interval_seconds, 30, 'kiosk refresh interval');
   });
 
-  await step('Inactive venue kiosk waits until admin/company activation', async () => {
-    const context = await get(`/attendance/venue-kiosks/${venueKioskToken}`);
+  await step('Venue kiosk automatically selects the only current shift', async () => {
+    const context = await getWithKioskCapability(
+      '/attendance/venue-kiosks/context',
+      venueKioskToken,
+    );
     expectStatus(context.response, context.json, 200);
     const kioskContext = expectObject(unwrapData(context.json), 'public kiosk context');
     expectEqual(kioskContext.company_id, companyId, 'public kiosk company id');
-    expectEqual(kioskContext.active_session ?? null, null, 'public kiosk active session');
+    expectEqual(kioskContext.active_session?.order_id, orderId, 'automatically selected kiosk order id');
     expectNoKey(kioskContext, 'kiosk_token', 'public kiosk context');
+    expectNoKey(kioskContext, 'kiosk_url', 'public kiosk context');
 
-    const qrBeforeActivation = await post(`/attendance/venue-kiosks/${venueKioskToken}/qr-token`);
-    expectStatus(qrBeforeActivation.response, qrBeforeActivation.json, 409);
-    expectErrorCode(qrBeforeActivation.json, 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+    const automaticQr = await postWithKioskCapability(
+      '/attendance/venue-kiosks/qr-token',
+      venueKioskToken,
+    );
+    expectStatus(automaticQr.response, automaticQr.json, 200);
+    const qr = expectObject(unwrapData(automaticQr.json), 'automatically selected kiosk QR token');
+    expectEqual(qr.order_id, orderId, 'automatic kiosk QR order id');
+    expectString(qr.token, 'automatic kiosk QR token');
   });
 
-  await step('Company activates order on persistent venue kiosk', async () => {
+  await step('Company can explicitly keep the order active on persistent venue kiosk', async () => {
     const activate = await post(
       `/attendance/venue-kiosks/${venueKioskId}/activate`,
       { order_id: orderId },
@@ -808,13 +977,20 @@ async function main() {
   });
 
   await step('Public venue kiosk context and 30-second QR generation work', async () => {
-    const context = await get(`/attendance/venue-kiosks/${venueKioskToken}`);
+    const context = await getWithKioskCapability(
+      '/attendance/venue-kiosks/context',
+      venueKioskToken,
+    );
     expectStatus(context.response, context.json, 200);
     const kioskContext = expectObject(unwrapData(context.json), 'public venue kiosk context');
     expectEqual(kioskContext.active_session?.order_id, orderId, 'public active kiosk order id');
     expectNoKey(kioskContext, 'kiosk_token', 'public venue kiosk context');
+    expectNoKey(kioskContext, 'kiosk_url', 'public venue kiosk context');
 
-    const qrResponse = await post(`/attendance/venue-kiosks/${venueKioskToken}/qr-token`);
+    const qrResponse = await postWithKioskCapability(
+      '/attendance/venue-kiosks/qr-token',
+      venueKioskToken,
+    );
     expectStatus(qrResponse.response, qrResponse.json, 200);
     const kioskQr = expectObject(unwrapData(qrResponse.json), 'public kiosk QR token');
     qrToken = expectString(kioskQr.token, 'public kiosk attendance QR token');
@@ -869,7 +1045,7 @@ async function main() {
     expectString(attendance.checkout_time, 'attendance checkout_time');
   });
 
-  await step('Re-check-in after checkout returns expected 409', async () => {
+  await step('Re-check-in after checkout is rejected for the completed assignment', async () => {
     const { response, json } = await post(
       '/attendance/check-in',
       {
@@ -878,8 +1054,8 @@ async function main() {
       workerTokens.accessToken,
     );
 
-    expectStatus(response, json, 409);
-    expectErrorCode(json, 'ATTENDANCE_ALREADY_COMPLETED');
+    expectStatus(response, json, 404);
+    expectErrorCode(json, 'KIOSK_ASSIGNMENT_NOT_FOUND');
   });
 
   await step('Worker/company/admin attendance list visibility checks', async () => {
@@ -931,7 +1107,7 @@ async function main() {
 
     const document = await requestMultipart(
       '/workers/me/documents',
-      makeDocumentForm('health_certificate'),
+      await makeDocumentForm('health_certificate'),
       workerTokens.accessToken,
     );
     expectStatus(document.response, document.json, 201);
@@ -958,11 +1134,11 @@ async function main() {
   });
 
   await step('Worker changes phone with OTP verification', async () => {
-    const newPhone = createPhone(4);
+    const newPhone = createPhone(5);
 
     const request = await post(
-      '/auth/worker/phone-change/request',
-      { phone: newPhone },
+      '/auth/worker/phone-change/v2/request',
+      { phone: newPhone, current_password: WORKER_PASSWORD },
       workerTokens.accessToken,
     );
     expectStatus(request.response, request.json, 200);
@@ -1097,10 +1273,17 @@ async function main() {
     const categoryItems = expectArray(order.category_items, 'multi-category order.category_items');
     expectEqual(categoryItems.length, 2, 'multi-category item count');
     expectEqual(order.required_count, 2, 'multi-category required_count sum');
-    firstCategoryItemId = expectString(categoryItems[0].id, 'first category item id');
-    firstCategoryName = expectString(categoryItems[0].category, 'first category name');
-    expectEqual(categoryItems[0].position_id, waiterPosition.id, 'first category item position id');
-    expectEqual(categoryItems[1].position_id, bartenderPosition.id, 'second category item position id');
+    const waiterItem = expectObject(
+      categoryItems.find((item) => item?.position_id === waiterPosition.id),
+      'waiter category item',
+    );
+    const bartenderItem = expectObject(
+      categoryItems.find((item) => item?.position_id === bartenderPosition.id),
+      'bartender category item',
+    );
+    firstCategoryItemId = expectString(waiterItem.id, 'waiter category item id');
+    firstCategoryName = expectString(waiterItem.category, 'waiter category name');
+    expectEqual(bartenderItem.position_id, bartenderPosition.id, 'bartender category item position id');
   });
 
   await step('Super admin assigns worker to selected category item', async () => {
@@ -1224,9 +1407,44 @@ async function main() {
     );
     expectStatus(deactivate.response, deactivate.json, 200);
 
-    const qrAfterDeactivate = await post(`/attendance/venue-kiosks/${venueKioskToken}/qr-token`);
+    const qrAfterDeactivate = await postWithKioskCapability(
+      '/attendance/venue-kiosks/qr-token',
+      venueKioskToken,
+    );
     expectStatus(qrAfterDeactivate.response, qrAfterDeactivate.json, 409);
     expectErrorCode(qrAfterDeactivate.json, 'KIOSK_WAITING_FOR_ACTIVE_ORDER');
+  });
+
+  await step('Parallel invalid OTP attempts atomically block further verification', async () => {
+    const registration = await postAuthFlow('/auth/worker/register', {
+      full_name: `OTP Atomicity ${RUN_ID}`,
+      phone: bruteForceWorkerPhone,
+      position: 'Ofisiant',
+      position_ids: [waiterPosition.id],
+      skills: ['Servis'],
+      languages: ['Azərbaycan'],
+    });
+    expectStatus(registration.response, registration.json, 201);
+
+    const wrongOtp = TEST_OTP === '000000' ? '999999' : '000000';
+    const attempts = await Promise.all(
+      Array.from({ length: 8 }, () => post('/auth/verify-otp', {
+        phone: bruteForceWorkerPhone,
+        otp_code: wrongOtp,
+        purpose: 'worker_registration',
+      })),
+    );
+    for (const attempt of attempts) {
+      expectStatus(attempt.response, attempt.json, [401, 429]);
+    }
+
+    const correctAfterBlock = await post('/auth/verify-otp', {
+      phone: bruteForceWorkerPhone,
+      otp_code: TEST_OTP,
+      purpose: 'worker_registration',
+    });
+    expectStatus(correctAfterBlock.response, correctAfterBlock.json, 429);
+    expectErrorCode(correctAfterBlock.json, 'OTP_BLOCKED');
   });
 
   if (failures > 0) {

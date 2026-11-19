@@ -142,7 +142,7 @@ export function TaxonomyPage() {
     event.preventDefault();
     const payload = cleanForm(departmentForm);
     if (!payload.name_az) {
-      setError('Azərbaycan adı boş ola bilməz.');
+      setError('Azərbaycan dilində ad boş ola bilməz.');
       return;
     }
     await save(async () => {
@@ -159,7 +159,7 @@ export function TaxonomyPage() {
     event.preventDefault();
     const payload = cleanForm(subdepartmentForm);
     if (!payload.department_id || !payload.name_az) {
-      setError('Şöbə və Azərbaycan adı mütləq seçilməlidir.');
+      setError('Şöbə və Azərbaycan dilində ad mütləq seçilməlidir.');
       return;
     }
     await save(async () => {
@@ -176,7 +176,7 @@ export function TaxonomyPage() {
     event.preventDefault();
     const payload = cleanForm(positionForm);
     if (!payload.subdepartment_id || !payload.name_az) {
-      setError('Departament və Azərbaycan adı mütləq seçilməlidir.');
+      setError('Departament və Azərbaycan dilində ad mütləq seçilməlidir.');
       return;
     }
     await save(async () => {
@@ -210,7 +210,7 @@ export function TaxonomyPage() {
   return (
     <>
       <PageHeader
-        title="Vəzifə Strukturu"
+        title="Vəzifə strukturu"
         description="Şöbə, departament və vəzifələrin idarə olunması"
       />
 
@@ -218,7 +218,7 @@ export function TaxonomyPage() {
         <div className="panel-heading">
           <div>
             <h2>Struktur idarəetməsi</h2>
-            <p>Aktiv vəzifələr işçi profili, şirkət sifarişi və hesabat filterlərində Azərbaycan adı ilə görünür.</p>
+            <p>Aktiv vəzifələr işçi profilində, müəssisə sifarişində və hesabat filtrlərində Azərbaycan dilindəki adı ilə görünür.</p>
           </div>
           <Layers3 size={20} />
         </div>
@@ -375,19 +375,19 @@ function DepartmentTab({
   return (
     <>
       <TaxonomyFormShell title={form.id ? 'Şöbəni redaktə et' : 'Yeni şöbə'} onSubmit={onSubmit}>
-        <TextField label="Azərbaycan adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
-        <TextField label="İngilis adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
+        <TextField label="Azərbaycan dilində adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
+        <TextField label="İngilis dilində adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
         <StatusSelect value={form.status} onChange={(status) => onFormChange({ ...form, status })} />
         <FormActions editing={Boolean(form.id)} saving={saving} disabled={!form.name_az.trim()} onCancel={onCancel} />
       </TaxonomyFormShell>
 
       <TaxonomyTableTitle title="Şöbələr" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
-              <th>Azərbaycan adı</th>
-              <th>İngilis adı</th>
+              <th>Azərbaycan dilində adı</th>
+              <th>İngilis dilində adı</th>
               <th>Status</th>
               <th>Əməliyyatlar</th>
             </tr>
@@ -395,10 +395,10 @@ function DepartmentTab({
           <tbody>
             {items.map((department) => (
               <tr key={department.id}>
-                <td><strong>{department.name_az}</strong></td>
-                <td>{department.name_en || '-'}</td>
-                <td><StatusBadge status={department.status} /></td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{department.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{department.name_en || '-'}</td>
+                <td data-label="Status"><StatusBadge status={department.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={department.status}
                     disabled={saving}
@@ -448,19 +448,19 @@ function SubdepartmentTab({
             ))}
           </select>
         </label>
-        <TextField label="Azərbaycan adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
-        <TextField label="İngilis adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
+        <TextField label="Azərbaycan dilində adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
+        <TextField label="İngilis dilində adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
         <StatusSelect value={form.status} onChange={(status) => onFormChange({ ...form, status })} />
         <FormActions editing={Boolean(form.id)} saving={saving} disabled={!form.department_id || !form.name_az.trim()} onCancel={onCancel} />
       </TaxonomyFormShell>
 
       <TaxonomyTableTitle title="Departamentlər" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
-              <th>Azərbaycan adı</th>
-              <th>İngilis adı</th>
+              <th>Azərbaycan dilində adı</th>
+              <th>İngilis dilində adı</th>
               <th>Şöbə</th>
               <th>Status</th>
               <th>Əməliyyatlar</th>
@@ -469,11 +469,11 @@ function SubdepartmentTab({
           <tbody>
             {items.map((subdepartment) => (
               <tr key={subdepartment.id}>
-                <td><strong>{subdepartment.name_az}</strong></td>
-                <td>{subdepartment.name_en || '-'}</td>
-                <td>{subdepartment.department.name_az}</td>
-                <td><StatusBadge status={subdepartment.status} /></td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{subdepartment.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{subdepartment.name_en || '-'}</td>
+                <td data-label="Şöbə">{subdepartment.department.name_az}</td>
+                <td data-label="Status"><StatusBadge status={subdepartment.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={subdepartment.status}
                     disabled={saving}
@@ -525,19 +525,19 @@ function PositionTab({
             ))}
           </select>
         </label>
-        <TextField label="Azərbaycan adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
-        <TextField label="İngilis adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
+        <TextField label="Azərbaycan dilində adı" value={form.name_az} onChange={(name_az) => onFormChange({ ...form, name_az })} />
+        <TextField label="İngilis dilində adı" value={form.name_en} onChange={(name_en) => onFormChange({ ...form, name_en })} />
         <StatusSelect value={form.status} onChange={(status) => onFormChange({ ...form, status })} />
         <FormActions editing={Boolean(form.id)} saving={saving} disabled={!form.subdepartment_id || !form.name_az.trim()} onCancel={onCancel} />
       </TaxonomyFormShell>
 
       <TaxonomyTableTitle title="Vəzifələr" count={items.length} />
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
-              <th>Azərbaycan adı</th>
-              <th>İngilis adı</th>
+              <th>Azərbaycan dilində adı</th>
+              <th>İngilis dilində adı</th>
               <th>Departament</th>
               <th>Status</th>
               <th>Əməliyyatlar</th>
@@ -546,14 +546,14 @@ function PositionTab({
           <tbody>
             {items.map((position) => (
               <tr key={position.id}>
-                <td><strong>{position.name_az}</strong></td>
-                <td>{position.name_en || '-'}</td>
-                <td>
+                <td data-label="Azərbaycan dilində adı"><strong>{position.name_az}</strong></td>
+                <td data-label="İngilis dilində adı">{position.name_en || '-'}</td>
+                <td data-label="Departament">
                   {position.department.name_az}
                   <span className="table-subtext">{position.subdepartment.name_az}</span>
                 </td>
-                <td><StatusBadge status={position.status} /></td>
-                <td>
+                <td data-label="Status"><StatusBadge status={position.status} /></td>
+                <td className="mobile-card-action">
                   <RowActions
                     status={position.status}
                     disabled={saving}
@@ -654,7 +654,7 @@ function RowActions({
     <div className="table-actions">
       <button className="btn secondary compact" type="button" onClick={onEdit} disabled={disabled}>
         <Edit3 size={14} />
-        Düzəlt
+        Redaktə et
       </button>
       <button className="btn ghost compact" type="button" onClick={onToggle} disabled={disabled}>
         <ToggleIcon size={15} />

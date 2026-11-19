@@ -1,19 +1,27 @@
 const accessKey = 'setservice_admin_access_token';
 const refreshKey = 'setservice_admin_refresh_token';
+let accessToken: string | null = null;
 
 export const tokenStore = {
   getAccessToken() {
-    return window.localStorage.getItem(accessKey);
+    purgeLegacyTokens();
+    return accessToken;
   },
-  getRefreshToken() {
-    return window.localStorage.getItem(refreshKey);
+
+  setAccessToken(token: string) {
+    purgeLegacyTokens();
+    accessToken = token;
   },
-  setTokens(accessToken: string, refreshToken: string) {
-    window.localStorage.setItem(accessKey, accessToken);
-    window.localStorage.setItem(refreshKey, refreshToken);
-  },
+
   clear() {
-    window.localStorage.removeItem(accessKey);
-    window.localStorage.removeItem(refreshKey);
+    accessToken = null;
+    purgeLegacyTokens();
   },
 };
+
+function purgeLegacyTokens() {
+  window.localStorage.removeItem(accessKey);
+  window.localStorage.removeItem(refreshKey);
+  window.sessionStorage.removeItem(accessKey);
+  window.sessionStorage.removeItem(refreshKey);
+}

@@ -61,12 +61,6 @@ export const SkillSchema = z.union([
   }),
 ]);
 
-export const DocumentSchema = z.object({
-  type: z.string().min(1).max(80),
-  url: z.string().url(),
-  name: z.string().min(1).max(160).optional(),
-}).passthrough();
-
 export const WorkerRegisterSchema = z.object({
   full_name: z.string().min(2).max(120),
   phone: PhoneSchema,
@@ -74,7 +68,6 @@ export const WorkerRegisterSchema = z.object({
   position_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
   skills: z.array(SkillSchema).default([]),
   languages: z.array(z.string().min(1).max(40)).default([]),
-  documents: z.array(DocumentSchema).default([]),
 }).superRefine((input, ctx) => {
   if (!input.position && !input.position_ids?.length) {
     ctx.addIssue({
@@ -93,6 +86,7 @@ export const WorkerRequestOtpSchema = z.object({
 export const WorkerLoginSchema = z.object({
   phone: PhoneSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const WorkerCompleteRegistrationSchema = z.object({
@@ -119,7 +113,12 @@ export const WorkerResetPasswordSchema = z.object({
 
 export const WorkerPhoneChangeRequestSchema = z.object({
   phone: PhoneSchema,
-});
+}).strict();
+
+export const WorkerPhoneChangeV2RequestSchema = z.object({
+  phone: PhoneSchema,
+  current_password: LoginPasswordSchema,
+}).strict();
 
 export const WorkerPhoneChangeConfirmSchema = z.object({
   phone: PhoneSchema,
@@ -131,21 +130,20 @@ export const CompanyRegisterSchema = z.object({
   contact_name: z.string().min(2).max(120),
   email: EmailSchema,
   phone: PhoneSchema,
-  docs_url: z.string().url().optional(),
-  documents: z.array(DocumentSchema).default([]),
-});
+}).strict();
 
 export const CompanyLoginSchema = z.object({
   email: EmailSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const CompanyCompleteRegistrationSchema = z.object({
-  email: EmailSchema,
+  enrollment_token: z.string().min(40).max(160),
   otp_code: OtpCodeSchema.optional(),
   otp_challenge: OtpChallengeSchema.optional(),
   password: PasswordSchema,
-}).superRefine(requireOtpProof);
+}).strict().superRefine(requireOtpProof);
 
 export const CompanyForgotPasswordSchema = z.object({
   method: z.enum(['phone', 'email']).optional(),
@@ -173,6 +171,7 @@ export const EmailVerificationConfirmSchema = z.object({
 export const AdminLoginSchema = z.object({
   email: EmailSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const AdminForgotPasswordSchema = z.object({
@@ -226,7 +225,6 @@ export const RegisterSchema = z.union([
     position_ids: z.array(z.string().uuid()).min(1).max(20).optional(),
     skills: z.array(SkillSchema).default([]),
     languages: z.array(z.string().min(1).max(40)).default([]),
-    documents: z.array(DocumentSchema).default([]),
   }).refine((input) => Boolean(input.full_name ?? input.name), {
     message: 'Ad və soyad tələb olunur',
     path: ['full_name'],
@@ -240,9 +238,7 @@ export const RegisterSchema = z.union([
     email: EmailSchema,
     name: z.string().min(2).max(200),
     contact_name: z.string().min(2).max(120).optional(),
-    docs_url: z.string().url().optional(),
-    documents: z.array(DocumentSchema).default([]),
-  }).transform((input) => ({
+  }).strict().transform((input) => ({
     ...input,
     contact_name: input.contact_name ?? input.name,
   })),
@@ -255,6 +251,7 @@ export type WorkerCompleteRegistrationInput = z.infer<typeof WorkerCompleteRegis
 export type WorkerForgotPasswordInput = z.infer<typeof WorkerForgotPasswordSchema>;
 export type WorkerResetPasswordInput = z.infer<typeof WorkerResetPasswordSchema>;
 export type WorkerPhoneChangeRequestInput = z.infer<typeof WorkerPhoneChangeRequestSchema>;
+export type WorkerPhoneChangeV2RequestInput = z.infer<typeof WorkerPhoneChangeV2RequestSchema>;
 export type WorkerPhoneChangeConfirmInput = z.infer<typeof WorkerPhoneChangeConfirmSchema>;
 export type CompanyRegisterInput = z.infer<typeof CompanyRegisterSchema>;
 export type CompanyLoginInput = z.infer<typeof CompanyLoginSchema>;

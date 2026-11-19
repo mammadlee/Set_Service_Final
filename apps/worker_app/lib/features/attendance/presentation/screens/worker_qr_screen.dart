@@ -4,10 +4,10 @@ import 'package:provider/provider.dart';
 import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/app_strings.dart';
+import '../../../../shared/widgets/checkout_confirmation_dialog.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
 import '../../../../shared/widgets/loading_button.dart';
-import '../../../../shared/widgets/premium_components.dart';
 import '../../data/attendance_repository.dart';
 import 'qr_scanner_screen.dart';
 
@@ -93,38 +93,19 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
   }
 
   Future<void> _submitScannedQr() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _success = null;
-    });
-
-    bool hasOpenAttendance;
-    try {
-      final page = await context.read<AttendanceRepository>().listOpen();
-      hasOpenAttendance = page.data.any((log) => log.isOpen);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = _friendlyAttendanceError(error);
-      });
-      return;
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = AppStrings.attendanceLoadFailed;
-      });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() => _loading = false);
-    await _submit(checkIn: !hasOpenAttendance);
+    // Let the API identify the order encoded in the signed token. Looking at
+    // any open attendance first is ambiguous when a worker has more than one
+    // active assignment: a QR for a new order could be sent as checkout for a
+    // different order. Checkout is attempted only after this exact assignment
+    // reports that it was already checked in.
+    await _submit(checkIn: true, fallbackToCheckout: true);
   }
 
-  Future<void> _submit({required bool checkIn}) async {
+  Future<void> _submit({
+    required bool checkIn,
+    bool fallbackToCheckout = false,
+    bool confirmCheckout = true,
+  }) async {
     final qrToken = _qrController.text.trim();
     if (qrToken.isEmpty) {
       setState(() {
@@ -135,7 +116,7 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
     }
 
     final repository = context.read<AttendanceRepository>();
-    if (!checkIn && !await _confirmCheckout()) return;
+    if (!checkIn && confirmCheckout && !await _confirmCheckout()) return;
     if (!mounted) return;
 
     setState(() {
@@ -164,6 +145,15 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
       _qrController.clear();
       _notesController.clear();
     } on ApiException catch (error) {
+      if (checkIn &&
+          fallbackToCheckout &&
+          error.code == 'ATTENDANCE_ALREADY_CHECKED_IN') {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        if (!await _confirmCheckout() || !mounted) return;
+        await _submit(checkIn: false, confirmCheckout: false);
+        return;
+      }
       if (!mounted) return;
       _error = _friendlyAttendanceError(error);
     } catch (_) {
@@ -189,80 +179,7 @@ class _WorkerQrScreenState extends State<WorkerQrScreen> {
     };
   }
 
-  Future<bool> _confirmCheckout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) {
-        return Dialog(
-          backgroundColor: BrandColors.transparent,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 22),
-          child: PremiumCard(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: BrandColors.accentGold.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Icon(
-                        Icons.logout_outlined,
-                        color: BrandColors.primaryBurgundy,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        AppStrings.checkoutConfirmTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  AppStrings.checkoutConfirmMessage,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: BrandColors.urbanGraphite,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: PremiumActionButton(
-                    label: AppStrings.checkoutConfirmAction,
-                    icon: Icons.logout_outlined,
-                    onPressed: () => Navigator.of(dialogContext).pop(true),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(dialogContext).pop(false),
-                    child: const Text(AppStrings.cancel),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-    return confirmed == true;
-  }
+  Future<bool> _confirmCheckout() => showCheckoutConfirmationDialog(context);
 }
 
 class _QrScanFrame extends StatelessWidget {

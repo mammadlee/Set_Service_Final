@@ -17,7 +17,7 @@
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
                             <imageView opaque="NO" clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="SetAppLogo" translatesAutoresizingMaskIntoConstraints="NO" id="set-app-logo"/>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Premium xidmət platforması" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" translatesAutoresizingMaskIntoConstraints="NO" id="set-app-subtitle">
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" text="Premium xidmət idarəetmə platforması" textAlignment="center" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" translatesAutoresizingMaskIntoConstraints="NO" id="set-app-subtitle">
                                 <fontDescription key="fontDescription" type="system" pointSize="14"/>
                                 <color key="textColor" red="0.4196078431" green="0.3843137255" blue="0.3568627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                             </label>

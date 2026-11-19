@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../shared/auth_input_validators.dart';
 import '../../../../shared/app_strings.dart';
 import '../../../../shared/widgets/constrained_page.dart';
 import '../../../../shared/widgets/inline_message.dart';
+import '../../../../shared/widgets/legal_acceptance_checkbox.dart';
 import '../../../../shared/widgets/loading_button.dart';
 import '../../../../shared/widgets/premium_components.dart';
 import '../../../taxonomy/data/taxonomy_repository.dart';
@@ -29,10 +32,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String? _positionId;
   bool _taxonomyLoading = true;
   String? _taxonomyError;
+  bool _legalAccepted = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<AuthController>().clearTransientMessages();
+    });
     _loadTaxonomy();
   }
 
@@ -46,21 +53,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final viewInsets = MediaQuery.viewInsetsOf(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text(AppStrings.registerTitle)),
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: const Text(
+          AppStrings.registerTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
       body: ConstrainedPage(
         showBackdrop: true,
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: EdgeInsets.only(bottom: viewInsets.bottom + 28),
             children: [
               Text(
                 'Hesab yarat',
                 textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: BrandColors.darkText,
                   fontWeight: FontWeight.w800,
+                  height: 1.12,
                 ),
               ),
               const SizedBox(height: 8),
@@ -69,10 +89,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                   color: BrandColors.darkText,
-                  height: 1.3,
+                  height: 1.35,
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 22),
               if (auth.errorMessage != null) ...[
                 InlineMessage(
                   message: auth.errorMessage!,
@@ -85,6 +105,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: AppStrings.fullName,
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
                   prefixIcon: Icon(Icons.badge_outlined),
                 ),
                 validator: (value) =>
@@ -94,10 +115,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextFormField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
+                textInputAction: TextInputAction.done,
                 decoration: const InputDecoration(
                   labelText: AppStrings.phoneNumber,
                   hintText: AppStrings.phoneHint,
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
                   prefixIcon: Icon(Icons.phone_outlined),
                 ),
                 validator: _validatePhone,
@@ -108,6 +130,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   message: _taxonomyError!,
                   kind: InlineMessageKind.error,
                 ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: OutlinedButton.icon(
+                    onPressed: _taxonomyLoading ? null : _loadTaxonomy,
+                    icon: _taxonomyLoading
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh_rounded),
+                    label: const Text(AppStrings.tryAgain),
+                  ),
+                ),
                 const SizedBox(height: 14),
               ],
               _SelectorField(
@@ -116,7 +152,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 placeholder: 'Şöbə seçin',
                 icon: Icons.business_center_outlined,
                 requiredMessage: AppStrings.positionRequired,
-                onTap: _taxonomyLoading ? null : _selectDepartment,
+                onTap: _taxonomyLoading || _taxonomyError != null
+                    ? null
+                    : _selectDepartment,
               ),
               if (_departmentId != null) ...[
                 const SizedBox(height: 14),
@@ -159,12 +197,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onTap: _selectLanguages,
               ),
               const SizedBox(height: 22),
+              LegalAcceptanceCheckbox(
+                value: _legalAccepted,
+                onChanged: (value) => setState(() => _legalAccepted = value),
+              ),
+              const SizedBox(height: 12),
               LoadingButton(
                 label: AppStrings.registerAndSendOtp,
                 icon: Icons.sms_outlined,
                 loading: auth.isSubmitting,
                 onPressed: () => _submit(context),
               ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -174,6 +218,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit(BuildContext context) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_legalAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Davam etmək üçün İstifadə Qaydalarını qəbul edin.'),
+        ),
+      );
+      return;
+    }
     final position = _selectedPosition;
     if (position == null) return;
 
@@ -198,11 +250,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   String? _validatePhone(String? value) {
-    final phone = value?.trim() ?? '';
-    if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-      return AppStrings.phoneValidation;
-    }
-    return null;
+    return AuthInputValidators.phone(value);
   }
 
   Future<void> _selectDepartment() async {
@@ -279,7 +327,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       context: context,
       title: title,
       child: SizedBox(
-        height: MediaQuery.sizeOf(context).height * 0.48,
+        height: (MediaQuery.sizeOf(context).height * 0.44).clamp(250.0, 430.0),
         child: items.isEmpty
             ? const InlineMessage(message: 'Seçim tapılmadı.')
             : ListView.separated(
@@ -330,84 +378,132 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return await showPremiumBottomSheet<List<String>>(
         context: context,
         title: title,
+        contentScrollable: false,
         child: StatefulBuilder(
           builder: (context, setSheetState) {
             final allOptions = {
               ...options,
               ...draft.where((item) => !options.contains(item)),
             }.toList();
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  height: MediaQuery.sizeOf(context).height * 0.38,
-                  child: SingleChildScrollView(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: allOptions
-                          .map(
-                            (item) => FilterChip(
-                              label: Text(item),
-                              selected: draft.contains(item),
-                              onSelected: (_) => setSheetState(
-                                () => draft = _toggle(draft, item),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ),
-                ),
-                if (allowCustom) ...[
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: customController,
-                    decoration: const InputDecoration(
-                      labelText: 'Yeni bacarıq əlavə et',
-                      prefixIcon: Icon(Icons.add_circle_outline),
-                    ),
-                    onSubmitted: (_) => _addCustomSkill(
-                      setSheetState,
-                      customController,
-                      (value) => draft = value,
-                      draft,
+            final availableHeight =
+                MediaQuery.sizeOf(context).height -
+                MediaQuery.viewInsetsOf(context).bottom;
+            final sheetHeight = (availableHeight * (allowCustom ? 0.72 : 0.56))
+                .clamp(240.0, allowCustom ? 520.0 : 420.0);
+
+            return SizedBox(
+              height: sheetHeight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    draft.isEmpty
+                        ? 'Heç bir seçim edilməyib'
+                        : '${draft.length} seçim edilib',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: BrandColors.mutedBrown,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: () => _addCustomSkill(
-                      setSheetState,
-                      customController,
-                      (value) => draft = value,
-                      draft,
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Əlavə et'),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text(AppStrings.cancel),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        alignment: WrapAlignment.start,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: allOptions
+                            .map(
+                              (item) => PremiumSelectableChip(
+                                label: item,
+                                selected: draft.contains(item),
+                                onSelected: (_) => setSheetState(
+                                  () => draft = _toggle(draft, item),
+                                ),
+                                semanticPrefix: title,
+                              ),
+                            )
+                            .toList(growable: false),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: LoadingButton(
-                        label: AppStrings.save,
-                        icon: Icons.check_rounded,
-                        loading: false,
-                        onPressed: () => Navigator.of(context).pop(draft),
+                  ),
+                  if (allowCustom) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: customController,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: 'Yeni bacarıq əlavə et',
+                        prefixIcon: const Icon(Icons.add_circle_outline),
+                        suffixIcon: IconButton(
+                          tooltip: 'Əlavə et',
+                          onPressed: () => _addCustomSkill(
+                            setSheetState,
+                            customController,
+                            (value) => draft = value,
+                            draft,
+                          ),
+                          icon: const Icon(Icons.add_rounded),
+                        ),
+                      ),
+                      onSubmitted: (_) => _addCustomSkill(
+                        setSheetState,
+                        customController,
+                        (value) => draft = value,
+                        draft,
                       ),
                     ),
                   ],
-                ),
-              ],
+                  const SizedBox(height: 14),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final narrow = constraints.maxWidth < 260;
+                      if (narrow) {
+                        return Column(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text(AppStrings.cancel),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            LoadingButton(
+                              label: AppStrings.save,
+                              icon: Icons.check_rounded,
+                              loading: false,
+                              onPressed: () => Navigator.of(context).pop(draft),
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text(AppStrings.cancel),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: LoadingButton(
+                              label: AppStrings.save,
+                              icon: Icons.check_rounded,
+                              loading: false,
+                              onPressed: () => Navigator.of(context).pop(draft),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
             );
           },
         ),
@@ -442,6 +538,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _loadTaxonomy() async {
+    if (mounted) {
+      setState(() {
+        _taxonomyLoading = true;
+        _taxonomyError = null;
+      });
+    }
     try {
       final departments = await context.read<TaxonomyRepository>().list();
       if (!mounted) return;
@@ -450,11 +552,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _taxonomyLoading = false;
         _taxonomyError = null;
       });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _taxonomyLoading = false;
+        _taxonomyError = error.message;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _taxonomyLoading = false;
-        _taxonomyError = 'Vəzifələr yüklənmədi.';
+        _taxonomyError = AppStrings.unknownError;
       });
     }
   }
@@ -502,6 +610,7 @@ class _SelectorField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final displayValue = value?.trim() ?? '';
+
     return FormField<String>(
       validator: (_) {
         if (requiredMessage != null && displayValue.isEmpty) {
@@ -510,48 +619,115 @@ class _SelectorField extends StatelessWidget {
         return null;
       },
       builder: (field) {
+        const radius = BorderRadius.all(Radius.circular(14));
         final enabled = onTap != null;
-        return InkWell(
-          borderRadius: BorderRadius.circular(32),
-          onTap: enabled ? onTap : null,
-          child: InputDecorator(
-            isEmpty: displayValue.isEmpty,
-            decoration: InputDecoration(
-              labelText: label,
-              errorText: field.errorText,
-              prefixIcon: Icon(icon),
-              contentPadding: const EdgeInsets.fromLTRB(20, 22, 16, 22),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.accentGold),
-              ),
-              disabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.accentGold),
-              ),
-              errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(32),
-                borderSide: const BorderSide(color: BrandColors.error),
-              ),
-              suffixIcon: Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: enabled
-                    ? BrandColors.primaryBurgundy
-                    : BrandColors.urbanGraphite,
+        final borderColor = field.hasError
+            ? BrandColors.error
+            : displayValue.isEmpty
+            ? BrandColors.accentGold.withValues(alpha: 0.72)
+            : BrandColors.primaryBurgundy;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 14, bottom: 7),
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: field.hasError
+                      ? BrandColors.error
+                      : BrandColors.urbanGraphite,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
               ),
             ),
-            child: Text(
-              displayValue.isEmpty ? placeholder : displayValue,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: displayValue.isEmpty
-                    ? BrandColors.urbanGraphite
-                    : BrandColors.darkText,
-                fontWeight: FontWeight.w600,
+            Material(
+              color: BrandColors.transparent,
+              borderRadius: radius,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                borderRadius: radius,
+                onTap: enabled ? onTap : null,
+                child: AnimatedContainer(
+                  key: ValueKey('registration-selector-$label'),
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOutCubic,
+                  width: double.infinity,
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 13,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: displayValue.isEmpty
+                        ? BrandColors.white.withValues(alpha: 0.9)
+                        : BrandColors.accentGold.withValues(alpha: 0.1),
+                    borderRadius: radius,
+                    border: Border.all(color: borderColor, width: 1.25),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox.square(
+                        dimension: 24,
+                        child: Icon(
+                          icon,
+                          size: 23,
+                          color: enabled
+                              ? BrandColors.urbanGraphite
+                              : BrandColors.urbanGraphite.withValues(
+                                  alpha: 0.55,
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          displayValue.isEmpty ? placeholder : displayValue,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyLarge
+                              ?.copyWith(
+                                color: displayValue.isEmpty
+                                    ? BrandColors.urbanGraphite
+                                    : BrandColors.darkText,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                              ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox.square(
+                        dimension: 24,
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: enabled
+                              ? BrandColors.primaryBurgundy
+                              : BrandColors.urbanGraphite,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
+            if (field.errorText != null) ...[
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Text(
+                  field.errorText!,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: BrandColors.error,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ],
         );
       },
     );

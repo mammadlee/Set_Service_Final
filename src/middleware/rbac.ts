@@ -3,6 +3,10 @@ import { Errors } from '../lib/errors';
 import { prisma } from '../lib/prisma';
 import { Role } from '../types/prisma';
 import { AdminPermission, normalizePermissions } from '../modules/admins/admins.permissions';
+import {
+  attachAdminReviewScope,
+  restrictReviewAdminPermissions,
+} from '../lib/review-scope';
 
 export function requireRole(...roles: Role[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
@@ -23,7 +27,7 @@ export function requirePermission(permission: AdminPermission) {
 export function requireSuperAdmin(req: Request, _res: Response, next: NextFunction): void {
   void loadCurrentAdmin(req)
     .then((admin) => {
-      if (admin.role !== 'super_admin') {
+      if (admin.role !== 'super_admin' || admin.isReviewAccount) {
         throw Errors.forbidden('Bu bölmə yalnız Super Admin üçün nəzərdə tutulub.', 'PERMISSION_DENIED');
       }
       next();
@@ -119,7 +123,7 @@ async function requireAdminAnyPermission(req: Request, permissionsToCheck: Admin
   if (!req.user) throw Errors.unauthorized();
   const admin = await loadCurrentAdmin(req);
 
-  if (admin.role === 'super_admin') return;
+  if (admin.role === 'super_admin' && !admin.isReviewAccount) return;
   if (!permissionsToCheck.some((permission) => admin.permissions.includes(permission))) {
     throw Errors.forbidden('Bu bölməyə giriş icazəniz yoxdur.', 'PERMISSION_DENIED', { permissions: permissionsToCheck });
   }
@@ -128,6 +132,7 @@ async function requireAdminAnyPermission(req: Request, permissionsToCheck: Admin
 async function loadCurrentAdmin(req: Request): Promise<{
   role: 'super_admin' | 'admin';
   permissions: AdminPermission[];
+  isReviewAccount: boolean;
 }> {
   if (!req.user) throw Errors.unauthorized();
 
@@ -142,6 +147,7 @@ async function loadCurrentAdmin(req: Request): Promise<{
       role: true,
       is_active: true,
       deleted_at: true,
+      is_review_account: true,
       admin: { select: { permissions: true } },
     },
   });
@@ -158,8 +164,15 @@ async function loadCurrentAdmin(req: Request): Promise<{
     throw Errors.forbidden('Admin profili tapılmadı.', 'ADMIN_PROFILE_MISSING');
   }
 
+  attachAdminReviewScope(req, user.is_review_account);
+  const permissions = restrictReviewAdminPermissions(
+    normalizePermissions(user.admin.permissions),
+    user.is_review_account,
+  );
+
   return {
     role: user.role,
-    permissions: normalizePermissions(user.admin.permissions),
+    permissions,
+    isReviewAccount: user.is_review_account,
   };
 }

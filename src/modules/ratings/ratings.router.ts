@@ -7,6 +7,7 @@ import {
   LegacyWorkerRatingsParamsSchema,
 } from './ratings.schema';
 import * as Service from './ratings.service';
+import { isReviewScopedRequest } from '../../lib/review-scope';
 
 const router = Router();
 router.use(requireAuth);
@@ -44,7 +45,11 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { worker_id } = LegacyWorkerRatingsParamsSchema.parse(req.params);
-      res.json(await Service.getWorkerRatings(worker_id, req.user!.role));
+      res.json(await Service.getWorkerRatings(
+        worker_id,
+        req.user!.role,
+        isReviewScopedRequest(req),
+      ));
     } catch (e) {
       next(e);
     }

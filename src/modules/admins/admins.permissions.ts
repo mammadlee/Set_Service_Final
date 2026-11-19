@@ -9,6 +9,8 @@ export const ADMIN_PERMISSIONS = [
   'manage_assignments',
   'view_attendance',
   'view_reports',
+  'view_moderation',
+  'manage_moderation',
   'manage_kiosks',
   'view_notifications',
   'manage_admins',
@@ -21,6 +23,7 @@ export const ADMIN_PERMISSION_DEPENDENCIES: Partial<Record<AdminPermission, read
   manage_companies: ['view_companies'],
   manage_assignments: ['view_assignments', 'view_orders', 'view_workers'],
   manage_kiosks: ['view_orders', 'view_assignments'],
+  manage_moderation: ['view_moderation'],
 };
 
 export function isAdminPermission(value: unknown): value is AdminPermission {

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { authService } from '../../features/auth/auth.service';
 import { refreshSession, setUnauthorizedHandler } from '../../shared/api/http';
-import { isAccessTokenExpired, readAccessTokenPayload } from '../../shared/api/jwt';
+import { isAccessTokenExpired, isAccessTokenPayload, readAccessTokenPayload } from '../../shared/api/jwt';
 import { tokenStore } from '../../shared/api/tokenStore';
 import type { AuthUser } from '../../shared/api/types';
 
@@ -17,27 +17,29 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const storedUserKey = 'setservice_company_user';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => readStoredUser());
-  const [isCheckingSession, setIsCheckingSession] = useState(() => {
-    const tokenPayload = readAccessTokenPayload(tokenStore.getAccessToken());
-    return Boolean(user && tokenPayload?.role === 'company' && isAccessTokenExpired(tokenPayload));
-  });
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
 
   const clearSession = useCallback(() => {
     tokenStore.clear();
-    window.localStorage.removeItem(storedUserKey);
+    purgeLegacyUser();
     setUser(null);
     setIsCheckingSession(false);
   }, []);
 
   const setSession = useCallback((nextUser: AuthUser) => {
     const tokenPayload = readAccessTokenPayload(tokenStore.getAccessToken());
-    if (nextUser.role !== 'company' || tokenPayload?.role !== 'company') {
+    if (
+      nextUser.role !== 'company' ||
+      tokenPayload?.role !== 'company' ||
+      !isAccessTokenPayload(tokenPayload) ||
+      isAccessTokenExpired(tokenPayload)
+    ) {
       clearSession();
       return;
     }
 
-    window.localStorage.setItem(storedUserKey, JSON.stringify(nextUser));
+    purgeLegacyUser();
     setUser(nextUser);
   }, [clearSession]);
 
@@ -53,52 +55,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(clearSession);
   }, [clearSession]);
 
-  const tokenPayload = readAccessTokenPayload(tokenStore.getAccessToken());
-  const isCompanySession = Boolean(
-    user && user.role === 'company' && tokenPayload?.role === 'company' && !isAccessTokenExpired(tokenPayload),
-  );
-
-  useEffect(() => {
-    if (user && tokenPayload?.role !== 'company') clearSession();
-  }, [clearSession, tokenPayload?.role, user]);
-
   useEffect(() => {
     let cancelled = false;
 
-    async function ensureFreshSession() {
-      if (!user) {
-        setIsCheckingSession(false);
-        return;
-      }
-
-      const currentPayload = readAccessTokenPayload(tokenStore.getAccessToken());
-      if (currentPayload?.role !== 'company') {
-        clearSession();
-        return;
-      }
-
-      if (!isAccessTokenExpired(currentPayload)) {
-        setIsCheckingSession(false);
-        return;
-      }
-
+    async function restoreBrowserSession() {
       setIsCheckingSession(true);
-      const refreshed = await refreshSession();
+      const restoredUser = await refreshSession();
       if (cancelled) return;
 
-      if (!refreshed) {
+      if (!restoredUser) {
         clearSession();
         return;
       }
 
+      setSession(restoredUser);
       setIsCheckingSession(false);
     }
 
-    void ensureFreshSession();
+    void restoreBrowserSession();
     return () => {
       cancelled = true;
     };
-  }, [clearSession, user]);
+  }, [clearSession, setSession]);
+
+  const tokenPayload = readAccessTokenPayload(tokenStore.getAccessToken());
+  const isCompanySession = Boolean(
+    user &&
+    user.role === 'company' &&
+    tokenPayload?.role === 'company' &&
+    isAccessTokenPayload(tokenPayload) &&
+    !isAccessTokenExpired(tokenPayload),
+  );
+
+  useEffect(() => {
+    if (user && (tokenPayload?.role !== 'company' || !isAccessTokenPayload(tokenPayload))) clearSession();
+  }, [clearSession, tokenPayload?.role, tokenPayload?.token_use, user]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -120,26 +111,7 @@ export function useAuth() {
   return value;
 }
 
-function readStoredUser(): AuthUser | null {
-  const raw = window.localStorage.getItem(storedUserKey);
-  const tokenPayload = readAccessTokenPayload(tokenStore.getAccessToken());
-  if (!raw || tokenPayload?.role !== 'company') {
-    tokenStore.clear();
-    window.localStorage.removeItem(storedUserKey);
-    return null;
-  }
-
-  try {
-    const user = JSON.parse(raw) as AuthUser;
-    if (user.role !== 'company' || user.role !== tokenPayload.role) {
-      tokenStore.clear();
-      window.localStorage.removeItem(storedUserKey);
-      return null;
-    }
-    return user;
-  } catch {
-    tokenStore.clear();
-    window.localStorage.removeItem(storedUserKey);
-    return null;
-  }
+function purgeLegacyUser(): void {
+  window.localStorage.removeItem(storedUserKey);
+  window.sessionStorage.removeItem(storedUserKey);
 }

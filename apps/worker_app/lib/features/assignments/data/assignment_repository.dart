@@ -44,6 +44,50 @@ class AssignmentRepository {
     }
   }
 
+  Future<void> reportOrder({
+    required String orderId,
+    required String reason,
+    String? details,
+  }) => _reportContent(
+    targetType: 'order',
+    targetId: orderId,
+    reason: reason,
+    details: details,
+  );
+
+  Future<void> reportCompany({
+    required String companyId,
+    required String reason,
+    String? details,
+  }) => _reportContent(
+    targetType: 'company_profile',
+    targetId: companyId,
+    reason: reason,
+    details: details,
+  );
+
+  Future<void> _reportContent({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String? details,
+  }) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        '/moderation/reports',
+        data: {
+          'target_type': targetType,
+          'target_id': targetId,
+          'reason': reason,
+          if (details != null && details.trim().isNotEmpty)
+            'details': details.trim(),
+        },
+      );
+    } catch (error) {
+      throw mapDioException(error);
+    }
+  }
+
   Future<Assignment> rejectAssignment(String id) async {
     try {
       final response = await _dio.patch<Map<String, dynamic>>(

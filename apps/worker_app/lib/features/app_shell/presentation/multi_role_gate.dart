@@ -27,14 +27,14 @@ class MultiRoleGate extends StatelessWidget {
           };
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
+      duration: const Duration(milliseconds: 180),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
       child: KeyedSubtree(
         key: ValueKey(
           roleSession.loading
               ? 'loading'
-              : roleSession.activeRole?.name ?? 'roles',
+              : roleSession.activeRole?.name ?? 'role-selection',
         ),
         child: child,
       ),
@@ -48,7 +48,9 @@ class RoleAwareBackButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(
-      onPressed: () => context.read<RoleSessionController>().clearRole(),
+      onPressed: () async {
+        await context.read<RoleSessionController>().clearRole();
+      },
       icon: const Icon(Icons.swap_horiz),
       label: const Text(AppStrings.changeRole),
     );

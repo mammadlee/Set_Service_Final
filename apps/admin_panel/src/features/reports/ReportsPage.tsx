@@ -162,10 +162,10 @@ export function ReportsPage() {
               {report.data.reports.worker_work_counts.length === 0 ? (
                 <p className="muted">{appStrings.reports.empty}</p>
               ) : (
-                <table>
+                <table className="responsive-table compact-report-table">
                   <tbody>
                     {report.data.reports.worker_work_counts.map((item) => (
-                      <tr key={item.worker_id}><td>{item.worker_name}</td><td>{item.completed_count}</td></tr>
+                      <tr key={item.worker_id}><td data-label="İşçi">{item.worker_name}</td><td data-label={appStrings.reports.completed}>{item.completed_count}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -175,10 +175,10 @@ export function ReportsPage() {
               {report.data.reports.company_usage.length === 0 ? (
                 <p className="muted">{appStrings.reports.empty}</p>
               ) : (
-                <table>
+                <table className="responsive-table compact-report-table">
                   <tbody>
                     {report.data.reports.company_usage.map((item) => (
-                      <tr key={item.company_id}><td>{item.company_name}</td><td>{item.order_count}</td></tr>
+                      <tr key={item.company_id}><td data-label="Müəssisə">{item.company_name}</td><td data-label="Sifariş sayı">{item.order_count}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -198,10 +198,10 @@ export function ReportsPage() {
               </dl>
             </ReportPanel>
             <ReportPanel title={appStrings.reports.assignmentStats}>
-              <table>
+              <table className="responsive-table compact-report-table">
                 <tbody>
                   {report.data.reports.assignment_stats.map((item) => (
-                    <tr key={item.status}><td>{statusLabel(item.status)}</td><td>{item.count}</td></tr>
+                    <tr key={item.status}><td data-label="Status">{statusLabel(item.status)}</td><td data-label={appStrings.reports.count}>{item.count}</td></tr>
                   ))}
                 </tbody>
               </table>

@@ -19,8 +19,8 @@ Create a dedicated Neon project or branch for staging. Keep staging isolated fro
 Use two connection strings:
 
 ```env
-DATABASE_URL="postgresql://USER:PASSWORD@ep-example-pooler.REGION.aws.neon.tech/setservice_staging?sslmode=require&pgbouncer=true"
-DIRECT_URL="postgresql://USER:PASSWORD@ep-example.REGION.aws.neon.tech/setservice_staging?sslmode=require"
+DATABASE_URL="<pooled-database-url>"
+DIRECT_URL="<direct-database-url>"
 ```
 
 `DATABASE_URL` is used by the running API. `DIRECT_URL` is used by Prisma migrations through the `directUrl` datasource setting.
@@ -43,25 +43,33 @@ Minimum staging backend variables:
 ```env
 NODE_ENV="production"
 PORT=3000
-DATABASE_URL="postgresql://USER:PASSWORD@ep-example-pooler.REGION.aws.neon.tech/setservice_staging?sslmode=require&pgbouncer=true"
-DIRECT_URL="postgresql://USER:PASSWORD@ep-example.REGION.aws.neon.tech/setservice_staging?sslmode=require"
-REDIS_URL="redis://default:PASSWORD@redis-host:6379"
+DATABASE_URL="<database-url>"
+DIRECT_URL="<database-url>"
+REDIS_URL="<redis-url>"
 CORS_ORIGINS="https://staging-admin.yourdomain.com,https://staging-company.yourdomain.com"
+OUTBOX_WORKER_ENABLED="false"
+OUTBOX_HEALTH_PORT="3001"
+OUTBOX_MAX_CONSECUTIVE_FAILURES="5"
+OUTBOX_HEARTBEAT_TTL_SECONDS="30"
 
-JWT_SECRET="replace-with-random-32-plus-character-secret"
-QR_HMAC_SECRET="replace-with-different-random-32-plus-character-secret"
-OTP_PEPPER="replace-with-another-random-32-plus-character-secret"
+JWT_ACCESS_SECRET="<secret-reference>"
+JWT_REFRESH_SECRET="<secret-reference>"
+JWT_ISSUER="set-service-api"
+JWT_AUDIENCE="set-service-clients"
+QR_HMAC_SECRET="<secret-reference>"
+OTP_PEPPER="<secret-reference>"
 OTP_TEST_MODE="false"
-OTP_TEST_CODE="123456"
+OTP_TEST_CODE=""
 OTP_LOG_CODES="false"
 
 SMS_PROVIDER="console"
+PROVIDER_OUTBOX_ENCRYPTION_SECRET="<secret-reference>"
 PUSH_NOTIFICATIONS_ENABLED="false"
 STORAGE_PROVIDER="s3"
 STORAGE_PUBLIC_BASE_URL="https://staging-cdn.yourdomain.com"
 ```
 
-For production-like staging, replace console SMS with `generic_http` and use dedicated test phone numbers. `OTP_TEST_MODE=true` is blocked when `NODE_ENV=production`; use it only in a separate isolated QA environment that is not configured as production.
+For production-like staging, replace console SMS with `generic_http` and use dedicated test phone numbers. Fixed OTPs are restricted to isolated processes configured with `NODE_ENV=test`; normal staging must keep `OTP_TEST_MODE=false`.
 
 ## Migrations
 
@@ -124,8 +132,22 @@ npm ci
 npm run typecheck
 npm run build
 npm run swagger:check
-npm start
 ```
+
+Deploy two separately supervised backend processes from the same build:
+
+```bash
+# API service
+OUTBOX_WORKER_ENABLED=false npm run start:api
+
+# Durable delivery service
+npm run start:outbox
+```
+
+The API must use `/health` for liveness and `/ready` for readiness. In the
+separate-worker topology, `/ready` returns `200` only after a fresh worker
+heartbeat exists in Redis. Probe the worker at `/health` and scrape `/metrics`
+on `OUTBOX_HEALTH_PORT` (default `3001`).
 
 Flutter staging preview:
 
@@ -166,12 +188,14 @@ Expected coverage:
 - duplicate attendance conflict checks
 - profile/upload/rating/report/notification checks covered by the expanded smoke script
 
-Automated smoke testing with `TEST_OTP=123456` requires the staging API to run in a dedicated QA mode where `OTP_TEST_MODE=true` is allowed. For production-like staging with `NODE_ENV=production`, keep `OTP_TEST_MODE=false` and run smoke tests with real SMS delivery or a provider-side test number setup.
+Automated smoke testing with a fixed `TEST_OTP` requires the API to run in an isolated test process with `NODE_ENV=test`, `OTP_TEST_MODE=true`, and a matching six-digit `OTP_TEST_CODE`. Normal staging keeps `OTP_TEST_MODE=false` and uses real SMS delivery or provider-side test numbers.
 
 ## Staging Release Checklist
 
 - [ ] Neon `DATABASE_URL` and `DIRECT_URL` are configured.
 - [ ] Redis is configured.
+- [ ] The API and at least one separately supervised outbox worker are running.
+- [ ] API `/ready`, worker `/health`, and worker `/metrics` are monitored.
 - [ ] Secrets are random, non-placeholder, and not reused.
 - [ ] OTP test mode is intentionally chosen for staging QA or disabled for production-like staging.
 - [ ] CORS allows only staging frontend origins.

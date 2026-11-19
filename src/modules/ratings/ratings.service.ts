@@ -30,9 +30,15 @@ export async function createRating(
     orderId: input.order_id,
     workerId: input.worker_id,
     companyId: company.id,
+    isReviewAccount: company.user.is_review_account === true,
   });
 
-  if (!assignment) {
+  const companyIsReviewAccount = company.user.is_review_account === true;
+  const hasCohortMismatch = assignment && (
+    (assignment.worker.user.is_review_account === true) !== companyIsReviewAccount
+    || (assignment.order.company.user.is_review_account === true) !== companyIsReviewAccount
+  );
+  if (!assignment || hasCohortMismatch) {
     throw Errors.conflict(
       'İşçi yalnız bu şirkət tapşırığı üzrə checkout tamamlandıqdan sonra qiymətləndirilə bilər.',
       'RATING_NOT_AVAILABLE'
@@ -113,10 +119,14 @@ export async function getMyRatings(userId: string, roleValue: string) {
     });
   }
 
-  return getWorkerRatingSummary(worker.id);
+  return getWorkerRatingSummary(worker.id, worker.user.is_review_account === true);
 }
 
-export async function getWorkerRatings(workerId: string, requesterRole?: string) {
+export async function getWorkerRatings(
+  workerId: string,
+  requesterRole?: string,
+  isReviewAccount = false,
+) {
   if (requesterRole) {
     const role = parseRole(requesterRole);
     if (role !== 'super_admin' && role !== 'admin') {
@@ -124,14 +134,14 @@ export async function getWorkerRatings(workerId: string, requesterRole?: string)
     }
   }
 
-  return getWorkerRatingSummary(workerId);
+  return getWorkerRatingSummary(workerId, isReviewAccount);
 }
 
-async function getWorkerRatingSummary(workerId: string) {
-  const worker = await RatingsRepository.findWorkerSummary(workerId);
+async function getWorkerRatingSummary(workerId: string, isReviewAccount = false) {
+  const worker = await RatingsRepository.findWorkerSummary(workerId, isReviewAccount);
   if (!worker) throw Errors.notFound('İşçi tapılmadı.', 'WORKER_NOT_FOUND');
 
-  const ratings = await RatingsRepository.listWorkerRatings(workerId);
+  const ratings = await RatingsRepository.listWorkerRatings(workerId, isReviewAccount);
   const data = ratings.map(toRatingResponse);
   return {
     rating_avg: worker.rating_avg,

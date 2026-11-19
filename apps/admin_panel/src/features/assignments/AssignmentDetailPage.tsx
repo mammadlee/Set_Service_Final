@@ -11,6 +11,9 @@ import { StatusBadge } from '../../shared/components/StatusBadge';
 import { useAsync } from '../../shared/hooks/useAsync';
 import { appStrings } from '../../shared/i18n/appStrings';
 import { formatDateTime } from '../../shared/utils/format';
+import { resolveAssetUrl } from '../../shared/utils/documents';
+import type { Assignment } from '../../shared/api/types';
+import { orderDisplayStatus } from '../../shared/utils/orders';
 import { assignmentsService } from './assignments.service';
 
 export function AssignmentDetailPage() {
@@ -54,19 +57,25 @@ export function AssignmentDetailPage() {
         <section className="detail-grid">
           <div className="panel">
             <div className="detail-title">
-              <h2>{assignment.data.worker.name}</h2>
+              <div className="worker-detail-heading">
+                {assignment.data.worker.profile_photo_url ? <img src={resolveAssetUrl(assignment.data.worker.profile_photo_url)} alt="" /> : null}
+                <div><h2>{assignment.data.worker.name}</h2><span className="table-subtext">{assignedPositionLabel(assignment.data)}</span></div>
+              </div>
               <StatusBadge status={assignment.data.status} />
             </div>
             <dl className="detail-list">
-              <dt>{appStrings.assignments.id}</dt><dd>{assignment.data.id}</dd>
               <dt>{appStrings.assignments.worker}</dt><dd>{assignment.data.worker.name}</dd>
               <dt>{appStrings.workers.phone}</dt><dd>{assignment.data.worker.phone}</dd>
-              <dt>{appStrings.workers.position}</dt><dd>{assignment.data.worker.position || appStrings.notAvailable}</dd>
+              <dt>Təyin olunan vəzifə</dt><dd>{assignedPositionLabel(assignment.data)}</dd>
               <dt>{appStrings.assignments.status}</dt><dd><StatusBadge status={assignment.data.status} /></dd>
               <dt>{appStrings.assignments.assignedAt}</dt><dd>{formatDateTime(assignment.data.assigned_at)}</dd>
+              <dt>Təyin edən admin</dt><dd>{assignment.data.assigned_by?.name || 'Sistem / qeyd yoxdur'}</dd>
+              <dt>Faktiki giriş</dt><dd>{formatDateTime(assignment.data.attendance?.checkin_time)}</dd>
+              <dt>Faktiki çıxış</dt><dd>{assignment.data.attendance?.checkout_time ? formatDateTime(assignment.data.attendance.checkout_time) : 'Çıxış edilməyib'}</dd>
+              <dt>Qeydə alınmış müddət</dt><dd>{formatDuration(assignment.data.attendance?.duration_minutes)}</dd>
             </dl>
             {canManageAssignments ? (
-              <div className="action-row">
+              <div className="action-row detail-actions destructive-only-actions">
                 <button
                   className="btn danger"
                   type="button"
@@ -88,7 +97,7 @@ export function AssignmentDetailPage() {
               <dt>{appStrings.orders.orderTitle}</dt><dd>{assignment.data.order.title}</dd>
               <dt>{appStrings.orders.company}</dt><dd>{assignment.data.order.company.name}</dd>
               <dt>{appStrings.orders.category}</dt><dd>{assignment.data.order.category}</dd>
-              <dt>{appStrings.orders.status}</dt><dd><StatusBadge status={assignment.data.order.status} /></dd>
+              <dt>{appStrings.orders.status}</dt><dd><StatusBadge status={orderDisplayStatus(assignment.data.order)} /></dd>
               <dt>{appStrings.orders.location}</dt><dd>{assignment.data.order.location}</dd>
               <dt>{appStrings.orders.start}</dt><dd>{formatDateTime(assignment.data.order.start_datetime)}</dd>
               <dt>{appStrings.orders.end}</dt><dd>{formatDateTime(assignment.data.order.end_datetime)}</dd>
@@ -100,22 +109,19 @@ export function AssignmentDetailPage() {
               <div>
                 <h2>QR kiosk idarəetməsi</h2>
                 <p>
-                  QR ekranı artıq sifariş/növbə əsasında aktiv edilir. İşçi seçmək tələb olunmur.
+                  QR ekranı sifarişə və ya növbəyə əsasən aktiv edilir. İşçi seçmək tələb olunmur.
                 </p>
               </div>
               <QrCode size={22} />
             </div>
 
-            {assignment.data.status !== 'accepted' || assignment.data.order.status !== 'active' ? (
-              <div className="inline-note">
-                QR ekranını aktiv etmək üçün sifariş aktiv, təyinat isə qəbul edilmiş olmalıdır.
-              </div>
-            ) : (
-              <Link className="btn primary full" to="/attendance/qr-display">
-                <QrCode size={16} />
-                Venue QR kiosklarına keç
-              </Link>
-            )}
+            <div className="inline-note">
+              QR ekranında yalnız backend tərəfindən uyğun hesab edilən aktiv sifarişlər göstərilir.
+            </div>
+            <Link className="btn primary full" to="/attendance/qr-display">
+              <QrCode size={16} />
+              Məkan QR kiosklarına keç
+            </Link>
           </div> : null}
         </section>
       ) : null}
@@ -132,4 +138,19 @@ export function AssignmentDetailPage() {
       />
     </>
   );
+}
+
+function assignedPositionLabel(assignment: Assignment): string {
+  return assignment.assigned_position?.name_az
+    || assignment.position?.name_az
+    || assignment.category_item?.position?.name_az
+    || assignment.category
+    || appStrings.notAvailable;
+}
+
+function formatDuration(minutes?: number | null): string {
+  if (minutes === null || minutes === undefined) return 'Hesablanmayıb';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return hours ? `${hours} saat ${rest} dəq` : `${rest} dəq`;
 }
