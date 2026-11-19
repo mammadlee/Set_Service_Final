@@ -390,6 +390,11 @@ components:
       properties:
         phone: { type: string, example: "+994501234567" }
         password: { type: string, minLength: 8, example: Worker123! }
+        otp_code:
+          type: string
+          pattern: '^\d{6}$'
+          writeOnly: true
+          description: Required only after a correctly authenticated, preconfigured store-review account receives REVIEWER_OTP_REQUIRED.
 
     EmailPasswordLoginRequest:
       type: object
@@ -397,6 +402,11 @@ components:
       properties:
         email: { type: string, format: email, example: admin@setservice.az }
         password: { type: string, minLength: 8, example: <explicit-admin-password> }
+        otp_code:
+          type: string
+          pattern: '^\d{6}$'
+          writeOnly: true
+          description: Required only after a correctly authenticated, preconfigured store-review account receives REVIEWER_OTP_REQUIRED.
 
     CompleteWorkerRegistrationRequest:
       type: object

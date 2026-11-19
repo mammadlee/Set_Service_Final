@@ -23,6 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController(text: '+994');
   final _passwordController = TextEditingController();
+  final _reviewerOtpController = TextEditingController();
   bool _obscurePassword = true;
 
   @override
@@ -37,6 +38,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _phoneController.dispose();
     _passwordController.dispose();
+    _reviewerOtpController.dispose();
     super.dispose();
   }
 
@@ -101,6 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
               TextFormField(
                 controller: _phoneController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 keyboardType: TextInputType.phone,
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
@@ -113,6 +116,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 14),
               TextFormField(
                 controller: _passwordController,
+                onChanged: (_) => _clearReviewerOtpChallenge(context),
                 obscureText: _obscurePassword,
                 textInputAction: TextInputAction.done,
                 decoration: InputDecoration(
@@ -131,6 +135,25 @@ class _LoginScreenState extends State<LoginScreen> {
                 validator: _validatePassword,
                 onFieldSubmitted: (_) => _submit(context),
               ),
+              if (auth.reviewerOtpRequired) ...[
+                const SizedBox(height: 14),
+                TextFormField(
+                  key: const ValueKey('worker-reviewer-otp'),
+                  controller: _reviewerOtpController,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.done,
+                  autofillHints: const [AutofillHints.oneTimeCode],
+                  maxLength: 6,
+                  decoration: const InputDecoration(
+                    labelText: AppStrings.reviewerOtpCode,
+                    helperText: AppStrings.reviewerOtpHelp,
+                    prefixIcon: Icon(Icons.verified_user_outlined),
+                    counterText: '',
+                  ),
+                  validator: _validateReviewerOtp,
+                  onFieldSubmitted: (_) => _submit(context),
+                ),
+              ],
               const SizedBox(height: 4),
               Align(
                 alignment: Alignment.centerRight,
@@ -178,7 +201,18 @@ class _LoginScreenState extends State<LoginScreen> {
     await context.read<AuthController>().loginWorker(
       phone: _phoneController.text.trim(),
       password: _passwordController.text,
+      reviewerOtpCode: authReviewerOtp(context),
     );
+  }
+
+  String? authReviewerOtp(BuildContext context) {
+    if (!context.read<AuthController>().reviewerOtpRequired) return null;
+    return _reviewerOtpController.text.trim();
+  }
+
+  void _clearReviewerOtpChallenge(BuildContext context) {
+    _reviewerOtpController.clear();
+    context.read<AuthController>().clearReviewerOtpChallenge();
   }
 
   Future<void> _forgot(BuildContext context) async {
@@ -332,6 +366,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   String? _validatePassword(String? value) {
     return AuthInputValidators.loginPassword(value);
+  }
+
+  String? _validateReviewerOtp(String? value) {
+    if (!context.read<AuthController>().reviewerOtpRequired) return null;
+    return RegExp(r'^\d{6}$').hasMatch(value?.trim() ?? '')
+        ? null
+        : AppStrings.otpValidation;
   }
 
   bool _validEmail(String value) {

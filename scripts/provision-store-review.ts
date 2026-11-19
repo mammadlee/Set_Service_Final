@@ -18,6 +18,7 @@ import {
 import { decryptProviderPayload } from '../src/lib/provider-outbox';
 import { normalizeEmail } from '../src/lib/password';
 import { normalizePhone } from '../src/lib/phone';
+import { assertStoreReviewFixedOtpReady } from '../src/lib/store-review-fixed-otp';
 
 const REVIEW_LOCK_NAME = 'set-service:store-review-provision:v1';
 export const STORE_REVIEW_FIXTURE_VERSION = 'store-review-v1';
@@ -1168,6 +1169,7 @@ function safeErrorCode(error: unknown): string {
 async function main(): Promise<void> {
   const options = parseStoreReviewProvisionArgs(process.argv.slice(2));
   assertStoreReviewProvisionAllowed(options);
+  assertStoreReviewFixedOtpReady();
   const config = resolveStoreReviewAccountConfig();
   const prisma = new PrismaClient();
   try {
@@ -1181,6 +1183,10 @@ async function main(): Promise<void> {
       password_rotation_required_count: plan.passwordRotationRequiredCount,
       private_document_setup_required: plan.privateDocumentSetupRequired,
       profile_photo_setup_required: plan.profilePhotoSetupRequired,
+      fixed_otp_ready: true,
+      // QR capabilities are short lived and must be generated through the
+      // normal authenticated Company flow after apply.
+      qr_live_flow_required: true,
     });
   } finally {
     await prisma.$disconnect();

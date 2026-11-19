@@ -4,10 +4,10 @@ import type { TokenResponse } from '../../shared/api/types';
 import { appStrings } from '../../shared/i18n/appStrings';
 
 export const authService = {
-  async loginCompany(email: string, password: string) {
+  async loginCompany(email: string, password: string, reviewerOtpCode?: string) {
     const result = await apiRequest<TokenResponse>('/auth/company/web-login', {
       method: 'POST',
-      body: { email, password },
+      body: { email, password, ...(reviewerOtpCode ? { otp_code: reviewerOtpCode } : {}) },
       auth: false,
     });
 

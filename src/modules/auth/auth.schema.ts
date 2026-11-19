@@ -86,6 +86,7 @@ export const WorkerRequestOtpSchema = z.object({
 export const WorkerLoginSchema = z.object({
   phone: PhoneSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const WorkerCompleteRegistrationSchema = z.object({
@@ -134,6 +135,7 @@ export const CompanyRegisterSchema = z.object({
 export const CompanyLoginSchema = z.object({
   email: EmailSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const CompanyCompleteRegistrationSchema = z.object({
@@ -169,6 +171,7 @@ export const EmailVerificationConfirmSchema = z.object({
 export const AdminLoginSchema = z.object({
   email: EmailSchema,
   password: LoginPasswordSchema,
+  otp_code: OtpCodeSchema.optional(),
 });
 
 export const AdminForgotPasswordSchema = z.object({

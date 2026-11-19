@@ -38,6 +38,7 @@ class CompanyAuthController extends ChangeNotifier {
   String? companyName;
   String? companyProfileId;
   bool isSubmitting = false;
+  bool reviewerOtpRequired = false;
   bool _disposed = false;
 
   @override
@@ -97,6 +98,7 @@ class CompanyAuthController extends ChangeNotifier {
   }
 
   void _handleSessionInvalidation(SessionInvalidation event) {
+    reviewerOtpRequired = false;
     pendingPhone = null;
     pendingEmail = null;
     pendingOtpCode = null;
@@ -116,6 +118,13 @@ class CompanyAuthController extends ChangeNotifier {
     if (errorMessage == null && successMessage == null) return;
     errorMessage = null;
     successMessage = null;
+    notifyListeners();
+  }
+
+  void clearReviewerOtpChallenge() {
+    if (!reviewerOtpRequired) return;
+    reviewerOtpRequired = false;
+    errorMessage = null;
     notifyListeners();
   }
 
@@ -150,16 +159,29 @@ class CompanyAuthController extends ChangeNotifier {
   Future<void> loginCompany({
     required String email,
     required String password,
+    String? reviewerOtpCode,
   }) async {
     await _submit(() async {
-      final session = await _repository.loginCompany(
-        email: email,
-        password: password,
-      );
-      companyName = session.user.name;
-      companyProfileId = session.user.company?.id;
-      state = CompanyAuthState.authenticated;
-      _notifySessionState(SessionState.authenticated);
+      if (reviewerOtpCode == null) reviewerOtpRequired = false;
+      try {
+        final session = await _repository.loginCompany(
+          email: email,
+          password: password,
+          reviewerOtpCode: reviewerOtpCode,
+        );
+        reviewerOtpRequired = false;
+        companyName = session.user.name;
+        companyProfileId = session.user.company?.id;
+        state = CompanyAuthState.authenticated;
+        _notifySessionState(SessionState.authenticated);
+      } on ApiException catch (error) {
+        if (error.code == 'REVIEWER_OTP_REQUIRED') {
+          reviewerOtpRequired = true;
+          errorMessage = null;
+          return;
+        }
+        rethrow;
+      }
     });
   }
 
@@ -291,6 +313,7 @@ class CompanyAuthController extends ChangeNotifier {
       successMessage = null;
       companyName = null;
       companyProfileId = null;
+      reviewerOtpRequired = false;
       state = CompanyAuthState.unauthenticated;
       _notifySessionState(SessionState.unauthenticated);
       return true;
@@ -302,6 +325,7 @@ class CompanyAuthController extends ChangeNotifier {
       return false;
     } finally {
       isSubmitting = false;
+      reviewerOtpRequired = false;
       notifyListeners();
     }
   }
@@ -341,6 +365,7 @@ class CompanyAuthController extends ChangeNotifier {
     blockedStatus = null;
     errorMessage = null;
     successMessage = null;
+    reviewerOtpRequired = false;
     state = CompanyAuthState.unauthenticated;
     _notifySessionState(SessionState.unauthenticated);
     notifyListeners();

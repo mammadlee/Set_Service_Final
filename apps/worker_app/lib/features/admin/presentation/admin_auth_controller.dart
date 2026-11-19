@@ -32,6 +32,7 @@ class AdminAuthController extends ChangeNotifier {
   String? errorMessage;
   String? successMessage;
   bool isSubmitting = false;
+  bool reviewerOtpRequired = false;
   bool _disposed = false;
 
   @override
@@ -83,7 +84,15 @@ class AdminAuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearReviewerOtpChallenge() {
+    if (!reviewerOtpRequired) return;
+    reviewerOtpRequired = false;
+    errorMessage = null;
+    notifyListeners();
+  }
+
   void _handleSessionInvalidation(SessionInvalidation event) {
+    reviewerOtpRequired = false;
     unawaited(_repository.clearLocalSession());
     adminName = null;
     adminRole = null;
@@ -97,17 +106,30 @@ class AdminAuthController extends ChangeNotifier {
   Future<void> loginAdmin({
     required String email,
     required String password,
+    String? reviewerOtpCode,
   }) async {
     await _submit(() async {
-      final session = await _repository.loginAdmin(
-        email: email,
-        password: password,
-      );
-      adminName = session.user.name;
-      adminRole = session.user.role;
-      permissions = session.user.permissions;
-      state = AdminAuthState.authenticated;
-      _notifySessionState(SessionState.authenticated);
+      if (reviewerOtpCode == null) reviewerOtpRequired = false;
+      try {
+        final session = await _repository.loginAdmin(
+          email: email,
+          password: password,
+          reviewerOtpCode: reviewerOtpCode,
+        );
+        reviewerOtpRequired = false;
+        adminName = session.user.name;
+        adminRole = session.user.role;
+        permissions = session.user.permissions;
+        state = AdminAuthState.authenticated;
+        _notifySessionState(SessionState.authenticated);
+      } on ApiException catch (error) {
+        if (error.code == 'REVIEWER_OTP_REQUIRED') {
+          reviewerOtpRequired = true;
+          errorMessage = null;
+          return;
+        }
+        rethrow;
+      }
     });
   }
 
@@ -136,6 +158,7 @@ class AdminAuthController extends ChangeNotifier {
       permissions = const [];
       errorMessage = null;
       successMessage = null;
+      reviewerOtpRequired = false;
       state = AdminAuthState.unauthenticated;
       isSubmitting = false;
       _notifySessionState(SessionState.unauthenticated);
@@ -146,6 +169,7 @@ class AdminAuthController extends ChangeNotifier {
   void backToLogin() {
     errorMessage = null;
     successMessage = null;
+    reviewerOtpRequired = false;
     state = AdminAuthState.unauthenticated;
     _notifySessionState(SessionState.unauthenticated);
     notifyListeners();

@@ -19,9 +19,14 @@ import {
 } from '../../lib/company-enrollment';
 import { logger } from '../../lib/logger';
 import {
+  assertStoreReviewAuthenticationScope,
   assertStoreReviewAccountMutationAllowed,
   buildStoreReviewLoginAudit,
 } from '../../lib/store-review-account-guard';
+import {
+  enforceStoreReviewFixedOtp,
+} from '../../lib/store-review-fixed-otp';
+import type { StoreReviewAuthenticationMethod } from '../../lib/store-review-fixed-otp';
 import {
   assertOtpCooldown,
   assertOtpNotBlocked,
@@ -311,7 +316,14 @@ export async function loginWorker(input: WorkerLoginInput, ip?: string) {
     assertWorkerCanLogin(user.worker.status);
   }
 
-  return buildTokenResponse(user.id, user.role, ip);
+  const authentication = await enforceStoreReviewFixedOtp({
+    account: user,
+    expectedRole: 'worker',
+    normalizedIdentifier: phone,
+    otpCode: input.otp_code,
+    ip,
+  });
+  return buildTokenResponse(user.id, user.role, ip, authentication);
 }
 
 export async function completeWorkerRegistration(input: WorkerCompleteRegistrationInput) {
@@ -1039,7 +1051,14 @@ export async function loginCompany(input: CompanyLoginInput, ip?: string) {
     assertCompanyCanLogin(user.company.status);
   }
 
-  return buildTokenResponse(user.id, user.role, ip);
+  const authentication = await enforceStoreReviewFixedOtp({
+    account: user,
+    expectedRole: 'company',
+    normalizedIdentifier: email,
+    otpCode: input.otp_code,
+    ip,
+  });
+  return buildTokenResponse(user.id, user.role, ip, authentication);
 }
 
 export async function forgotCompanyPassword(input: CompanyForgotPasswordInput, ip?: string) {
@@ -1111,7 +1130,14 @@ export async function loginAdmin(input: AdminLoginInput, ip?: string) {
     throw Errors.unauthorized('Email və ya şifrə yanlışdır.', 'INVALID_CREDENTIALS');
   }
 
-  return buildTokenResponse(user.id, user.role, ip);
+  const authentication = await enforceStoreReviewFixedOtp({
+    account: user,
+    expectedRole: 'admin',
+    normalizedIdentifier: email,
+    otpCode: input.otp_code,
+    ip,
+  });
+  return buildTokenResponse(user.id, user.role, ip, authentication);
 }
 
 export async function forgotAdminPassword(_input: AdminForgotPasswordInput) {
@@ -1801,12 +1827,22 @@ async function handleFailedOtp(otp: {
   }
 }
 
-async function buildTokenResponse(userId: string, role: string, ip?: string) {
+async function buildTokenResponse(
+  userId: string,
+  role: string,
+  ip?: string,
+  authentication: StoreReviewAuthenticationMethod = 'password',
+) {
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: userId },
     include: { worker: true, company: true, admin: true },
   });
 
+  // The first account read decides whether reviewer OTP is mandatory. Refuse
+  // to mint tokens if the durable reviewer marker changed before this second
+  // read, rather than allowing a password-only reviewer session (or losing the
+  // reviewer-specific successful-login audit).
+  assertStoreReviewAuthenticationScope(user, authentication);
   assertUserCanAuthenticate(user, role, user.session_version);
 
   const accessToken = signAccessToken({
@@ -1833,7 +1869,7 @@ async function buildTokenResponse(userId: string, role: string, ip?: string) {
     });
     if (user.is_review_account) {
       await tx.auditLog.create({
-        data: buildStoreReviewLoginAudit(user),
+        data: buildStoreReviewLoginAudit(user, authentication),
       });
     }
   });

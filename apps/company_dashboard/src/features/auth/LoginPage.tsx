@@ -2,7 +2,7 @@ import { Building2, Clock, ShieldAlert } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../app/auth/AuthProvider';
-import { getAccountStatus, getErrorMessage } from '../../shared/api/http';
+import { getAccountStatus, getErrorMessage, isApiError } from '../../shared/api/http';
 import { accountState, appStrings, statusLabel } from '../../shared/i18n/appStrings';
 import { authService } from './auth.service';
 
@@ -10,6 +10,8 @@ export function LoginPage() {
   const { isAuthenticated, setSession } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [reviewerOtp, setReviewerOtp] = useState('');
+  const [reviewerOtpRequired, setReviewerOtpRequired] = useState(false);
   const [blockedStatus, setBlockedStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,9 +25,18 @@ export function LoginPage() {
     setBlockedStatus(null);
 
     try {
-      const session = await authService.loginCompany(email.trim(), password);
+      const session = await authService.loginCompany(
+        email.trim(),
+        password,
+        reviewerOtpRequired ? reviewerOtp : undefined,
+      );
       setSession(session.user);
     } catch (err) {
+      if (isApiError(err) && err.code === 'REVIEWER_OTP_REQUIRED') {
+        setReviewerOtpRequired(true);
+        setReviewerOtp('');
+        return;
+      }
       const status = getAccountStatus(err);
       if (status) setBlockedStatus(status);
       setError(getErrorMessage(err));
@@ -60,7 +71,11 @@ export function LoginPage() {
             <span>{appStrings.auth.email}</span>
             <input
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setReviewerOtp('');
+                setReviewerOtpRequired(false);
+              }}
               disabled={loading}
               placeholder={appStrings.auth.emailPlaceholder}
               type="email"
@@ -72,7 +87,11 @@ export function LoginPage() {
             <span>{appStrings.auth.password}</span>
             <input
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setReviewerOtp('');
+                setReviewerOtpRequired(false);
+              }}
               disabled={loading}
               placeholder={appStrings.auth.passwordPlaceholder}
               type="password"
@@ -81,9 +100,38 @@ export function LoginPage() {
             />
           </label>
 
+          {reviewerOtpRequired ? (
+            <label className="field">
+              <span>{appStrings.auth.reviewerOtp}</span>
+              <input
+                value={reviewerOtp}
+                onChange={(event) => setReviewerOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                disabled={loading}
+                placeholder={appStrings.auth.reviewerOtpPlaceholder}
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                minLength={6}
+                maxLength={6}
+                required
+              />
+              <small>{appStrings.auth.reviewerOtpHelp}</small>
+            </label>
+          ) : null}
+
           {error && !blockedStatus ? <div className="form-error">{error}</div> : null}
 
-          <button className="btn primary full" type="submit" disabled={loading || email.trim().length < 5 || password.length < 8}>
+          <button
+            className="btn primary full"
+            type="submit"
+            disabled={
+              loading ||
+              email.trim().length < 5 ||
+              password.length < 8 ||
+              (reviewerOtpRequired && !/^\d{6}$/.test(reviewerOtp))
+            }
+          >
             {loading ? appStrings.auth.wait : appStrings.auth.loginButton}
           </button>
         </form>
